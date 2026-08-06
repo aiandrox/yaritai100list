@@ -44,3 +44,36 @@ export function toSessionState(response: { ok: boolean; body: unknown }): Sessio
 
   return { status: 'authenticated' }
 }
+
+/**
+ * `POST /api/auth/sign-out` に送る内容。**`App.tsx` とテストで同じものを使う。**
+ *
+ * 🔴 **`content-type: application/json` と本文 `{}` の両方が要る。**
+ * 素の `fetch(url, { method: 'POST' })` は本番で **415** になる（実際に踏んだ）。
+ *
+ * better-call の本文パーサ（`better-call/dist/utils.mjs`）はこう書かれている:
+ *
+ * ```js
+ * if (!request.body) return                                  // 本文が無ければ素通し
+ * if (!normalizedContentType) throw new APIError(415, ...)   // 本文があるのに content-type が無い
+ * ```
+ *
+ * ブラウザは本文の無い POST でも `Content-Length: 0` を送るため、Workers 側からは
+ * **空ストリームの「本文あり」**に見えて 415 に落ちる。
+ * 一方 `new Request(url, { method: 'POST' })` は `body` が `null` なので素通しし、
+ * **テストだけ 200 になる。** テストからこの定義を使うのは、その差を作らないため。
+ *
+ * `content-type` だけ付けて本文を空にすると、今度は `request.json()` が
+ * SyntaxError になり **400** が返る。だから `{}` を送る。
+ */
+export function signOutRequestInit(): {
+  method: string
+  headers: Record<string, string>
+  body: string
+} {
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  }
+}
