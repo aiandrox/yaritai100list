@@ -198,23 +198,47 @@ Deno Deploy 側が例外として許されているのは、**あれが Cookie �
 
 ## Sentry（エラー通知）
 
-**未設定。** #1 のステップ4。
+**Workers 用プロジェクトまで設定済み**（#1、2026-08-06）。
 
 | 項目 | 現在値 | 備考 |
 |---|---|---|
-| organization | 未作成 | |
+| organization | **既存のものを流用**（`match-party` と同じ org） | 下記の枠の注意を参照 |
 | プラン | Developer（無料） | **5,000 errors/月・1ユーザー・保持30日**（2026-08-06 時点） |
-| Workers 用プロジェクト | 未作成 | プラットフォームは `Cloudflare Workers`（`@sentry/cloudflare`） |
-| Deno 用プロジェクト | 未作成 | プラットフォームは `Deno`（`@sentry/deno`） |
-| DSN の置き場所 | 未設定 | 環境変数。値はここに書かない |
+| Workers 用プロジェクト | **`yaritai100list-workers`** | プラットフォームは `Cloudflare Workers`（`@sentry/cloudflare`） |
+| Deno 用プロジェクト | **未作成。#8 で作る** | プラットフォームは `Deno`（`@sentry/deno`） |
+| SPA（ブラウザ）用プロジェクト | **作らない（未決）** | 下記 |
+| Spike Protection | **有効**（`yaritai100list-workers`） | |
+| アラート | 作成時の既定ルール（新規イシューでメール通知） | **消さないこと。これが「壊れたことを知る手段」そのもの** |
+| DSN の置き場所 | `SENTRY_DSN`（シークレット扱い） | 値はここに書かない |
 
 ### ⚠️ 無料枠の 5,000 errors/月は**プロジェクト間で共有**
 
-プロジェクトを2つに分けても枠は増えない。**エラーループが起きると1日で枠を焼き切って、
+**同じ organization に無関係のプロジェクト `match-party` がある。**
+枠はプロジェクト単位ではなく organization 単位なので、
+**`match-party` がエラーを吐くと `yaritai100list-workers` の通知が死ぬ。逆も同じ。**
+
+プロジェクトを分けても枠は増えない。**エラーループが起きると1日で枠を焼き切って、
 以降の障害に気づけなくなる。**「壊れたことを知る手段」が目的なので、ここが潰れると本末転倒。
 
-対策として、**Spike Protection を有効にし、クライアントキーごとのレート制限を設定する**。
-設定したらこの表を埋める。
+対策:
+
+- **Spike Protection を有効にした**（設定済み）
+- 枠が足りなくなったら、organization を分けるか、クライアントキーごとのレート制限を設定する
+
+### DSN をシークレット扱いにする理由
+
+DSN はブラウザに埋め込む前提の値なので一般には秘密ではない。
+ただし**このリポジトリは public** で、かつ**無料枠が 5,000 errors/月しかない**。
+DSN が漏れると第三者にイベントを送り込まれて枠を焼かれ、
+**通知が目的なのに通知が死ぬ**状態になる。
+
+そのため `wrangler.jsonc` の `vars`（＝コミットされる）ではなく、
+**`wrangler secret put SENTRY_DSN` で入れる。**
+
+### SPA（ブラウザ側）のエラーを送るかは未決
+
+ブラウザのエラーは拡張機能やネットワーク起因のノイズが多く、5,000 の枠を食い潰しやすい。
+**まずサーバー側だけで運用し、必要になったら足す。**
 
 ---
 
@@ -228,7 +252,7 @@ Deno Deploy 側が例外として許されているのは、**あれが Cookie �
 | `GOOGLE_CLIENT_SECRET` | Google OAuth | `.dev.vars` | `wrangler secret put` | — |
 | `BETTER_AUTH_SECRET` | セッション署名 | `.dev.vars` | `wrangler secret put` | — |
 | `RENDER_HMAC_SECRET` | 画像生成の署名（**両側で同じ値**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
-| `SENTRY_DSN` | エラー通知 | `.dev.vars` | `wrangler.jsonc` の `vars` | コンソールの環境変数 |
+| `SENTRY_DSN` | エラー通知（**シークレット扱い。理由は Sentry の節**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
 
 変数名は #3 / #8 / #18 での想定。**確定したらこの表を更新する。**
 
