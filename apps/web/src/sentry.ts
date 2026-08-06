@@ -1,0 +1,105 @@
+import type { CloudflareOptions } from '@sentry/cloudflare'
+
+/**
+ * このモジュールが必要とする環境変数。
+ *
+ * `wrangler types` が生成する `Env` には**含まれない。**
+ * 生成元は wrangler.jsonc のバインディングと `.dev.vars` で、
+ * シークレットは wrangler.jsonc に書かず、`.dev.vars` は gitignore されているため
+ * CI では存在しない（そのままだと CI の型チェックだけが落ちる）。
+ *
+ * グローバルな `Env` を拡張する形は採らなかった。`interface Env` への宣言マージが
+ * この構成（`moduleDetection: "force"`）では効かず、`declare global` でも同じだった。
+ * **必要な環境変数をモジュール側で表明する方が、どこで何を要求しているかも明確になる。**
+ *
+ * ここに書くのは名前と型だけ。値の置き場所はローカルが `.dev.vars`、
+ * 本番が `wrangler secret put`（`docs/console-settings.md`）。
+ */
+export interface SentryEnv {
+  /**
+   * Sentry の DSN。**シークレット扱い**（このリポジトリは public で、
+   * 無料枠が 5,000 errors/月しかないため。`docs/console-settings.md` 参照）。
+   *
+   * **未設定なら通知は無効になる。** ローカル開発では設定しない。
+   */
+  readonly SENTRY_DSN?: string
+
+  /**
+   * Sentry に送るイベントの environment。未設定なら `production`。
+   *
+   * ローカルから通知を試すときに設定して、本番のイベントと混ざらないようにする。
+   */
+  readonly SENTRY_ENVIRONMENT?: string
+}
+
+/**
+ * 通知に載せてよい情報だけを残す。
+ *
+ * 落とすもの:
+ * - **リクエストボディ。やりたいことの本文が入る**（これがこの関数の主目的）
+ * - Cookie とヘッダ。セッションが入る
+ * - ユーザー情報（そもそもユーザーに表示名を持たせていないが、念のため）
+ *
+ * **URL はそのまま送る。** `shareId` や `listId` が載るが、これは隠さない判断。
+ * ただし**自由入力が URL に乗るルート**（検索クエリなど）を作るときは、
+ * そのパラメータをここで落とすことを検討する。現状 URL に載るのは ID と更新日時だけ。
+ *
+ * `beforeSend` に渡ってくるイベントをそのまま加工して返す。
+ * テストしやすいよう純関数として切り出している。
+ */
+export function scrubEvent<T extends { request?: unknown; user?: unknown }>(event: T): T {
+  const request = event.request as
+    { data?: unknown; cookies?: unknown; headers?: unknown } | undefined
+
+  if (request) {
+    delete request.data
+    delete request.cookies
+    delete request.headers
+  }
+
+  delete event.user
+
+  return event
+}
+
+/**
+ * Sentry の設定。`withSentry` に渡す。
+ *
+ * **DSN が無ければ `undefined` を返して SDK を初期化しない。**
+ * ローカル開発では `.dev.vars` に `SENTRY_DSN` を置かないので通知は飛ばない
+ * （置けばローカルからも飛ぶ。その場合は `SENTRY_ENVIRONMENT` を設定して
+ * 本番のイベントと混ざらないようにする）。
+ */
+export function sentryOptions(env: SentryEnv): CloudflareOptions | undefined {
+  if (!env.SENTRY_DSN) return undefined
+
+  return {
+    dsn: env.SENTRY_DSN,
+    environment: env.SENTRY_ENVIRONMENT ?? 'production',
+
+    // 🔴 **収集する側が既定**なので、明示的に切る。
+    // `cookies` は既定 true、`httpHeaders` は既定 request/response とも true、
+    // `httpBodies` は省略すると**全種類のボディを収集する**
+    // （= やりたいことの本文が送られる）。
+    //
+    // `beforeSend` でも落としているが、設定と二重にしておく。
+    // 片方だけに頼ると、SDK の更新で既定が変わったときに黙って漏れる。
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+
+      // URL のクエリは送る。`shareId` を隠さない方針に合わせている。
+      // 現状クエリに載るのは OGP の `?v=<updatedAt>` だけ。
+      // **自由入力（検索語など）をクエリに載せるルートを作るときは false にする。**
+      urlQueryParams: true,
+    },
+
+    // 性能データは送らない。**無料枠は 5,000 errors/月で、しかも他プロジェクトと
+    // 共有している**（docs/console-settings.md）。枠を焼くと障害に気づけなくなる
+    tracesSampleRate: 0,
+
+    beforeSend: (event) => scrubEvent(event),
+  }
+}

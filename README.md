@@ -51,6 +51,9 @@ npm run typecheck && npm run lint && npm test        # PR を出す前に緑に�
 **Vite の dev サーバーは IPv6（`[::1]`）でだけ listen する。**
 `curl http://127.0.0.1:5173` は接続できないので `localhost` を使う。
 
+環境変数は `apps/web/.dev.vars.example` を `.dev.vars` にコピーして使う。
+**通常のローカル開発では何も入れなくても動く**（`SENTRY_DSN` が空ならエラー通知は無効）。
+
 **`no such table` が出たら `db:migrate` を忘れている。**
 ローカル D1 の保存先は `wrangler.jsonc` の `database_id` ごとに分かれるため、
 その値を変えると**空のデータベースに切り替わる**（`.wrangler/state/` 配下）。

@@ -8,6 +8,14 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-06",
 
+  // @sentry/cloudflare が node:async_hooks を import するため必須。
+  // 外すと `vite dev` の起動時点で
+  // 「Failed to load url node:async_hooks」で落ちる。
+  //
+  // ⚠️ このフラグが無くても**テストは緑になる**（vitest-pool-workers 側で
+  // Node の互換が効いているため）。テストだけでは検知できない設定。
+  "compatibility_flags": ["nodejs_compat"],
+
   // account_id はここに書かない。ローカル開発（wrangler dev）には不要で、
   // デプロイ時は CLOUDFLARE_ACCOUNT_ID を環境変数で渡す。
   "observability": {
