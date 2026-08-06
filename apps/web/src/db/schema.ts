@@ -1,3 +1,4 @@
+import { VISIBILITIES } from '@yaritai100list/shared'
 import { sql } from 'drizzle-orm'
 import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
@@ -22,10 +23,11 @@ export const lists = sqliteTable(
 
     title: text('title').notNull(),
 
-    /** 公開範囲。**既定は非公開**。公開は明示的な操作でのみ起きる（PRODUCT_SPEC.md §5.1） */
-    visibility: text('visibility', { enum: ['private', 'unlisted', 'public'] })
-      .notNull()
-      .default('private'),
+    /**
+     * 公開範囲。**既定は非公開**。公開は明示的な操作でのみ起きる（PRODUCT_SPEC.md §5.1）。
+     * 取りうる値は packages/shared の `VISIBILITIES` が唯一の情報源。
+     */
+    visibility: text('visibility', { enum: VISIBILITIES }).notNull().default('private'),
 
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
@@ -36,7 +38,12 @@ export const lists = sqliteTable(
       .default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
-    // enum は Drizzle の型の上だけの話なので、DB 側にも制約を置く
-    check('lists_visibility_check', sql`${t.visibility} in ('private', 'unlisted', 'public')`),
+    // Drizzle の enum は型の上だけの話なので、DB 側にも制約を置く。
+    // 値は VISIBILITIES から組み立てるので、公開範囲を増やしたときに
+    // 型と DB 制約がずれない（sql.raw に渡すのは自分たちが定義したリテラルのみ）
+    check(
+      'lists_visibility_check',
+      sql`${t.visibility} in (${sql.raw(VISIBILITIES.map((v) => `'${v}'`).join(', '))})`,
+    ),
   ],
 )
