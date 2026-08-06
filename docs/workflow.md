@@ -89,6 +89,19 @@ push 直後に叩いたときは、`gh run list --branch <branch> --limit 1` で
 - **テストを書かずに機能を入れない。** 特に認可（§6）
 - 1 PR が大きくなりすぎたら、途中で切ってサブイシューを増やす
 
+### 依存関係を触るとき
+
+**`package-lock.json` を作り直さない。** 削除して `npm install` し直すと、
+**この環境では大量の `resolved` / `integrity` が失われる**（実測: 3120行削除・553行追加、
+解決されるバージョンは同一）。integrity が無い lock は供給元の検証ができなくなるので、
+作り直してしまったら `git checkout package-lock.json` で戻して `npm ci` する。
+
+依存を足すときは `npm install --workspace <名前> <パッケージ>` を使う（lock は差分更新される）。
+
+**`overrides` は効かない。** npm 11.3.0 では、`overrides` を書き換えても再解決の理由として
+検出されない（あり得ないバージョンを指定しても `up to date` で通過する）。
+lock を作り直しても honor されなかった。**推移的な依存のバージョンを強制する手段は無いものとして扱う**（#29）。
+
 **例外はない。ドキュメントのみの変更も PR を通す。**
 `main` にはルールセットが設定されており（`docs/console-settings.md`）、
 PR 必須・CI 必須・force push 禁止で、**bypass できるアクターもいない**。
