@@ -1,25 +1,27 @@
 import * as Sentry from '@sentry/cloudflare'
+import { listTitleSchema, visibilitySchema } from '@yaritai100list/shared'
+import { zValidator } from '@hono/zod-validator'
+import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { z } from 'zod'
 
-import { type AuthEnv, createAuth } from './auth'
+import { createAuth } from './auth'
+import { requireOwnedList, requireUser } from './authorization'
 import { createDb } from './db'
 import { lists } from './db/schema'
-import { type SentryEnv, sentryOptions } from './sentry'
+import type { AppEnv } from './env'
+import { sentryOptions } from './sentry'
 
 /**
- * Hono に渡す環境。
- *
- * `Env` は `npm run cf-typegen`（wrangler types）が wrangler.jsonc の
- * バインディングから生成する。バインディングを増やしたら cf-typegen を再実行する
- * （typecheck の前に自動で走る）。
- *
- * `AuthEnv` と `SentryEnv` を交差させているのは、**シークレットが `Env` に入らない**ため。
- * `wrangler types` は `.dev.vars` から型を作るが、それは gitignore されていて CI に無い。
- * **このアプリが動くために必要な環境変数の一覧**がここに集まる形になっている。
+ * リストの更新で受け付ける内容。**上限は packages/shared の Zod スキーマが唯一の情報源。**
+ * 画面側でも同じスキーマを使うので、上限がずれない。
  */
-export interface AppEnv {
-  Bindings: Env & AuthEnv & SentryEnv
-}
+const updateListSchema = z
+  .object({
+    title: listTitleSchema.optional(),
+    visibility: visibilitySchema.optional(),
+  })
+  .strict()
 
 /**
  * ルートはコンストラクタから直接チェーンする。Hono RPC はメソッドチェーンの
@@ -61,6 +63,53 @@ const app = new Hono<AppEnv>()
     for (const cookie of res.headers.getSetCookie()) headers.append('set-cookie', cookie)
 
     return new Response(null, { status: 302, headers })
+  })
+
+  /**
+   * 自分のリストの一覧。**他人の行が混ざらないよう `userId` で絞る。**
+   */
+  .get('/api/lists', requireUser, async (c) => {
+    const rows = await createDb(c.env.DB)
+      .select()
+      .from(lists)
+      .where(eq(lists.userId, c.get('userId')))
+
+    return c.json({ lists: rows })
+  })
+
+  /**
+   * リスト1件。**`requireOwnedList` が認可を通した行を返すだけ。**
+   * ハンドラは `listId` を触らないので、認可を迂回する余地が無い。
+   */
+  .get('/api/lists/:listId', requireUser, requireOwnedList, (c) => c.json({ list: c.get('list') }))
+
+  /** リストのタイトルと公開範囲を変える。 */
+  .patch(
+    '/api/lists/:listId',
+    requireUser,
+    requireOwnedList,
+    zValidator('json', updateListSchema),
+    async (c) => {
+      const list = c.get('list')
+      const patch = c.req.valid('json')
+
+      const [updated] = await createDb(c.env.DB)
+        .update(lists)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(lists.id, list.id))
+        .returning()
+
+      return c.json({ list: updated })
+    },
+  )
+
+  /** リストを削除する。 */
+  .delete('/api/lists/:listId', requireUser, requireOwnedList, async (c) => {
+    await createDb(c.env.DB)
+      .delete(lists)
+      .where(eq(lists.id, c.get('list').id))
+
+    return c.json({ deleted: true } as const)
   })
 
   /**
