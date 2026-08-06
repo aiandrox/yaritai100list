@@ -1,0 +1,18 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+
+  // worker-configuration.d.ts を含めている理由:
+  // Hono RPC の `AppType` は `Hono<{ Bindings: Env }, ...>` なので、
+  // 型を辿ると Workers の `Env` に到達する。これを解決できないと
+  // クライアント側の型チェックが通らない。
+  //
+  // 副作用として、クライアントのコードからも Workers のグローバル API が
+  // 型として見えてしまう。逆方向（Worker から DOM が見える）の方が事故が重いので、
+  // Worker 側の tsconfig には DOM を入れていない。
+  "include": [".", "../../worker-configuration.d.ts"]
+}
