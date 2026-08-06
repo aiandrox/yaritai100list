@@ -134,11 +134,16 @@ GCP プロジェクトは1つ（同意画面はプロジェクト単位で共有
 |---|---|---|
 | Client ID | `360816377904-1h28d71uu6q42a1ggi1j8hdjquerhr34.apps.googleusercontent.com` | `360816377904-5jhsstvqt3313uvnv5g6n7k0vu2m8t2b.apps.googleusercontent.com` |
 | 種類 | ウェブアプリケーション | ウェブアプリケーション |
-| 承認済みリダイレクト URI | `https://yaritai100list.aiandrox.workers.dev/api/auth/callback/google` | `http://localhost:8787/api/auth/callback/google` |
+| 承認済みリダイレクト URI | `https://yaritai100list.aiandrox.workers.dev/api/auth/callback/google` | `http://localhost:5173/api/auth/callback/google` |
 | 承認済みの JavaScript 生成元 | **空** | **空** |
 | Client Secret の置き場所 | Workers のシークレット | `.dev.vars` |
+| 登録状況 | **登録済み**（2026-08-06） | **登録済み**（2026-08-06） |
 
 同意画面は **外部 / 公開**。
+
+**development のポートは 5173（Vite）。** #17 で dev サーバーを `wrangler dev`（8787）から
+Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 8787 から 5173 に直した。
+`npm run dev` のポートを変えるときは、ここと GCP の設定の両方を直す。
 
 ### 分けている理由
 
