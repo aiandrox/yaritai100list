@@ -22,7 +22,7 @@ export const lists = sqliteTable(
 
     title: text('title').notNull(),
 
-    /** 公開範囲。**既定は非公開**（PRODUCT_SPEC.md §5.1。旧実装は既定公開だった） */
+    /** 公開範囲。**既定は非公開**。公開は明示的な操作でのみ起きる（PRODUCT_SPEC.md §5.1） */
     visibility: text('visibility', { enum: ['private', 'unlisted', 'public'] })
       .notNull()
       .default('private'),

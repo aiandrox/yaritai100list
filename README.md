@@ -13,9 +13,9 @@
 |---|---|
 | [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) | プロダクト仕様。何を作るか |
 | [TECH_STACK.md](./TECH_STACK.md) | 技術構成。なぜその選択をしたか、各案のメリット・リスク |
-| [MEMO.md](./MEMO.md) | 申し送り。旧環境の後始末、着手前の準備、命名の検討過程 |
+| [MEMO.md](./MEMO.md) | 申し送り。実装順序を決めた理由、命名の検討過程 |
 | [docs/workflow.md](./docs/workflow.md) | **開発の進め方。** イシューの進め方、PR の流れ、完了の条件 |
-| [docs/legacy-spec.md](./docs/legacy-spec.md) | **旧実装**の棚卸し。作り直し前に何が動いていて何が壊れていたか |
+| [docs/console-settings.md](./docs/console-settings.md) | **コンソールでしか設定できない項目**と現在値 |
 
 読む順番は `PRODUCT_SPEC.md` → `TECH_STACK.md`。
 作業に入るときは `docs/workflow.md`。
@@ -40,7 +40,7 @@ packages/
 （`apps/image` は Deno なので、npm workspaces に含めるかは `TECH_STACK.md` §12-2 の結論次第）。
 
 デプロイ先は2つだが、**リポジトリは1つ**にする。
-旧実装はリポジトリが3つに分かれていて、どれが生きているか分からなくなっていた。
+分けると、どのリポジトリが生きているのかを追えなくなる。
 
 ## 技術構成の要点
 
