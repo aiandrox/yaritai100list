@@ -13,10 +13,18 @@
 |---|---|
 | [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) | プロダクト仕様。何を作るか |
 | [TECH_STACK.md](./TECH_STACK.md) | 技術構成。なぜその選択をしたか、各案のメリット・リスク |
-| [MEMO.md](./MEMO.md) | 申し送り。旧環境の後始末、着手前の準備、実装の進め方 |
+| [MEMO.md](./MEMO.md) | 申し送り。旧環境の後始末、着手前の準備、命名の検討過程 |
+| [docs/workflow.md](./docs/workflow.md) | **開発の進め方。** イシューの進め方、PR の流れ、完了の条件 |
 | [docs/legacy-spec.md](./docs/legacy-spec.md) | **旧実装**の棚卸し。作り直し前に何が動いていて何が壊れていたか |
 
 読む順番は `PRODUCT_SPEC.md` → `TECH_STACK.md`。
+作業に入るときは `docs/workflow.md`。
+
+## 進め方
+
+作業単位は GitHub の[イシュー](https://github.com/aiandrox/yaritai100list/issues)で管理する。
+親イシュー #1〜#10 が機能単位で、`MVP`（#1〜#6）と `Post-MVP`（#7〜#10）の2マイルストーンに分かれる。
+着手時に 1 PR 単位のサブイシューへ分割する。詳細は [docs/workflow.md](./docs/workflow.md)。
 
 ## 構成（予定）
 
