@@ -33,13 +33,15 @@
 ```
 apps/
   web/        Cloudflare Workers（Hono + React SPA + D1）
-  image/      Deno Deploy（Satori による画像生成）  ← 未作成
+  render/     Deno Deploy（Satori による画像生成）  ← 未作成
 packages/
   shared/     型・Zod スキーマ・定数
 ```
 
-`apps/image` は OGP 画像に着手する時点で作る
+`apps/render` は OGP 画像に着手する時点で作る
 （Deno なので、npm workspaces に含めるかは `TECH_STACK.md` §12-2 の結論次第）。
+**ディレクトリ名は Deno Deploy のアプリ名 `yaritai100list-render` に合わせている**
+（`docs/console-settings.md`）。`image` にしないのは、PNG 以外の出力が来たときに名前がズレるため。
 
 デプロイ先は2つだが、**リポジトリは1つ**にする。
 分けると、どのリポジトリが生きているのかを追えなくなる。
