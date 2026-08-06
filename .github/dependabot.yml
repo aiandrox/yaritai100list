@@ -26,6 +26,15 @@ updates:
         update-types:
           - version-update:semver-major
 
+      # better-auth 1.7 は D1 でマイグレーションが通らない（#10551、未修正）。
+      # package.json も ~1.6.26 で固定しているが、Dependabot は
+      # 範囲を書き換える PR を出してくるので、ここでも止める。
+      # **解除の条件は TECH_STACK.md §12。上げるときはこの ignore も消す。**
+      - dependency-name: better-auth
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

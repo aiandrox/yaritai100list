@@ -1,19 +1,24 @@
 import * as Sentry from '@sentry/cloudflare'
 import { Hono } from 'hono'
 
+import { type AuthEnv, createAuth } from './auth'
 import { createDb } from './db'
 import { lists } from './db/schema'
-import { sentryOptions } from './sentry'
+import { type SentryEnv, sentryOptions } from './sentry'
 
 /**
- * Hono に渡す環境。`Env` は `npm run cf-typegen`（wrangler types）が
- * wrangler.jsonc のバインディングから生成する。
+ * Hono に渡す環境。
  *
- * バインディングを増やしたら cf-typegen を再実行して
- * worker-configuration.d.ts を更新する（typecheck の前に自動で走る）。
+ * `Env` は `npm run cf-typegen`（wrangler types）が wrangler.jsonc の
+ * バインディングから生成する。バインディングを増やしたら cf-typegen を再実行する
+ * （typecheck の前に自動で走る）。
+ *
+ * `AuthEnv` と `SentryEnv` を交差させているのは、**シークレットが `Env` に入らない**ため。
+ * `wrangler types` は `.dev.vars` から型を作るが、それは gitignore されていて CI に無い。
+ * **このアプリが動くために必要な環境変数の一覧**がここに集まる形になっている。
  */
 export interface AppEnv {
-  Bindings: Env
+  Bindings: Env & AuthEnv & SentryEnv
 }
 
 /**
@@ -29,6 +34,18 @@ const app = new Hono<AppEnv>()
     const db = createDb(c.env.DB)
     await db.select({ id: lists.id }).from(lists).limit(1)
     return c.json({ status: 'ok', db: 'ok' } as const)
+  })
+
+  /**
+   * Better Auth の全エンドポイント（セッション取得、サインイン、コールバック等）。
+   *
+   * **`wrangler.jsonc` の `run_worker_first` に `/api/*` が入っているので Worker に届く。**
+   * ここを `/auth/*` のような別のプレフィックスに変えるなら、あちらにも足すこと。
+   * 足し忘れると SPA の index.html が返り、404 にならないので気づきにくい。
+   */
+  .on(['GET', 'POST'], '/api/auth/*', (c) => {
+    const auth = createAuth(createDb(c.env.DB), c.env)
+    return auth.handler(c.req.raw)
   })
 
 /**

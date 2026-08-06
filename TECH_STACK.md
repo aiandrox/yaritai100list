@@ -566,9 +566,31 @@ jsdom で「クラスが付いている」ことを確認するより、起動�
 |---|---|---|
 | 1 | OGP カードと画像出力の具体的なデザイン | 方向性は `PRODUCT_SPEC.md` §5.3 に記録。Satori の CSS 対応範囲（flexbox のサブセット、grid 不可）で成立する構成にする |
 | 2 | `packages/shared` を **Deno から**使えるか | **Workers 側は確認済み**（#16）。Deno 側は未確認 — 下記 |
-| 3 | Better Auth 1.7 の D1 対応をいつ取り込むか | 1.7 は D1 のマイグレーションが通らない（§13）。upstream の修正待ち。**Dependabot が 1.7 に上げてこないよう固定する** |
+| 3 | Better Auth 1.7 をいつ取り込むか | 下記 |
 
 > **解決済み:** 旧 #3「Deno Deploy の無料枠の現在値と規約」は 2026-08-06 に確認して片付いた（§13）。
+
+### #3 の現状（2026-08-06、#49 で判明した範囲）
+
+**`better-auth` は `~1.6.26`（パッチのみ）で固定している。** 固定は2箇所:
+`apps/web/package.json` の範囲指定と、`.github/dependabot.yml` の `ignore`。
+**上げるときは両方を外す。**
+
+**ただし、このアプリは 1.7 の不具合の経路を通っていない。**
+[#10551](https://github.com/better-auth/better-auth/issues/10551) は `getMigrations()` の中の
+`pragma_index_list` が D1 の authorizer に拒否される話で、
+**マイグレーションを Drizzle + wrangler で当てているこの構成では `getMigrations()` を呼ばない。**
+
+それでも固定を続ける理由は、**1.7 が他の箇所で pragma を使っていないことを確認していない**から。
+
+解除の条件（どちらか）:
+
+- #10551 が修正され、リリースに入る
+- 1.7 に上げたブランチで、**D1 のバインディング経由**のテスト（`apps/web/test/auth.test.ts`）が緑になる
+  ことを確認する。⚠️ `wrangler d1 execute` では再現しないので、CLI での確認は根拠にならない
+
+スキーマは Better Auth 1.6.26 の定義から機械的に写した（方法は `src/db/schema/auth.ts` のコメント）。
+`@better-auth/cli` は 1.4 系しか出ておらず本体とバージョンがずれているため使っていない。
 
 ### #2 の現状（2026-08-06、#16 で判明した範囲）
 
