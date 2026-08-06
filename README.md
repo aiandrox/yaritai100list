@@ -5,6 +5,8 @@
 ログインせずに使え（ブラウザに保存）、ログインすると永続保存と複数のマイリストが使える。
 将来的にリストの共有、SNS カード（OGP）、画像出力、他人のやりたいことの取り入れに対応する。
 
+**公開先: https://yaritai100list.aiandrox.workers.dev**（中身はまだ土台のみ）
+
 **現在の状態: 土台を構築中。**
 `apps/web` が Hono + D1 + Drizzle で動くところまで来ている。
 進捗は[イシュー](https://github.com/aiandrox/yaritai100list/issues)を参照。
