@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 
+import { type Auth, createAuth } from '../src/auth'
 import { createDb, type Db } from '../src/db'
 
 /**
@@ -40,6 +41,18 @@ export async function resetDb(): Promise<void> {
 }
 
 /**
- * 認証済みセッションを作るヘルパはここに足す（#3）。
- * 認可のテストを書くときに必要になる。
+ * テスト用の Better Auth インスタンス。
+ *
+ * 本体と同じ `createAuth` を通す。鍵はテスト専用の固定値で、
+ * `.dev.vars` や本番のシークレットには依存しない（CI でも同じ値で動く）。
+ */
+export function testAuth(): Auth {
+  return createAuth(testDb(), {
+    BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789',
+    BETTER_AUTH_URL: 'https://example.com',
+  })
+}
+
+/**
+ * 認証済みセッションを作るヘルパはここに足す（#52 で認可のテストを書くときに必要）。
  */

@@ -22,6 +22,13 @@
     "enabled": true,
   },
 
+  // 秘密ではない値。**ローカルでは .dev.vars が上書きする**（5173 番）。
+  // OAuth のコールバックの基点になるため、リクエストの Host ヘッダからは導出しない
+  // （Host は攻撃者が差し替えられる）。
+  "vars": {
+    "BETTER_AUTH_URL": "https://yaritai100list.aiandrox.workers.dev",
+  },
+
   // SPA を Workers から配信する。ビルド出力のディレクトリは
   // @cloudflare/vite-plugin が設定するため、ここには書かない。
   //

@@ -4,6 +4,15 @@
 # **値をこのファイルに書かないこと。** 名前と用途だけを書く。
 # 本番は `wrangler secret put <名前>` で入れる（docs/console-settings.md）。
 
+# セッションの署名に使う鍵。**アプリ側で生成する値**なので誰かから貰う必要はない。
+#   openssl rand -base64 32
+# 本番は `wrangler secret put BETTER_AUTH_SECRET`。ローカルと本番で別の値にする。
+BETTER_AUTH_SECRET=
+
+# このアプリの URL。OAuth のコールバックの基点。
+# wrangler.jsonc の vars には本番の URL が入っているので、**ローカルではここで上書きする**。
+BETTER_AUTH_URL=http://localhost:5173
+
 # Sentry の DSN。**未設定なら通知は無効**になるので、通常のローカル開発では空でよい。
 # 通知の動作確認をするときだけ値を入れる。
 SENTRY_DSN=

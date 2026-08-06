@@ -15,7 +15,18 @@ import { defineConfig } from 'vitest/config'
  * 旧 `poolOptions.workers` の中身をそのまま `cloudflareTest()` の引数にする。
  */
 export default defineConfig(async () => ({
-  plugins: [cloudflareTest({ wrangler: { configPath: './wrangler.jsonc' } })],
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: './wrangler.jsonc' },
+      miniflare: {
+        // 🔴 wrangler は `.dev.vars` を読むので、テストも手元では
+        // ローカルのシークレットを使ってしまう。**CI には `.dev.vars` が無い**ため、
+        // ここで固定値を入れておかないと「手元では緑、CI だけ落ちる」状態になる。
+        // テスト専用の値であり、本番のシークレットとは無関係。
+        bindings: { BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789' },
+      },
+    }),
+  ],
   test: {
     setupFiles: ['./test/setup.ts'],
 
