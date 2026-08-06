@@ -1,7 +1,9 @@
+import * as Sentry from '@sentry/cloudflare'
 import { Hono } from 'hono'
 
 import { createDb } from './db'
 import { lists } from './db/schema'
+import { sentryOptions } from './sentry'
 
 /**
  * Hono に渡す環境。`Env` は `npm run cf-typegen`（wrangler types）が
@@ -29,6 +31,19 @@ const app = new Hono<AppEnv>()
     return c.json({ status: 'ok', db: 'ok' } as const)
   })
 
-export default app
+/**
+ * Sentry で包んでからエクスポートする。未処理の例外がここで捕まる。
+ *
+ * `defineCloudflareOptions` + `instrument.server.ts` による自動計装もあるが、
+ * **プラグインが暗黙に拾う形は採らない。** どこで初期化されているかがコードから
+ * 追えなくなる（`TECH_STACK.md` §1 の「暗黙のルールが少ないか」）。
+ *
+ * `sentryOptions` は DSN が無ければ `undefined` を返し、SDK は初期化されない。
+ */
+export default Sentry.withSentry(sentryOptions, app)
 
+/**
+ * Hono RPC のクライアント用。包む前の `app` の型を使う。
+ * `withSentry` の戻り値は元の型をそのまま返すが、意図を明示するためこちらを参照する。
+ */
 export type AppType = typeof app

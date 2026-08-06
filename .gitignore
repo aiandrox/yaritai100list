@@ -7,6 +7,8 @@ build/
 .wrangler/
 .dev.vars
 .dev.vars.*
+# ひな形は値を持たないのでコミットする（変数名を discoverable にするため）
+!.dev.vars.example
 
 # wrangler types が生成する Workers ランタイムの型（550KB 超）。
 # コミットすると検索のノイズになり、wrangler を更新したときに古い型が黙って残る。

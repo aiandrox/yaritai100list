@@ -1,0 +1,13 @@
+# ローカル開発用の環境変数のひな形。
+# `.dev.vars` にコピーして値を入れる（`.dev.vars` は gitignore 済み）。
+#
+# **値をこのファイルに書かないこと。** 名前と用途だけを書く。
+# 本番は `wrangler secret put <名前>` で入れる（docs/console-settings.md）。
+
+# Sentry の DSN。**未設定なら通知は無効**になるので、通常のローカル開発では空でよい。
+# 通知の動作確認をするときだけ値を入れる。
+SENTRY_DSN=
+
+# Sentry に送るイベントの environment。未設定なら production。
+# ローカルから通知を試すときは本番のイベントと混ざらないよう local などにする。
+SENTRY_ENVIRONMENT=local
