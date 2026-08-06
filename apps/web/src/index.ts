@@ -116,10 +116,12 @@ const app = new Hono<AppEnv>()
    * ⚠️ **一時的なルート。Sentry に `user.id` が届くかを確認するためだけに置いている。**
    * 確認できたら次の PR で消す（恒久的に置くと公開されたエラー発生器になる。#48 と同じ理由）。
    *
-   * `requireUser` の後に置いているので、**ログイン中の状態で例外が起きる。**
-   * `Sentry.setUser({ id })` の効果を見るにはこの条件が必要。
+   * 確認したいのは「`dataCollection.userInfo: false` が**明示的な `setUser` を落とさないか**」。
+   * `requireUser` を通す必要は無く、ここで直接 `setUser` を呼べば同じことが確かめられる
+   * （本番のセッション Cookie は署名鍵を保存していないので AI 側では作れない）。
    */
-  .get('/api/dev/sentry-check', requireUser, () => {
+  .get('/api/dev/sentry-check', () => {
+    Sentry.setUser({ id: 'sentry-check-user-id' })
     throw new Error('Sentry に user.id が届くかの確認（一時的なルート）')
   })
 
