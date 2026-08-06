@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createAuth } from '../src/auth'
 import { testAuth, testDb } from './helpers'
-import { session, user } from '../src/db/schema'
+import { sessions, users } from '../src/db/schema'
 
 /**
  * Better Auth が **D1 のバインディング経由**で読み書きできることを確認する。
@@ -69,7 +69,7 @@ describe('Better Auth と D1', () => {
 
     // Better Auth が書いた行を、アプリ側の経路（Drizzle）から読めること。
     // 片方だけで読めても意味がないので、両方から見る
-    const rows = await testDb().select({ userId: session.userId }).from(session)
+    const rows = await testDb().select({ userId: sessions.userId }).from(sessions)
 
     expect(rows).toEqual([{ userId: created.id }])
   })
@@ -90,9 +90,9 @@ describe('Better Auth と D1', () => {
     })
     await ctx.internalAdapter.createSession(created.id, undefined)
 
-    await db.delete(user)
+    await db.delete(users)
 
-    expect(await db.select().from(session)).toEqual([])
+    expect(await db.select().from(sessions)).toEqual([])
   })
 })
 
@@ -115,7 +115,7 @@ describe('セッションを失効させられること', () => {
     expect(await ctx.internalAdapter.findSession(s.token)).not.toBeNull()
 
     // サーバー側から失効させる
-    await testDb().delete(session)
+    await testDb().delete(sessions)
 
     expect(await ctx.internalAdapter.findSession(s.token)).toBeNull()
   })

@@ -14,8 +14,9 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
  * ```
  *
  * 命名の制約:
- * - **テーブル名は `user` / `session` / `account` / `verification` から変えない。**
- *   Better Auth 側の既定値で、変えるなら設定でも合わせる必要がある
+ * - **テーブル名は複数形に統一している**（`users` / `sessions` / `accounts` / `verifications`）。
+ *   Better Auth の既定は単数形なので、`createAuth` の `modelName` でも同じ名前を指定している。
+ *   **片方だけ変えるとアダプタがスキーマを解決できなくなる**（モデル名でプロパティを引くため）
  * - **プロパティ名（`emailVerified` など）も変えない。** アダプタがこの名前で列を引く。
  *   DB 側の列名は snake_case にしている
  */
@@ -27,7 +28,7 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
  * どの公開面にも作者を表示しないため、表示に使う場所は無い。
  * Sentry にも送らない（送るのは `id` だけ。`src/sentry.ts`）。
  */
-export const user = sqliteTable('user', {
+export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
@@ -42,7 +43,7 @@ export const user = sqliteTable('user', {
  *
  * DB に持つので**サーバー側から失効させられる**。これは `CLAUDE.md` の不変条件。
  */
-export const session = sqliteTable('session', {
+export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
@@ -50,7 +51,7 @@ export const session = sqliteTable('session', {
   userAgent: text('user_agent'),
   userId: text('user_id')
     .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'cascade' }),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 })
@@ -62,13 +63,13 @@ export const session = sqliteTable('session', {
  * このアプリは**ログインにしか Google を使わない**ので、これらを保存する必要はない。
  * 保存するかどうかは #50（Google プロバイダの設定）で判断する。
  */
-export const account = sqliteTable('account', {
+export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
   accountId: text('account_id').notNull(),
   providerId: text('provider_id').notNull(),
   userId: text('user_id')
     .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'cascade' }),
   accessToken: text('access_token'),
   refreshToken: text('refresh_token'),
   idToken: text('id_token'),
@@ -84,7 +85,7 @@ export const account = sqliteTable('account', {
  * メール確認などの一時的なトークン。
  * ソーシャルログインだけなら使われないが、Better Auth が存在を前提にする。
  */
-export const verification = sqliteTable('verification', {
+export const verifications = sqliteTable('verifications', {
   id: text('id').primaryKey(),
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),

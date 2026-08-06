@@ -74,6 +74,21 @@ export function createAuth(db: Db, env: AuthEnv) {
     }),
 
     /**
+     * テーブル名を複数形に揃えている（Better Auth の既定は単数形）。
+     *
+     * 🔴 **`modelName` と Drizzle の export 名の両方を変える必要がある。**
+     * Drizzle アダプタは**モデル名でスキーマのプロパティを引く**ため、
+     * 片方だけ変えるとスキーマを解決できず、認証全体が落ちる。
+     *
+     * `fields`（列名の対応）は指定しない。Drizzle アダプタでは列名は
+     * Drizzle 側の定義が使われるので、ここで書くと二重指定になる。
+     */
+    user: { modelName: 'users' },
+    account: { modelName: 'accounts' },
+    verification: { modelName: 'verifications' },
+    // `session` の `modelName` は下の session オプションにまとめて指定している
+
+    /**
      * **資格情報が揃っている環境だけで Google を有効にする。**
      *
      * 揃っていない環境（`.dev.vars` に入れていないローカル）でも
@@ -91,6 +106,8 @@ export function createAuth(db: Db, env: AuthEnv) {
         : {},
 
     session: {
+      modelName: 'sessions',
+
       /**
        * 🔴 **Cookie キャッシュを使わない。**
        *
