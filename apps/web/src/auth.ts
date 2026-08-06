@@ -73,6 +73,27 @@ export function withoutOAuthCredentials<T extends object>(account: T) {
 }
 
 /**
+ * `sessions` の行から**利用者を追跡できる情報を落とす。**
+ *
+ * Better Auth は既定でセッションに IP と User-Agent を保存する。
+ * このアプリには**それを読む機能が無い**（ログイン履歴も端末一覧も作らない）。
+ * 使わない個人情報を持たない。
+ *
+ * 🔴 **`advanced.ipAddress.disableIpTracking` は使わない。**
+ * あれを立てると `getIp()` が `null` を返すようになり、**レート制限のキーからも IP が消える**
+ * （`@better-auth/core/utils/ip.mjs` の先頭で分岐している）。
+ * ここでやりたいのは「**保存しない**」であって「**取得しない**」ではない。
+ * 濫用対策は残したまま、DB に書く直前で落とす。
+ *
+ * なお Better Auth 内蔵のレート制限は本番で既定有効だが、ストアが `memory` で
+ * Workers では isolate ごとに分かれるため強くない。
+ * 本命は Workers の `ratelimit` バインディング（`TECH_STACK.md` §9、#5 で入れる）。
+ */
+export function withoutClientMetadata<T extends object>(session: T) {
+  return { ...session, ipAddress: null, userAgent: null }
+}
+
+/**
  * Better Auth のインスタンスを作る。**リクエストごとに作る。**
  *
  * Workers では D1 のバインディングがリクエストのスコープにしか無いため、
@@ -146,6 +167,15 @@ export function createAuth(db: Db, env: AuthEnv) {
         },
         update: {
           before: (account) => Promise.resolve({ data: withoutOAuthCredentials(account) }),
+        },
+      },
+
+      session: {
+        create: {
+          before: (session) => Promise.resolve({ data: withoutClientMetadata(session) }),
+        },
+        update: {
+          before: (session) => Promise.resolve({ data: withoutClientMetadata(session) }),
         },
       },
     },
