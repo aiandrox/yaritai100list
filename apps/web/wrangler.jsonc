@@ -1,9 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
 
-  // ホスト名は `yaritai100list.<subdomain>.workers.dev` になる。
-  // <subdomain> は Cloudflare アカウントに紐づく値で、#1 でアカウントを作るまで確定しない。
+  // ホスト名は `yaritai100list.aiandrox.workers.dev`。
   // カスタムドメインは使わない（TECH_STACK.md §8 の決定事項）。
+  // サブドメイン `aiandrox` を変えると共有リンクが死ぬので変更しない。
   "name": "yaritai100list",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-06",
@@ -18,9 +18,9 @@
     {
       "binding": "DB",
       "database_name": "yaritai100list",
-      // ローカル開発では使われない。#1 で D1 を作ったら実際の ID に差し替える
-      // （ここは秘密の値ではないのでコミットしてよい）。
-      "database_id": "PLACEHOLDER_SET_IN_ISSUE_1",
+      // 秘密の値ではないのでコミットしてよい。ローカル開発では使われない。
+      // 現在値の記録は docs/console-settings.md（リージョンは APAC）。
+      "database_id": "78718e38-9558-416b-b7c2-61b6a00be62d",
       "migrations_dir": "migrations",
     },
   ],
