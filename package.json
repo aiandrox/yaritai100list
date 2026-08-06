@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "npm run dev --workspace @yaritai100list/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

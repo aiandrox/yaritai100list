@@ -11,6 +11,8 @@ export default tseslint.config(
       '**/.wrangler/**',
       '**/coverage/**',
       '**/node_modules/**',
+      // wrangler types の生成物。lint する対象ではない
+      '**/worker-configuration.d.ts',
     ],
   },
   js.configs.recommended,

@@ -8,6 +8,11 @@ build/
 .dev.vars
 .dev.vars.*
 
+# wrangler types が生成する Workers ランタイムの型（550KB 超）。
+# コミットすると検索のノイズになり、wrangler を更新したときに古い型が黙って残る。
+# typecheck の前に毎回生成する（apps/web の pretypecheck）。
+worker-configuration.d.ts
+
 # 環境変数・秘密情報（旧実装では .env を履歴に入れてしまっていた）
 .env
 .env.*

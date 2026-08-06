@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // ホスト名は `yaritai100list.<subdomain>.workers.dev` になる。
+  // <subdomain> は Cloudflare アカウントに紐づく値で、#1 でアカウントを作るまで確定しない。
+  // カスタムドメインは使わない（TECH_STACK.md §8 の決定事項）。
+  "name": "yaritai100list",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-06",
+
+  // account_id はここに書かない。ローカル開発（wrangler dev）には不要で、
+  // デプロイ時は CLOUDFLARE_ACCOUNT_ID を環境変数で渡す。
+  "observability": {
+    "enabled": true,
+  },
+}
