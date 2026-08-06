@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 同じブランチに続けて push したとき、古い実行を止める。
+# private リポジトリの Actions は無料枠が月2,000分なので無駄に回さない。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # .node-version を唯一の情報源にする。ここに数字を書かない
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci
+
+      # 1つ落ちても残りを実行する。全部の失敗を1回の実行で把握できるようにするため
+      # （ジョブを分けると依存のインストールが回数分かかる）。
+      - name: typecheck
+        if: ${{ !cancelled() }}
+        run: npm run typecheck
+
+      - name: lint
+        if: ${{ !cancelled() }}
+        run: npm run lint
+
+      - name: format
+        if: ${{ !cancelled() }}
+        run: npm run format:check
+
+      - name: test
+        if: ${{ !cancelled() }}
+        run: npm test
