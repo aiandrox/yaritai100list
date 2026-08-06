@@ -13,6 +13,3 @@ export const SERVICE_NAME = 'やりたいことリスト100'
 
 /** 英語名。リポジトリ名とホスト名に対応する。 */
 export const SERVICE_NAME_EN = 'yaritai100list'
-
-// CI が赤くなることの確認用。確認できたら次のコミットで戻す。
-export const CI_RED_CHECK: number = 'これは文字列なので型エラーになる'
