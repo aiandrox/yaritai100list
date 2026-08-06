@@ -2,7 +2,7 @@ import { SERVICE_NAME } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
-import { toSessionState, type SessionState } from './model'
+import { signOutRequestInit, toSessionState, type SessionState } from './model'
 
 /**
  * 土台の確認用の画面。リストの UI は #4 で作る。
@@ -50,7 +50,8 @@ export function App() {
   const signOut = useCallback(async () => {
     setSignOutFailed(false)
 
-    const res = await fetch('/api/auth/sign-out', { method: 'POST' })
+    // 要求の中身は model.ts に置いている（content-type と本文が要る理由もそこ）
+    const res = await fetch('/api/auth/sign-out', signOutRequestInit())
 
     // **失敗を黙って飲まない。** ここで状態を取り直すと画面は「ログイン中」に
     // 戻るだけなので、利用者にはログアウトできたのか判断がつかない

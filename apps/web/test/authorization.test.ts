@@ -2,6 +2,7 @@ import { exports } from 'cloudflare:workers'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
+import { signOutRequestInit } from '../src/client/model'
 import { lists, sessions } from '../src/db/schema'
 import { signIn, testBaseUrl, testDb } from './helpers'
 
@@ -187,14 +188,21 @@ describe('入力の検証', () => {
 
 describe('ログアウト', () => {
   /**
-   * ブラウザが送る形に合わせる。**Origin が無いと Better Auth の CSRF 保護に弾かれる**
-   * （Cookie を伴う POST で Origin を検証している）。
+   * ブラウザが送る形に合わせる。
+   *
+   * - **Origin が無いと Better Auth の CSRF 保護に弾かれる**
+   *   （Cookie を伴う POST で Origin を検証している）
+   * - **要求の中身は画面側と同じ `signOutRequestInit()` を使う。**
+   *   ここに直接書くと、画面側だけ直したときにテストが気づけない
    */
-  const signOutRequest = (headers: Headers) =>
-    request('/api/auth/sign-out', {
-      method: 'POST',
-      headers: { ...Object.fromEntries(headers), origin: testBaseUrl() },
+  const signOutRequest = (headers: Headers) => {
+    const init = signOutRequestInit()
+
+    return request('/api/auth/sign-out', {
+      ...init,
+      headers: { ...init.headers, ...Object.fromEntries(headers), origin: testBaseUrl() },
     })
+  }
 
   it('セッションが D1 から消える', async () => {
     const me = await signIn('signout@example.com')
@@ -224,6 +232,26 @@ describe('ログアウト', () => {
 
     expect(res.status).toBe(403)
     // 拒否されたのだからセッションは残っている
+    expect(await testDb().select().from(sessions)).toHaveLength(1)
+  })
+
+  it('🔴 本文があって content-type が無いと 415（本番で踏んだ）', async () => {
+    // ブラウザの `fetch(url, { method: 'POST' })` は本文が無くても Content-Length: 0 を
+    // 送るため、Workers 側では「本文あり」に見えて better-call の 415 に落ちる。
+    // **`new Request` は body が null なのでこの経路を再現しない。**
+    // 明示的に本文を付けて、415 になること自体を固定する（画面側が content-type を
+    // 落としたら、この仕様のせいで壊れると分かるように）
+    const me = await signIn('media-type@example.com')
+
+    // 本文をバイト列で渡す。**文字列を渡すと `Request` が
+    // `content-type: text/plain` を勝手に付けてしまい、「無い」状態を作れない**
+    const res = await request('/api/auth/sign-out', {
+      method: 'POST',
+      headers: { ...Object.fromEntries(me.headers), origin: testBaseUrl() },
+      body: new TextEncoder().encode('{}'),
+    })
+
+    expect(res.status).toBe(415)
     expect(await testDb().select().from(sessions)).toHaveLength(1)
   })
 })
