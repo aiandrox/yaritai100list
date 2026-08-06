@@ -208,6 +208,39 @@ describe('使わない資格情報を保存しない（#58）', () => {
   })
 })
 
+describe('セッションに IP と User-Agent を保存しない（#58）', () => {
+  it('override で渡しても保存されない', async () => {
+    // 本番では内部アダプタが Cloudflare のヘッダから IP を、
+    // `user-agent` から UA を入れてくる。テストではその形を override で再現する
+    const ctx = await testAuth().$context
+    const userId = await createTestUser('tracking@example.com')
+
+    await ctx.internalAdapter.createSession(userId, undefined, {
+      ipAddress: '203.0.113.9',
+      userAgent: 'Mozilla/5.0 (test)',
+    })
+
+    const rows = await testDb().select().from(sessions)
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.ipAddress).toBeNull()
+    expect(rows[0]?.userAgent).toBeNull()
+  })
+
+  it('🔴 IP の取得自体は止めない（レート制限が効かなくなるため）', () => {
+    // disableIpTracking を立てると getIp() が null を返し、
+    // **レート制限のキーからも IP が消える。**
+    // やりたいのは「保存しない」であって「取得しない」ではない
+    // 設定していないので型には現れない。**設定されていないこと**を見たいので
+    // ここだけ型を広げて読む（`ipAddress` を足すと型が変わり、この行が意味を持つ）
+    const advanced = testAuth().options.advanced as {
+      ipAddress?: { disableIpTracking?: boolean }
+    }
+
+    expect(advanced.ipAddress?.disableIpTracking).not.toBe(true)
+  })
+})
+
 describe('Google プロバイダ', () => {
   it('資格情報が揃っていれば有効になる', () => {
     const auth = createAuth(testDb(), {
