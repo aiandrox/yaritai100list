@@ -13,4 +13,15 @@
   "observability": {
     "enabled": true,
   },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "yaritai100list",
+      // ローカル開発では使われない。#1 で D1 を作ったら実際の ID に差し替える
+      // （ここは秘密の値ではないのでコミットしてよい）。
+      "database_id": "PLACEHOLDER_SET_IN_ISSUE_1",
+      "migrations_dir": "migrations",
+    },
+  ],
 }

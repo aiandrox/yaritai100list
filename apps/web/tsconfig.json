@@ -6,5 +6,5 @@
     // 型チェックが通してしまう）。
     "types": []
   },
-  "include": ["src", "worker-configuration.d.ts"]
+  "include": ["src", "drizzle.config.ts", "worker-configuration.d.ts"]
 }
