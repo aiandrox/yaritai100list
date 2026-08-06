@@ -279,9 +279,26 @@ Hono は例外を自前で捕まえて 500 を返すため、Sentry から見る
 IPv6**（`2a06:98c0::/29` は Cloudflare の範囲）で、**利用者の IP ではない。**
 Worker から Sentry へ送信するため、Sentry が送信元 IP を推測して埋めたもの。
 
-`dataCollection.userInfo: false` と `beforeSend` の `delete event.user` は効いており、
+`dataCollection.userInfo: false` と `beforeSend` のユーザー情報の除去は効いており、
 SDK 側は何も送っていない。消したい場合は
 **Settings → Security & Privacy → Prevent Storing of IP Addresses** で止められる（未設定）。
+
+### `user.id` が届くかの確認結果（2026-08-06、本番で実施。#52 / #64）
+
+**届いた。** `dataCollection.userInfo: false` は、**明示的な `Sentry.setUser({ id })` は落とさない。**
+自動で集めるユーザー情報を止めるだけで、こちらが入れた値は残る。
+
+| 経路 | イベント | `user.id` |
+|---|---|---|
+| `requireUser` を通った実ログイン（`authorization.ts` の `setUser`） | `YARITAI100LIST-WORKERS-2` | ✅ Better Auth の実 ID |
+| 認証なしの確認用ルート（合成 ID を直接 `setUser`） | `YARITAI100LIST-WORKERS-1` | ✅ 合成 ID |
+
+- **名前・メールは付いていない**（`scrubEvent` が `id` 以外を落とす方針どおり）
+- `user` に IP と geo が付くのは上記のとおり Cloudflare エッジの IP。利用者のものではない
+- 確認に使った `/api/dev/sentry-check` は**確認後に削除した。**
+  `requireUser` の後ろに置いた版は、**本番のセッション Cookie を AI 側では作れない**ため
+  （`BETTER_AUTH_SECRET` を持っていない）叩けず、利用者に叩いてもらう必要があった。
+  同種の確認をするなら、認証を外した合成 ID の版の方が AI だけで完結する
 
 ### 通知が実際に届くかの確認手順（再確認したいとき）
 
