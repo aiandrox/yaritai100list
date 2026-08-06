@@ -1,3 +1,4 @@
+import { exports } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 
 import { createAuth } from '../src/auth'
@@ -157,5 +158,39 @@ describe('Google プロバイダ', () => {
     // ローカルで .dev.vars に入れていない場合。ログイン手段が無くなるだけで
     // /api/health などは動く
     expect(Object.keys(testAuth().options.socialProviders)).toEqual([])
+  })
+})
+
+describe('GET /api/login/google', () => {
+  it('Google の認可 URL へ 302 で送る', async () => {
+    const res = await exports.default.fetch(new Request('https://example.com/api/login/google'), {
+      redirect: 'manual',
+    })
+
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toMatch(
+      /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/,
+    )
+  })
+
+  it('🔴 state と PKCE の Cookie を引き継ぐ', async () => {
+    // signInSocial のレスポンスに乗っている Set-Cookie を落とすと、
+    // コールバックで state 不一致になりログインできない。
+    // URL だけ取り出す実装にしていないことをここで固定する
+    const res = await exports.default.fetch(new Request('https://example.com/api/login/google'), {
+      redirect: 'manual',
+    })
+
+    expect(res.headers.getSetCookie().length).toBeGreaterThan(0)
+  })
+
+  it('要求するスコープが最小限（openid / email / profile）', async () => {
+    const res = await exports.default.fetch(new Request('https://example.com/api/login/google'), {
+      redirect: 'manual',
+    })
+
+    const scope = new URL(res.headers.get('location') ?? '').searchParams.get('scope')
+
+    expect(scope?.split(' ').sort()).toEqual(['email', 'openid', 'profile'])
   })
 })

@@ -23,7 +23,14 @@ export default defineConfig(async () => ({
         // ローカルのシークレットを使ってしまう。**CI には `.dev.vars` が無い**ため、
         // ここで固定値を入れておかないと「手元では緑、CI だけ落ちる」状態になる。
         // テスト専用の値であり、本番のシークレットとは無関係。
-        bindings: { BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789' },
+        bindings: {
+          BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789',
+
+          // Google のログイン導線をテストするためのダミー。
+          // 認可 URL の組み立てはローカルで完結するのでネットワークには出ない
+          GOOGLE_CLIENT_ID: 'dummy-client-id.apps.googleusercontent.com',
+          GOOGLE_CLIENT_SECRET: 'dummy-client-secret',
+        },
       },
     }),
   ],
