@@ -2,11 +2,12 @@ import { VISIBILITIES } from '@yaritai100list/shared'
 import { sql } from 'drizzle-orm'
 import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
+import { users } from './auth'
+
 /**
  * リスト。
  *
  * ここで持たない列と、それを足すイシュー:
- * - `user_id`: 認証のテーブルがまだ無いため #3 で足す
  * - `share_id`: 公開用の ID。#7（リストの共有）で足す
  *
  * 決めた仕様はできる限り DB の制約にする。人間がレビューしない開発では
@@ -20,6 +21,19 @@ export const lists = sqliteTable(
      * 公開用の `share_id` とは別の値にする。
      */
     id: text('id').primaryKey(),
+
+    /**
+     * 所有者。**NOT NULL。持ち主のいないリストは DB に存在しない。**
+     *
+     * 未ログインのリストはブラウザの localStorage にあり、DB には来ない
+     * （`PRODUCT_SPEC.md` §2）。つまり DB の行は必ず誰かのもの。
+     *
+     * 利用者を削除したらリストも消える（`on delete cascade`）。
+     * 消し残しがあると、持ち主のいない行が公開面に出る事故につながる。
+     */
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
 
     title: text('title').notNull(),
 
