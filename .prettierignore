@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.output/
+.wrangler/
+coverage/
+package-lock.json
+
+# ドキュメントは手で改行位置を決めている。Prettier に整形させると
+# 表や行分けが壊れて差分が読めなくなるため対象外にする。
+**/*.md
