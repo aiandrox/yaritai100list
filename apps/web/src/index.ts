@@ -31,8 +31,27 @@ const app = new Hono<AppEnv>()
     return c.json({ status: 'ok', db: 'ok' } as const)
   })
 
+  // ⚠️ Sentry の到達確認用。**確認したらすぐ消す。**
+  // 恒久的に置くと、公開されたエラー発生器になり無料枠を焼かれる
+  .get('/api/dev/boom', () => {
+    throw new Error('Sentry の到達確認（一時的なルート）')
+  })
+
 /**
- * Sentry で包んでからエクスポートする。未処理の例外がここで捕まる。
+ * 🔴 **Hono は例外を自前で捕まえて 500 を返すため、`withSentry` には例外が届かない。**
+ * ここで明示的に Sentry へ送る。これが無いと、SDK を正しく初期化していても
+ * ルート内で起きた例外が1件も通知されない。
+ *
+ * レスポンスには理由を載せない。例外メッセージに内部の情報が入りうるため。
+ */
+app.onError((error, c) => {
+  Sentry.captureException(error)
+  return c.json({ error: 'Internal Server Error' } as const, 500)
+})
+
+/**
+ * Sentry で包んでからエクスポートする。`onError` を通らない経路
+ * （ミドルウェアより手前で起きる例外など）はここで捕まる。
  *
  * `defineCloudflareOptions` + `instrument.server.ts` による自動計装もあるが、
  * **プラグインが暗黙に拾う形は採らない。** どこで初期化されているかがコードから
