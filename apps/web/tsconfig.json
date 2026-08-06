@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Workers の型は wrangler types が生成する worker-configuration.d.ts で入る。
+    // @types/* を勝手に拾わせない（Node の型が混ざると、Workers に無い API を
+    // 型チェックが通してしまう）。
+    "types": []
+  },
+  "include": ["src", "worker-configuration.d.ts"]
+}
