@@ -104,8 +104,9 @@ gh api -X PUT repos/aiandrox/yaritai100list/rulesets/20485718 --input <file>
 | デプロイ方法 | `npm run deploy`（`vite build` + `wrangler deploy`） |
 | 確認済みの経路 | `/api/health` / `/api/health/db`（リモート D1 往復）/ `/`（SPA）/ `/lists`（SPA フォールバック）/ `/api/nope`（404）/ 静的アセット |
 
-**⚠️ `SENTRY_DSN` を本番に設定していないため、現時点で本番のエラー通知は無効。**
-利用者が `wrangler secret put SENTRY_DSN` を実行する必要がある（AI は値を持っていない）。
+`SENTRY_DSN` は設定済み（2026-08-06、利用者が `wrangler secret put` で登録）。
+**シークレットを登録すると新しいバージョンが自動でデプロイされる**（`deployments list` に
+`Source: Secret Change` として残る）。再デプロイは不要。
 
 ### コンソールでしか触れないもの
 
@@ -251,7 +252,33 @@ DSN が漏れると第三者にイベントを送り込まれて枠を焼かれ�
 という状況が実際に起きたとき。そのときは SPA 用のプロジェクトを別に作り、
 `ignoreErrors` でノイズを削ってから入れる。
 
-### 通知が実際に届くかの確認手順
+### 到達確認の結果（2026-08-06、本番で実施）
+
+**届いた。** 一時的に例外を投げるルートを本番に出して確認し、確認後すぐ削除した。
+
+| 確認項目 | 結果 |
+|---|---|
+| イベントの到達 | ✅ `YARITAI100LIST-WORKERS-1` として2件。**叩いた回数と一致（重複なし）** |
+| environment | ✅ `production` |
+| transaction | ✅ `GET /api/dev/boom` |
+| url | ✅ 送られている（`shareId` を隠さない方針どおり） |
+| リクエストボディ・Cookie | ✅ 含まれていない |
+
+**このとき `withSentry` だけでは通知が飛ばない可能性に気づいた。**
+Hono は例外を自前で捕まえて 500 を返すため、Sentry から見ると「成功したリクエスト」になる。
+`app.onError` で明示的に `captureException` する形に直してから確認した（#47）。
+
+#### `user` に IP が入る（実害なし）
+
+イベントの `user` に `2a06:98c0:3600::103` が入っていた。これは **Cloudflare のエッジ自身の
+IPv6**（`2a06:98c0::/29` は Cloudflare の範囲）で、**利用者の IP ではない。**
+Worker から Sentry へ送信するため、Sentry が送信元 IP を推測して埋めたもの。
+
+`dataCollection.userInfo: false` と `beforeSend` の `delete event.user` は効いており、
+SDK 側は何も送っていない。消したい場合は
+**Settings → Security & Privacy → Prevent Storing of IP Addresses** で止められる（未設定）。
+
+### 通知が実際に届くかの確認手順（再確認したいとき）
 
 **この確認には DSN が必要なので、コードだけでは完結しない。**
 自動テストで検証しているのは「DSN が無ければ SDK を初期化しない」「送る前に
