@@ -29,6 +29,20 @@ export interface AuthEnv {
    * ローカルは `.dev.vars` で上書きする。
    */
   readonly BETTER_AUTH_URL: string
+
+  /**
+   * Google の OAuth クライアント ID。
+   *
+   * **development と production で値が違う**（#1 でクライアントを2つに分けた）。
+   * 「Client ID は公開値だから」と `wrangler.jsonc` に直書きすると、
+   * ローカルで本番クライアントを使ってしまうため、環境変数で渡す。
+   *
+   * **未設定ならログイン手段が無くなるだけで、アプリは起動する**（下記）。
+   */
+  readonly GOOGLE_CLIENT_ID?: string
+
+  /** Google の OAuth クライアントシークレット。**シークレット**。 */
+  readonly GOOGLE_CLIENT_SECRET?: string
 }
 
 /**
@@ -59,7 +73,57 @@ export function createAuth(db: Db, env: AuthEnv) {
       schema,
     }),
 
-    // ソーシャルログインのプロバイダは #50 で足す
+    /**
+     * **資格情報が揃っている環境だけで Google を有効にする。**
+     *
+     * 揃っていない環境（`.dev.vars` に入れていないローカル）でも
+     * `npm run dev` が起動し、`/api/health` などは動く。ログイン手段が無くなるだけ。
+     * `SENTRY_DSN` が無ければ通知を無効にするのと同じ考え方。
+     */
+    socialProviders:
+      env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+        ? {
+            google: {
+              clientId: env.GOOGLE_CLIENT_ID,
+              clientSecret: env.GOOGLE_CLIENT_SECRET,
+            },
+          }
+        : {},
+
+    session: {
+      /**
+       * 🔴 **Cookie キャッシュを使わない。**
+       *
+       * 有効にすると、セッションの内容が署名付き Cookie に載って
+       * DB を見ずに認証が通る。つまり**サーバー側でセッションを消しても
+       * キャッシュの有効期間は通り続ける。**
+       * `CLAUDE.md` の「セッションはサーバー側から失効できる方式にする」に反する。
+       *
+       * 既定は無効だが、性能改善のつもりで有効にされると認可が静かに壊れるため
+       * 明示的に書いておく。
+       */
+      cookieCache: { enabled: false },
+    },
+
+    advanced: {
+      /**
+       * 🔴 **Cookie に `Domain` 属性を付けない（host-only）。**
+       *
+       * `crossSubDomainCookies` を有効にすると `Domain` が付く。
+       * `workers.dev` は**他人のワーカーとサブドメインを共有する空間**なので、
+       * `Domain=workers.dev` のような Cookie は他のワーカーにも送られてしまう。
+       * 既定は無効だが、これも明示しておく（`TECH_STACK.md` §8）。
+       */
+      crossSubDomainCookies: { enabled: false },
+
+      defaultCookieAttributes: {
+        httpOnly: true,
+        sameSite: 'lax',
+      },
+
+      // `Secure` は baseURL のプロトコルから決まる（本番は https なので付く）。
+      // ローカルは http://localhost で、ブラウザは localhost を安全な文脈として扱う
+    },
   })
 }
 

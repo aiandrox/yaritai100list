@@ -20,3 +20,9 @@ SENTRY_DSN=
 # Sentry に送るイベントの environment。未設定なら production。
 # ローカルから通知を試すときは本番のイベントと混ざらないよう local などにする。
 SENTRY_ENVIRONMENT=local
+
+# Google の OAuth クライアント。**development 用の値を入れる**（production とは別のクライアント）。
+# 値の取得元は GCP コンソール。本番は `wrangler secret put` で入れる。
+# **未設定でもアプリは起動する**（ログイン手段が無くなるだけ）。
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
