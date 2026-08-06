@@ -21,6 +21,9 @@ build/
 # テスト・カバレッジ
 coverage/
 
+# Claude Code（settings.json は共有する。local は個人の許可設定なので入れない）
+.claude/settings.local.json
+
 # エディタ・OS
 .DS_Store
 .idea/
