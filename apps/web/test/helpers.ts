@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { makeSignature } from 'better-auth/crypto'
 
 import { type Auth, createAuth } from '../src/auth'
 import { createDb, type Db } from '../src/db'
@@ -53,9 +54,40 @@ export async function resetDb(): Promise<void> {
  */
 export function testAuth(): Auth {
   return createAuth(testDb(), {
-    BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789',
-    BETTER_AUTH_URL: 'https://example.com',
+    BETTER_AUTH_SECRET: workerEnv('BETTER_AUTH_SECRET'),
+    BETTER_AUTH_URL: testBaseUrl(),
   })
+}
+
+/**
+ * テストのリクエストに使うオリジン。**Worker の `BETTER_AUTH_URL` と揃える。**
+ *
+ * ずれると2つの理由で認証が通らない:
+ * - **Cookie 名が変わる。** https なら `__Secure-` 接頭辞が付き、http なら付かない
+ * - Better Auth の Origin チェックに引っかかる
+ */
+export function testBaseUrl(): string {
+  return workerEnv('BETTER_AUTH_URL')
+}
+
+/**
+ * 🔴 **Worker が実際に使っている環境変数を読む。テスト側に固定値を書かない。**
+ *
+ * `wrangler` は `.dev.vars` を読み、**その値が vitest の `miniflare.bindings` を上書きする。**
+ * つまり手元では `.dev.vars`、CI では `miniflare.bindings` の値が使われる。
+ * テスト側に固定値を書くと、**手元だけ、あるいは CI だけ落ちる。**
+ *
+ * `Env` の型には入らない（`.dev.vars` は gitignore されていて CI に無いため）ので、
+ * ここで narrow する。
+ */
+function workerEnv(name: string): string {
+  const value = (env as unknown as Record<string, unknown>)[name]
+
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(`${name} がテスト環境に無い。vitest.config.ts を確認する`)
+  }
+
+  return value
 }
 
 /**
@@ -81,5 +113,35 @@ export async function createTestUser(email = 'owner@example.com'): Promise<strin
 }
 
 /**
- * 認証済みセッションを作るヘルパはここに足す（#52 で認可のテストを書くときに必要）。
+ * 利用者を作り、**認証済みリクエスト用の Headers** を返す。
+ *
+ * Better Auth のセッション Cookie は**署名付き**なので手では作れない。
+ * 署名の作り方は better-auth 自身のテストユーティリティ
+ * （`dist/plugins/test-utils/cookie-builder.mjs`）と同じ:
+ *
+ * ```
+ * signCookieValue(value, secret) => `${value}.${await makeSignature(value, secret)}`
+ * ```
+ *
+ * そのユーティリティは `exports` に公開されていないため deep import できない。
+ * 依存している `makeSignature` は `better-auth/crypto` から公開されているので、
+ * **1行だけ同じ実装を持つ。** Better Auth を上げるときは
+ * cookie-builder.mjs の実装が変わっていないか確認する。
  */
+export async function signIn(email = 'owner@example.com'): Promise<{
+  userId: string
+  headers: Headers
+}> {
+  const auth = testAuth()
+  const ctx = await auth.$context
+
+  const userId = await createTestUser(email)
+  const session = await ctx.internalAdapter.createSession(userId, undefined)
+
+  const signed = `${session.token}.${await makeSignature(session.token, ctx.secret)}`
+  const headers = new Headers({
+    cookie: `${ctx.authCookies.sessionToken.name}=${signed}`,
+  })
+
+  return { userId, headers }
+}
