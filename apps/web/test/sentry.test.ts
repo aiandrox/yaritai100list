@@ -69,8 +69,23 @@ describe('scrubEvent', () => {
     expect(JSON.stringify(scrubbed)).not.toContain('secret-session-token')
   })
 
-  it('ユーザー情報を落とす', () => {
-    const scrubbed = scrubEvent({ user: { id: 'user-1', email: 'a@example.com' } })
+  it('ユーザーは id だけ残し、メールアドレスや名前や IP は落とす', () => {
+    const scrubbed = scrubEvent({
+      user: {
+        id: 'user-1',
+        email: 'a@example.com',
+        username: 'aiandrox',
+        ip_address: '203.0.113.1',
+        geo: { country_code: 'JP' },
+      },
+    })
+
+    // どの利用者で起きた障害かを追うために id だけ送る
+    expect(scrubbed.user).toEqual({ id: 'user-1' })
+  })
+
+  it('id が無いユーザー情報は丸ごと落とす（IP だけ推測されたケース）', () => {
+    const scrubbed = scrubEvent({ user: { ip_address: '2a06:98c0:3600::103' } })
 
     expect(scrubbed.user).toBeUndefined()
   })

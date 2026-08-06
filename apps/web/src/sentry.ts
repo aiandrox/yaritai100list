@@ -38,11 +38,14 @@ export interface SentryEnv {
  * 落とすもの:
  * - **リクエストボディ。やりたいことの本文が入る**（これがこの関数の主目的）
  * - Cookie とヘッダ。セッションが入る
- * - ユーザー情報（そもそもユーザーに表示名を持たせていないが、念のため）
+ * - **ユーザー情報のうち `id` 以外すべて**（メールアドレス、名前、IP、位置情報）
  *
- * **URL はそのまま送る。** `shareId` や `listId` が載るが、これは隠さない判断。
- * ただし**自由入力が URL に乗るルート**（検索クエリなど）を作るときは、
- * そのパラメータをここで落とすことを検討する。現状 URL に載るのは ID と更新日時だけ。
+ * 残すもの:
+ * - **`user.id`。このサービス上の一意キー**。どの利用者で起きた障害かを追うために送る。
+ *   メールアドレスや名前は保存はするが（`PRODUCT_SPEC.md` §3）**通知には送らない**
+ * - URL。`shareId` や `listId` が載るが、これは隠さない判断。
+ *   ただし**自由入力が URL に乗るルート**（検索クエリなど）を作るときは、
+ *   そのパラメータをここで落とすことを検討する。現状 URL に載るのは ID と更新日時だけ
  *
  * `beforeSend` に渡ってくるイベントをそのまま加工して返す。
  * テストしやすいよう純関数として切り出している。
@@ -57,7 +60,13 @@ export function scrubEvent<T extends { request?: unknown; user?: unknown }>(even
     delete request.headers
   }
 
-  delete event.user
+  // `user` を丸ごと消すと `setUser({ id })` で入れた値も捨ててしまう。
+  // **`id` だけを残し、他は名前が何であれ落とす**（SDK や Sentry 側が
+  // 増やしたフィールドを個別に列挙しなくて済む）。
+  const user = event.user as { id?: unknown } | undefined
+  if (user) {
+    event.user = user.id === undefined ? undefined : { id: user.id }
+  }
 
   return event
 }
