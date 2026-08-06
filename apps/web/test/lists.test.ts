@@ -1,14 +1,15 @@
 import { env } from 'cloudflare:workers'
-import { count } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
-import { lists } from '../src/db/schema'
-import { testDb } from './helpers'
+import { lists, users } from '../src/db/schema'
+import { createTestUser, testDb } from './helpers'
 
 describe('lists テーブル', () => {
-  it('id と title だけで insert すると、公開範囲の既定が private になる', async () => {
+  it('必須の列だけで insert すると、公開範囲の既定が private になる', async () => {
     const db = testDb()
-    await db.insert(lists).values({ id: 'list-1', title: 'やりたいことリスト' })
+    const userId = await createTestUser()
+    await db.insert(lists).values({ id: 'list-1', userId, title: 'やりたいことリスト' })
 
     const [row] = await db.select().from(lists)
 
@@ -18,8 +19,9 @@ describe('lists テーブル', () => {
 
   it('created_at と updated_at に現在時刻が入る', async () => {
     const db = testDb()
+    const userId = await createTestUser()
     const before = Date.now()
-    await db.insert(lists).values({ id: 'list-1', title: 'x' })
+    await db.insert(lists).values({ id: 'list-1', userId, title: 'x' })
 
     const [row] = await db.select().from(lists)
 
@@ -29,19 +31,51 @@ describe('lists テーブル', () => {
   })
 
   it('不正な公開範囲は DB が拒否する', async () => {
+    const userId = await createTestUser()
+
     // Drizzle の enum は型の上だけの話なので、型を迂回する経路（生 SQL）で
     // CHECK 制約が実際に効いていることを確認する
     const insert = env.DB.prepare(
-      "insert into lists (id, title, visibility) values ('list-1', 'x', 'everyone')",
-    ).run()
+      "insert into lists (id, user_id, title, visibility) values ('list-1', ?, 'x', 'everyone')",
+    )
+      .bind(userId)
+      .run()
 
     await expect(insert).rejects.toThrow(/CHECK constraint failed/)
+  })
+
+  describe('所有者（user_id）', () => {
+    it('所有者のいないリストは作れない', async () => {
+      // 型では防いでいるが、DB でも止まることを確認する
+      const insert = env.DB.prepare("insert into lists (id, title) values ('list-1', 'x')").run()
+
+      await expect(insert).rejects.toThrow(/NOT NULL constraint failed/)
+    })
+
+    it('存在しない利用者を所有者にできない', async () => {
+      const insert = env.DB.prepare(
+        "insert into lists (id, user_id, title) values ('list-1', 'no-such-user', 'x')",
+      ).run()
+
+      await expect(insert).rejects.toThrow(/FOREIGN KEY constraint failed/)
+    })
+
+    it('利用者を消すとリストも消える', async () => {
+      const db = testDb()
+      const userId = await createTestUser()
+      await db.insert(lists).values({ id: 'list-1', userId, title: 'x' })
+
+      await db.delete(users).where(eq(users.id, userId))
+
+      expect(await db.select().from(lists)).toEqual([])
+    })
   })
 
   describe('テストごとに状態が巻き戻る', () => {
     it('1件 insert する', async () => {
       const db = testDb()
-      await db.insert(lists).values({ id: 'list-1', title: 'x' })
+      const userId = await createTestUser()
+      await db.insert(lists).values({ id: 'list-1', userId, title: 'x' })
 
       expect(await db.select({ n: count() }).from(lists)).toEqual([{ n: 1 }])
     })

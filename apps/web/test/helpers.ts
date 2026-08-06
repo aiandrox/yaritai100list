@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 
 import { type Auth, createAuth } from '../src/auth'
 import { createDb, type Db } from '../src/db'
+import { users } from '../src/db/schema'
 
 /**
  * テスト用の Drizzle クライアント。
@@ -19,10 +20,14 @@ export function testDb(): Db {
  * テーブル名を列挙せず `sqlite_master` から引くので、**テーブルを増やしても
  * ここを直す必要がない**（消し忘れたテーブルのデータが次のテストに漏れない）。
  *
- * 削除は**作成順の逆**で行う。`sqlite_master` の行は作成順に並んでいるため、
- * 逆順にすると子テーブルが親より先に消える。マイグレーションは親を先に作るのが
- * 普通なので、これで外部キー制約の順序問題をたいてい回避できる。
- * （FK を持つテーブルが増えるのは #3。そこで実際に確認する）
+ * 削除は `sqlite_master` の作成順の逆で行うが、**順序に頼って成立しているわけではない。**
+ * 実際の削除順は `verifications` → `users` → `sessions` → `accounts` → `lists` で、
+ * 親（`users`）が子（`sessions` / `lists`）より先に消えている。
+ * それでも壊れないのは、**子の外部キーがすべて `on delete cascade` だから。**
+ *
+ * ⚠️ `on delete restrict` や `no action` の外部キーを持つテーブルを足したら、
+ * ここは順序を考える必要が出る。**D1 は外部キーを実際に強制する**
+ * （`FOREIGN KEY constraint failed` が出ることを `test/lists.test.ts` で確認済み）。
  */
 export async function resetDb(): Promise<void> {
   const { results } = await env.DB.prepare(
@@ -51,6 +56,28 @@ export function testAuth(): Auth {
     BETTER_AUTH_SECRET: 'test-secret-not-used-outside-tests-0123456789',
     BETTER_AUTH_URL: 'https://example.com',
   })
+}
+
+/**
+ * テスト用の利用者を1人作り、その id を返す。
+ *
+ * `lists.user_id` は NOT NULL で `users.id` を参照するため、
+ * リストのテストでは先に所有者が必要になる。
+ */
+export async function createTestUser(email = 'owner@example.com'): Promise<string> {
+  const id = crypto.randomUUID()
+
+  await testDb().insert(users).values({
+    id,
+    // 名前は保存するが表示しない（PRODUCT_SPEC.md §3）。テストでは空でよい
+    name: '',
+    email,
+    emailVerified: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  })
+
+  return id
 }
 
 /**
