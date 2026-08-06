@@ -28,6 +28,30 @@
 親イシュー #1〜#10 が機能単位で、`MVP`（#1〜#6）と `Post-MVP`（#7〜#10）の2マイルストーンに分かれる。
 着手時に 1 PR 単位のサブイシューへ分割する。詳細は [docs/workflow.md](./docs/workflow.md)。
 
+## ローカル開発
+
+Cloudflare のアカウントもログインも不要。すべてローカルで動く。
+
+```sh
+npm install
+npm run db:migrate --workspace @yaritai100list/web   # ローカル D1 にマイグレーションを当てる
+npm run dev                                          # http://localhost:8787
+
+npm run typecheck && npm run lint && npm test        # PR を出す前に緑にする
+```
+
+| コマンド | 内容 |
+|---|---|
+| `npm run dev` | `wrangler dev`。ローカルの D1 を使う |
+| `npm test` | Vitest + Miniflare。workerd の中で走り、D1 はインメモリ |
+| `npm run db:generate --workspace @yaritai100list/web -- --name <名前>` | スキーマからマイグレーションを生成（**名前は必ず付ける**） |
+| `npm run db:migrate --workspace @yaritai100list/web` | ローカル D1 に適用 |
+
+**`no such table` が出たら `db:migrate` を忘れている。**
+ローカル D1 の保存先は `wrangler.jsonc` の `database_id` ごとに分かれるため、
+その値を変えると**空のデータベースに切り替わる**（`.wrangler/state/` 配下）。
+テストは別のインメモリ D1 を使うので、テストが緑でもこの状態は起こりうる。
+
 ## 構成
 
 ```

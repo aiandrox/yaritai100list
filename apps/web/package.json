@@ -20,6 +20,7 @@
     "wrangler": "^4.119.0"
   },
   "dependencies": {
+    "@yaritai100list/shared": "^0.0.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.0"
   }
