@@ -17,9 +17,22 @@ updates:
         dependency-type: production
         update-types:
           - patch
+    ignore:
+      # typescript 7 は typescript-eslint の peer 依存（>=4.8.4 <6.1.0）を満たさず、
+      # npm ci が ERESOLVE で必ず失敗する。毎週赤い PR が来ると
+      # 「Dependabot の PR は赤いもの」と学習してしまうので止めておく。
+      # **解除の条件と手順は #25 に書いた。上げるときはこの ignore も消す。**
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
+    # actions ごとに PR が立つと数が増えるため、1本にまとめる
+    groups:
+      github-actions:
+        patterns:
+          - '*'

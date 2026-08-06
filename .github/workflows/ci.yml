@@ -20,28 +20,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           # .node-version を唯一の情報源にする。ここに数字を書かない
           node-version-file: .node-version
           cache: npm
 
-      - run: npm ci
+      - name: install
+        id: install
+        run: npm ci
 
-      # 1つ落ちても残りを実行する。全部の失敗を1回の実行で把握できるようにするため
+      # チェックは1つ落ちても残りを実行する。全部の失敗を1回の実行で把握できるようにするため
       # （ジョブを分けると依存のインストールが回数分かかる）。
+      #
+      # ただし install が失敗した実行では skip する。依存が入っていない状態の結果は
+      # 信号として無意味で、読む側を混乱させる（#26）。
       - name: typecheck
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run typecheck
 
       - name: lint
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run lint
 
       - name: format
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run format:check
 
       - name: test
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm test
