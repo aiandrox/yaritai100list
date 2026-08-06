@@ -37,7 +37,34 @@ const app = new Hono<AppEnv>()
   })
 
   /**
-   * Better Auth の全エンドポイント（セッション取得、サインイン、コールバック等）。
+   * Google のログインを開始する。**リンクから辿れるようにするための GET。**
+   *
+   * Better Auth の `/api/auth/sign-in/social` は POST なので、`<a>` から直接叩けない。
+   * ここで受けて Google へリダイレクトする。
+   *
+   * 🔴 **Set-Cookie を引き継ぐこと。** `signInSocial` のレスポンスには
+   * OAuth の `state` と PKCE の verifier を入れた Cookie が乗っている。
+   * URL だけ取り出してリダイレクトすると、コールバックで state 不一致になる。
+   */
+  .get('/api/login/google', async (c) => {
+    const auth = createAuth(createDb(c.env.DB), c.env)
+
+    const res = await auth.api.signInSocial({
+      body: { provider: 'google', callbackURL: '/' },
+      asResponse: true,
+    })
+
+    const { url } = await res.json<{ url?: string }>()
+    if (!url) throw new Error('Google のサインイン URL を取得できなかった')
+
+    const headers = new Headers({ location: url })
+    for (const cookie of res.headers.getSetCookie()) headers.append('set-cookie', cookie)
+
+    return new Response(null, { status: 302, headers })
+  })
+
+  /**
+   * Better Auth の全エンドポイント（セッション取得、コールバック等）。
    *
    * **`wrangler.jsonc` の `run_worker_first` に `/api/*` が入っているので Worker に届く。**
    * ここを `/auth/*` のような別のプレフィックスに変えるなら、あちらにも足すこと。
