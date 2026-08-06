@@ -77,8 +77,13 @@ npm run typecheck && npm run lint && npm test  # ローカルで緑にしてか�
 git commit -m "..."
 gh pr create --fill --body "Closes #12"
 gh pr checks --watch                            # CI が緑になるまで待つ
+gh pr update-branch                             # main が進んでいたら追随させる
 gh pr merge --squash --delete-branch
 ```
+
+`gh pr checks --watch` は**直前の実行結果を拾って即座に返ることがある。**
+push 直後に叩いたときは、`gh run list --branch <branch> --limit 1` で
+新しい実行が始まっているか確かめる。
 
 - **`main` に直接コミットしない。** 人間のレビューはないが、**PR は CI のゲート**として使う
 - **CI が赤のままマージしない。** 落ちたテストを skip して通すのも同じこと

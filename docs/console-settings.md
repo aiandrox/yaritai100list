@@ -28,12 +28,31 @@
 `docs/workflow.md` の「`main` に直接コミットしない」「CI が緑になってからマージする」を、
 規律ではなく仕組みで守るために設定した。
 
+ルールセット名 `protect main`（id `20485718`）。対象は `~DEFAULT_BRANCH`。
+
 | ルール | 値 |
 |---|---|
 | Pull request を必須にする | 有効。**必要な承認数は 0**（レビューする人間がいないため） |
+| マージ方法 | **squash のみ**（`docs/workflow.md` §5 に合わせた） |
 | ステータスチェックを必須にする | `check`（`.github/workflows/ci.yml` のジョブ名） |
-| force push を禁止する | 有効 |
+| ↑ strict ポリシー | **有効。** 最新の `main` に追随していない PR はマージできない |
+| force push を禁止する | 有効（`non_fast_forward`） |
+| `main` の削除を禁止する | 有効（`deletion`） |
 | bypass できるアクター | **なし。** 管理者も抜け道を持たない |
+
+**strict を有効にした影響**: 自分の PR を出している間に `main` が進むと、
+そのままではマージできない。`gh pr update-branch` で追随させてから CI を待つ。
+これは「緑だった PR が、古い `main` を前提にしていたために `main` を壊す」事故を防ぐため。
+
+設定内容を変えるコマンド（bypass がないため、ルールセット自体の編集はこの経路で行う）:
+
+```sh
+gh api repos/aiandrox/yaritai100list/rulesets/20485718        # 現在値を見る
+gh api -X PUT repos/aiandrox/yaritai100list/rulesets/20485718 --input <file>
+```
+
+**動作確認済み**: `main` への直接 push は `GH013` で拒否される
+（`Changes must be made through a pull request` / `Required status check "check" is expected`）。
 
 **bypass を設けていないのは意図的。** 抜け道があると、赤い CI をすり抜けてマージできてしまい、
 「CI が唯一のゲート」という前提が崩れる。人間がレビューしない開発ではここを緩めない。
