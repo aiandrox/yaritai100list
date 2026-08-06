@@ -5,7 +5,9 @@
 ログインせずに使え（ブラウザに保存）、ログインすると永続保存と複数のマイリストが使える。
 将来的にリストの共有、SNS カード（OGP）、画像出力、他人のやりたいことの取り入れに対応する。
 
-**現在の状態: 仕様と技術構成は確定。実装は未着手。**
+**現在の状態: 土台を構築中。**
+`apps/web` が Hono + D1 + Drizzle で動くところまで来ている。
+進捗は[イシュー](https://github.com/aiandrox/yaritai100list/issues)を参照。
 
 ## ドキュメント
 
@@ -26,18 +28,18 @@
 親イシュー #1〜#10 が機能単位で、`MVP`（#1〜#6）と `Post-MVP`（#7〜#10）の2マイルストーンに分かれる。
 着手時に 1 PR 単位のサブイシューへ分割する。詳細は [docs/workflow.md](./docs/workflow.md)。
 
-## 構成（予定）
+## 構成
 
 ```
 apps/
   web/        Cloudflare Workers（Hono + React SPA + D1）
-  image/      Deno Deploy（Satori による画像生成）
+  image/      Deno Deploy（Satori による画像生成）  ← 未作成
 packages/
   shared/     型・Zod スキーマ・定数
 ```
 
-現在あるのは `packages/shared` のみ。`apps/web` は #13、`apps/image` は OGP に着手する時点で作る
-（`apps/image` は Deno なので、npm workspaces に含めるかは `TECH_STACK.md` §12-2 の結論次第）。
+`apps/image` は OGP 画像に着手する時点で作る
+（Deno なので、npm workspaces に含めるかは `TECH_STACK.md` §12-2 の結論次第）。
 
 デプロイ先は2つだが、**リポジトリは1つ**にする。
 分けると、どのリポジトリが生きているのかを追えなくなる。
