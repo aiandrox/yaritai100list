@@ -36,6 +36,9 @@ packages/
   shared/     型・Zod スキーマ・定数
 ```
 
+現在あるのは `packages/shared` のみ。`apps/web` は #13、`apps/image` は OGP に着手する時点で作る
+（`apps/image` は Deno なので、npm workspaces に含めるかは `TECH_STACK.md` §12-2 の結論次第）。
+
 デプロイ先は2つだが、**リポジトリは1つ**にする。
 旧実装はリポジトリが3つに分かれていて、どれが生きているか分からなくなっていた。
 
