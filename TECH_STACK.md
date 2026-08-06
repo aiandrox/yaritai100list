@@ -606,6 +606,29 @@ pragma テーブル値関数を拒否する**ため `D1_ERROR: not authorized: S
 - **ライセンスは MPL-2.0。**ファイル単位のコピーレフトなので、
   ライブラリとして利用する限り自作コードの開示義務は生じない（改変して再配布する場合は当該ファイルのみ対象）
 
+### テスト基盤（2026-08-06、#15 で実測）
+
+`@cloudflare/vitest-pool-workers@0.20.2` + `vitest@4.1.10`。
+**0.20 で API が3つ変わっており、公式ドキュメントと学習データは古い前提のまま。**
+記憶で書くと必ず動かないので、以下を前提にする。
+
+| 古い書き方（もう無い） | 現在の書き方 |
+|---|---|
+| `defineWorkersConfig({ test: { poolOptions: { workers: {...} } } })` | `defineConfig({ plugins: [cloudflareTest({...})] })`。旧 `poolOptions.workers` の中身をそのまま `cloudflareTest()` に渡す |
+| `import { env } from 'cloudflare:test'` | `import { env } from 'cloudflare:workers'`（`cloudflare:test` の `env` は deprecated） |
+| `import { SELF } from 'cloudflare:test'` → `SELF.fetch()` | `import { exports } from 'cloudflare:workers'` → `exports.default.fetch()` |
+
+**`isolatedStorage` は無くなった。** 0.19 まではテストごとに D1 の状態が巻き戻ったが、
+0.20 の `WorkersPoolOptions` にこのオプションは存在しない（README は今も
+"isolated per-test storage" と書いているが実態と違う）。**分離はテストファイル単位**で、
+同じファイル内のテストは前のテストが書いた行を見る。
+→ `apps/web/test/setup.ts` の `beforeEach` で明示的に全テーブルを空にしている。
+
+- `applyD1Migrations` は残っている。マイグレーションは vitest の `provide`/`inject` で渡す
+  （miniflare のバインディングにするとテスト専用の値が `Env` の型に混ざり、本体からも見えてしまう）
+- **実行時間はテスト8件で 1.1〜1.3秒**（`npm test` 全体で約2.6秒）。「数秒で赤/緑」は満たしている
+- `miniflare@5.20260801.0-alpha` が alpha だが、この構成では問題は出ていない
+
 ### 出典
 - https://deno.com/deploy/pricing
 - https://docs.deno.com/deploy/usage/
