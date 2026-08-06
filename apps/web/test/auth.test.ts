@@ -2,8 +2,8 @@ import { exports } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 
 import { createAuth } from '../src/auth'
-import { testAuth, testDb } from './helpers'
-import { sessions, users } from '../src/db/schema'
+import { createTestUser, testAuth, testDb } from './helpers'
+import { accounts, sessions, users } from '../src/db/schema'
 
 /**
  * Better Auth が **D1 のバインディング経由**で読み書きできることを確認する。
@@ -139,6 +139,72 @@ describe('Cookie の方針', () => {
 
     expect(attrs.httpOnly).toBe(true)
     expect(attrs.sameSite).toBe('lax')
+  })
+})
+
+describe('使わない資格情報を保存しない（#58）', () => {
+  /** `accounts` に1行作り、DB に実際に入った内容を返す */
+  async function createAccount(userId: string, extra: Record<string, unknown> = {}) {
+    const ctx = await testAuth().$context
+
+    const created = await ctx.internalAdapter.createAccount({
+      userId,
+      providerId: 'google',
+      accountId: 'google-user-1',
+      accessToken: 'ya29.dummy-access-token',
+      idToken: 'eyJ.dummy-id-token',
+      refreshToken: '1//dummy-refresh-token',
+      accessTokenExpiresAt: new Date(),
+      refreshTokenExpiresAt: new Date(),
+      scope: 'openid email profile',
+      ...extra,
+    })
+
+    return { id: created.id, rows: await testDb().select().from(accounts) }
+  }
+
+  it('access_token / id_token / refresh_token を保存しない', async () => {
+    const userId = await createTestUser('tokens@example.com')
+
+    const { rows } = await createAccount(userId)
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.accessToken).toBeNull()
+    expect(rows[0]?.idToken).toBeNull()
+    expect(rows[0]?.refreshToken).toBeNull()
+
+    // 期限だけ残しても意味が無いので一緒に落としている
+    expect(rows[0]?.accessTokenExpiresAt).toBeNull()
+    expect(rows[0]?.refreshTokenExpiresAt).toBeNull()
+  })
+
+  it('紐付けそのものは残る（ログインが壊れていない）', async () => {
+    const userId = await createTestUser('tokens2@example.com')
+
+    const { rows } = await createAccount(userId)
+
+    // 落とすのは資格情報だけ。これが消えると次回ログインで別人扱いになる
+    expect(rows[0]?.providerId).toBe('google')
+    expect(rows[0]?.accountId).toBe('google-user-1')
+    expect(rows[0]?.userId).toBe(userId)
+  })
+
+  it('🔴 2回目以降のログイン（update）でも復活しない', async () => {
+    // updateAccountOnSignIn の既定が有効なので、再ログインは update を通る。
+    // create のフックだけだと、ここでトークンが書き戻される
+    const userId = await createTestUser('tokens3@example.com')
+    const { id } = await createAccount(userId)
+    const ctx = await testAuth().$context
+
+    await ctx.internalAdapter.updateAccount(id, {
+      accessToken: 'ya29.new-access-token',
+      idToken: 'eyJ.new-id-token',
+    })
+
+    const rows = await testDb().select().from(accounts)
+
+    expect(rows[0]?.accessToken).toBeNull()
+    expect(rows[0]?.idToken).toBeNull()
   })
 })
 
