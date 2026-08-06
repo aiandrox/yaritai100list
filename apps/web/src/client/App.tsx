@@ -2,19 +2,18 @@ import { SERVICE_NAME } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
-
-/** ログイン状態。判定中と未ログインを区別する（未ログインのときだけ導線を出すため） */
-type SessionState = { status: 'loading' } | { status: 'anonymous' } | { status: 'authenticated' }
+import { toSessionState, type SessionState } from './model'
 
 /**
  * 土台の確認用の画面。リストの UI は #4 で作る。
  *
- * ロジックを純関数に切り出すのは #4 から（`TECH_STACK.md` §10 の方針）。
- * ここにあるのはセッションの取得とログアウトの呼び出しだけで、切り出す中身が無い。
+ * **状態の判定は `model.ts` の純関数に置く**（`TECH_STACK.md` §10 の方針）。
+ * ここに残すのは取得と描画の配線だけ。
  */
 export function App() {
   const [health, setHealth] = useState('確認中')
   const [session, setSession] = useState<SessionState>({ status: 'loading' })
+  const [signOutFailed, setSignOutFailed] = useState(false)
 
   useEffect(() => {
     const check = async () => {
@@ -30,11 +29,18 @@ export function App() {
   }, [])
 
   const loadSession = useCallback(async () => {
-    // Better Auth のエンドポイントは Hono RPC の型に乗らないので普通の fetch で呼ぶ
-    const res = await fetch('/api/auth/get-session')
-    const body: unknown = await res.json()
+    setSession({ status: 'loading' })
 
-    setSession({ status: body === null ? 'anonymous' : 'authenticated' })
+    try {
+      // Better Auth のエンドポイントは Hono RPC の型に乗らないので普通の fetch で呼ぶ
+      const res = await fetch('/api/auth/get-session')
+      const body: unknown = await res.json()
+
+      setSession(toSessionState({ ok: res.ok, body }))
+    } catch {
+      // 通信自体が失敗した場合（オフラインなど）。未ログインと区別する
+      setSession({ status: 'error' })
+    }
   }, [])
 
   useEffect(() => {
@@ -42,7 +48,13 @@ export function App() {
   }, [loadSession])
 
   const signOut = useCallback(async () => {
-    await fetch('/api/auth/sign-out', { method: 'POST' })
+    setSignOutFailed(false)
+
+    const res = await fetch('/api/auth/sign-out', { method: 'POST' })
+
+    // **失敗を黙って飲まない。** ここで状態を取り直すと画面は「ログイン中」に
+    // 戻るだけなので、利用者にはログアウトできたのか判断がつかない
+    if (!res.ok) setSignOutFailed(true)
 
     // サーバー側でセッションを消したので、状態を取り直す
     await loadSession()
@@ -54,6 +66,15 @@ export function App() {
       <p>API: {health}</p>
 
       {session.status === 'loading' && <p>読み込み中</p>}
+
+      {session.status === 'error' && (
+        <p>
+          ログイン状態を確認できませんでした{' '}
+          <button type="button" onClick={() => void loadSession()}>
+            再試行
+          </button>
+        </p>
+      )}
 
       {/*
         ログインの開始は POST なので `<a>` から叩けない。
@@ -73,6 +94,8 @@ export function App() {
           </button>
         </p>
       )}
+
+      {signOutFailed && <p>ログアウトに失敗しました。時間をおいて試してください</p>}
     </main>
   )
 }
