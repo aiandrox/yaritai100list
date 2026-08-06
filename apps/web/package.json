@@ -4,24 +4,33 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "vite",
     "pretypecheck": "wrangler types",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p src/client --noEmit",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.51.0",
     "@cloudflare/vitest-pool-workers": "^0.20.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "drizzle-kit": "^0.31.10",
+    "vite": "^8.2.0",
     "vitest": "^4.1.10",
     "wrangler": "^4.119.0"
   },
   "dependencies": {
     "@yaritai100list/shared": "^0.0.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.0"
+    "hono": "^4.13.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }

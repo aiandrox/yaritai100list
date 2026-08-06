@@ -35,17 +35,21 @@ Cloudflare のアカウントもログインも不要。すべてローカルで
 ```sh
 npm install
 npm run db:migrate --workspace @yaritai100list/web   # ローカル D1 にマイグレーションを当てる
-npm run dev                                          # http://localhost:8787
+npm run dev                                          # http://localhost:5173
 
 npm run typecheck && npm run lint && npm test        # PR を出す前に緑にする
 ```
 
 | コマンド | 内容 |
 |---|---|
-| `npm run dev` | `wrangler dev`。ローカルの D1 を使う |
+| `npm run dev` | Vite。**SPA と Worker の両方**が1プロセスで動く（Worker は workerd で実行される） |
 | `npm test` | Vitest + Miniflare。workerd の中で走り、D1 はインメモリ |
+| `npm run build --workspace @yaritai100list/web` | `dist/client`（SPA）と `dist/yaritai100list`（Worker）を出す |
 | `npm run db:generate --workspace @yaritai100list/web -- --name <名前>` | スキーマからマイグレーションを生成（**名前は必ず付ける**） |
 | `npm run db:migrate --workspace @yaritai100list/web` | ローカル D1 に適用 |
+
+**Vite の dev サーバーは IPv6（`[::1]`）でだけ listen する。**
+`curl http://127.0.0.1:5173` は接続できないので `localhost` を使う。
 
 **`no such table` が出たら `db:migrate` を忘れている。**
 ローカル D1 の保存先は `wrangler.jsonc` の `database_id` ごとに分かれるため、

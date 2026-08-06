@@ -10,5 +10,17 @@
     // 設定用の API なので、これとは別）。
     "types": ["@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src",
+    "test",
+    "drizzle.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "worker-configuration.d.ts"
+  ],
+
+  // クライアントは別の tsconfig（src/client/tsconfig.json）で見る。
+  // **こちらには DOM を入れていない**ので、Worker のコードで document や window を
+  // 触ると型エラーになる。lib を分けることがその保証になっている。
+  "exclude": ["src/client"]
 }
