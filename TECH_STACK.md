@@ -514,6 +514,7 @@ Firestore や Supabase の「クライアント直叩き + ルール」モデル
 | DB | SQL（D1）。NoSQL は採用しない |
 | API 形式 | GraphQL を使わない |
 | 認証 | **Better Auth**。セッションストアは **D1 のみ**（KV の `secondaryStorage` は使わない。§8） |
+| Better Auth のバージョン | **`1.6.x` に固定する。1.7 系に上げない**（D1 のマイグレーションが通らない。§13） |
 | ID の設計 | **編集用 `listId` と公開用 `shareId` を分ける**。どちらも推測不可能な値 |
 | ドメイン | **カスタムドメインを使わない。`*.workers.dev` を使う**（注意点は §8） |
 | 旧 BE の資産 | **捨てる**。`docs/legacy-spec.md` を参照用に残し、旧リポジトリはアーカイブ |
@@ -529,13 +530,16 @@ Firestore や Supabase の「クライアント直叩き + ルール」モデル
 |---|---|---|
 | 1 | OGP カードと画像出力の具体的なデザイン | 方向性は `PRODUCT_SPEC.md` §5.3 に記録。Satori の CSS 対応範囲（flexbox のサブセット、grid 不可）で成立する構成にする |
 | 2 | `packages/shared` を Workers と Deno の両方から使えるか | 共有するのが型と Zod スキーマだけなら通るはず。詰まったら複製する方が安い |
-| 3 | Deno Deploy の無料枠の現在値と規約 | 帯域は公式価格ページが 20GB、記事は 100GB と食い違う。商用利用の可否も要確認（§13） |
+| 3 | Better Auth 1.7 の D1 対応をいつ取り込むか | 1.7 は D1 のマイグレーションが通らない（§13）。upstream の修正待ち。**Dependabot が 1.7 に上げてこないよう固定する** |
+
+> **解決済み:** 旧 #3「Deno Deploy の無料枠の現在値と規約」は 2026-08-06 に確認して片付いた（§13）。
 
 ---
 
-## 13. 調査メモ（2026-08-05 時点）
+## 13. 調査メモ（2026-08-06 再確認）
 
 **この節の内容は変わる。着手時に再確認すること。**
+初回調査は 2026-08-05。**2026-08-06 に #1 で再確認した結果を反映済み。**
 
 ### OGP の仕様
 - SNS のカード表示は `og:image` と `og:title` / `og:description` を別々に扱う。
@@ -544,29 +548,72 @@ Firestore や Supabase の「クライアント直叩き + ルール」モデル
 - **SNS 側は `og:image` を積極的にキャッシュする。**画像を更新しても URL が同じだと反映されない。
   URL にバージョンを含めるのが定石
 
-### Deno Deploy
+### Deno Deploy（2026-08-06 再確認済み）
 - 無料枠を「1リクエストあたり 50ms CPU」から**月間 15 CPU 時間のプール制**に変更。
   これにより無料枠で画像生成が可能になった
-- 公式価格ページの無料枠: 月100万リクエスト / CPU 15時間 / 帯域 20GB / 単一リージョン。
-  Pro は $20/月
-- 参考記事は帯域を 100GB と記載しており食い違う（要確認）
+- 公式価格ページの無料枠: 月100万リクエスト / **CPU 15時間 / 帯域 20GB** /
+  KV 1GiB / アプリ20個まで / 単一リージョン / メンバー5人。Pro は $20/月
+- **帯域は 20GB が正。**記事の 100GB は誤りか古い値（2026-08-06 に公式価格ページで確認）。
+  OGP 画像は Cloudflare CDN でキャッシュして配るので 20GB でも足りる
+- **商用利用の制限は見つからない。**現行の価格ページにも Usage Guidelines にも
+  「personal use」限定の文言はない（以前あった "personal use and smaller projects" の表現は現在ない）
+- **クレジットカード登録は不要。**サインアップ時に求められないことを確認（2026-08-06、#1）。
+  `MEMO.md` §3 の「登録しないと制限が厳しくなる」は現在の画面では確認できなかった
 - リージョンは US / EU のみ。日本にない
 - Classic（dash.deno.com）は 2026年7月20日に廃止。新プラットフォームは console.deno.com
-- 記事は「クレジットカード登録をしないと厳しい制限がかかる」と述べている
+- **リソースはすべて organization 所有。**org は最低1つ必要
+- **デフォルトドメインは `{app-name}.{org-slug}.deno.net`。**
+  org slug は後から変更できるが、変更すると既存 URL が全部壊れる（TLS 再発行に数分）
 - ビルド時間も CPU 枠を消費する
-- 参考記事は Preact の JSX → HTML → Tailwind の CSS → PNG という流れで、
-  WASM のレンダラを使っている
 
-### 認証ライブラリ
+### 認証ライブラリ（2026-08-06 再確認済み）
 - **Arctic は 2026年7月に非推奨化。** 移行はサンプルコードの取り込み
 - Cloudflare `workers-oauth-provider` は Worker を OAuth **プロバイダ**にするためのもので、用途が違う
 - **Better Auth** は Hono + D1 + Drizzle の事例あり。`better-auth-cloudflare` という統合ライブラリも存在
-- Better Auth の **issue #4203**（2026年1月に再オープン）: セッション有効期間に関わらず5分でログアウトされる
+- **issue #4203 は 2026-04-23 に completed でクローズ済み。**
+  加えて、原因だった `secondaryStorage`（KV）を使わない構成なのでこの経路自体を踏まない
+- バージョン（2026-08-06 時点）:
+  `better-auth@1.6.26`（`latest`、2026-08-05 公開＝活発）/
+  `better-auth-cloudflare@0.3.1`（2026-07-23、★570、アーカイブされていない）
+- 1.7 系は現在 `1.7.0-rc.4` / `1.7.0-beta.10`。**まだ GA していない**
+
+#### ⚠️ Better Auth 1.7 は D1 で使えない（未修正）
+
+**[issue #10551](https://github.com/better-auth/better-auth/issues/10551)（2026-07-27 起票、オープンのまま）**
+
+1.7 で `getMigrations()` に追加された `getDatabaseIndexes()` が
+`pragma_index_list` / `pragma_index_info` を使う。**D1 の authorizer は Worker バインディング経由での
+pragma テーブル値関数を拒否する**ため `D1_ERROR: not authorized: SQLITE_AUTH` になる。
+マイグレーションがテーブル作成前に落ちるので、**1.7 では D1 にスキーマを作れない。**
+
+- 1.6 系は `getDatabaseIndexes()` が存在しないので影響を受けない
+- **`wrangler d1 execute` からは再現しない。**CLI とバインディングで authorizer の厳しさが違うため、
+  Worker 内でしか再現しない。ローカルで通っても本番で落ちる型の不具合
+- 対処: **`better-auth` を `1.6.x` に固定する**（§11 の決定事項）。
+  **Dependabot が 1.7 に上げてこないよう設定する**。upstream の修正を確認してから上げる
+
+#### その他の関連する既知の問題（いずれもオープン）
+
+- [#10315](https://github.com/better-auth/better-auth/issues/10315):
+  初期化リクエストが abort されると、遅延キャッシュされた init promise が Workers 上で永久にハングする
+- [#10566](https://github.com/better-auth/better-auth/issues/10566):
+  `customSession` が内部の `getSession` エラーを `null` に潰すため、
+  インフラ障害と「未ログイン」が区別できない。**エラー通知の観点で注意**
+
+### 画像生成ライブラリ（2026-08-06 再確認済み）
+- `satori@0.29.0`（2026-07-23、MPL-2.0）/ `@resvg/resvg-wasm@2.6.2`（2026-01-28、MPL-2.0）
+- どちらもメンテされており、Deno Deploy / Cloudflare Workers での利用例がある
+- **ライセンスは MPL-2.0。**ファイル単位のコピーレフトなので、
+  ライブラリとして利用する限り自作コードの開示義務は生じない（改変して再配布する場合は当該ファイルのみ対象）
 
 ### 出典
-- https://zenn.dev/sora_kumo/articles/deno-ogp-image
 - https://deno.com/deploy/pricing
+- https://docs.deno.com/deploy/usage/
+- https://docs.deno.com/deploy/reference/organizations/
+- https://docs.deno.com/deploy/reference/domains/
+- https://zenn.dev/sora_kumo/articles/deno-ogp-image
 - https://arcticjs.dev/
-- https://github.com/better-auth/better-auth/discussions/7963
+- https://github.com/better-auth/better-auth/issues/4203
+- https://github.com/better-auth/better-auth/issues/10551
 - https://github.com/zpg6/better-auth-cloudflare
 - https://github.com/cloudflare/workers-oauth-provider
