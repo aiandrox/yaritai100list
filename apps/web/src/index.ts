@@ -113,7 +113,18 @@ const app = new Hono<AppEnv>()
   })
 
   /**
-   * Better Auth の全エンドポイント（セッション取得、コールバック等）。
+   * ⚠️ **一時的なルート。Sentry に `user.id` が届くかを確認するためだけに置いている。**
+   * 確認できたら次の PR で消す（恒久的に置くと公開されたエラー発生器になる。#48 と同じ理由）。
+   *
+   * `requireUser` の後に置いているので、**ログイン中の状態で例外が起きる。**
+   * `Sentry.setUser({ id })` の効果を見るにはこの条件が必要。
+   */
+  .get('/api/dev/sentry-check', requireUser, () => {
+    throw new Error('Sentry に user.id が届くかの確認（一時的なルート）')
+  })
+
+  /**
+   * Better Auth の全エンドポイント（セッション取得、サインアウト、コールバック等）。
    *
    * **`wrangler.jsonc` の `run_worker_first` に `/api/*` が入っているので Worker に届く。**
    * ここを `/auth/*` のような別のプレフィックスに変えるなら、あちらにも足すこと。

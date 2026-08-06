@@ -184,3 +184,46 @@ describe('入力の検証', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('ログアウト', () => {
+  /**
+   * ブラウザが送る形に合わせる。**Origin が無いと Better Auth の CSRF 保護に弾かれる**
+   * （Cookie を伴う POST で Origin を検証している）。
+   */
+  const signOutRequest = (headers: Headers) =>
+    request('/api/auth/sign-out', {
+      method: 'POST',
+      headers: { ...Object.fromEntries(headers), origin: testBaseUrl() },
+    })
+
+  it('セッションが D1 から消える', async () => {
+    const me = await signIn('signout@example.com')
+
+    expect(await testDb().select().from(sessions)).toHaveLength(1)
+
+    const res = await signOutRequest(me.headers)
+
+    expect(res.status).toBe(200)
+    // Cookie を消すだけでなく、**サーバー側の行が消えること**を確認する。
+    // 行が残っていると、Cookie を持っている誰かが使い続けられる
+    expect(await testDb().select().from(sessions)).toHaveLength(0)
+  })
+
+  it('ログアウト後は保護 API が通らない', async () => {
+    const me = await signIn('signout2@example.com')
+
+    await signOutRequest(me.headers)
+
+    expect((await request('/api/lists', { headers: me.headers })).status).toBe(401)
+  })
+
+  it('Origin の無いログアウト要求は拒否される（CSRF 保護）', async () => {
+    const me = await signIn('csrf@example.com')
+
+    const res = await request('/api/auth/sign-out', { method: 'POST', headers: me.headers })
+
+    expect(res.status).toBe(403)
+    // 拒否されたのだからセッションは残っている
+    expect(await testDb().select().from(sessions)).toHaveLength(1)
+  })
+})
