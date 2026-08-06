@@ -4,7 +4,11 @@
     // Workers の型は wrangler types が生成する worker-configuration.d.ts で入る。
     // @types/* を勝手に拾わせない（Node の型が混ざると、Workers に無い API を
     // 型チェックが通してしまう）。
-    "types": []
+    //
+    // vitest-pool-workers の `./types` サブパスだけは明示的に入れる。
+    // `cloudflare:test` モジュールの型宣言がここにある（パッケージ本体の型は
+    // 設定用の API なので、これとは別）。
+    "types": ["@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["src", "drizzle.config.ts", "worker-configuration.d.ts"]
+  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts", "worker-configuration.d.ts"]
 }
