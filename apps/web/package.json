@@ -13,7 +13,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "test": "vitest run",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy -c dist/yaritai100list/wrangler.json"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.51.0",

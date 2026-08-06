@@ -92,6 +92,20 @@ gh api -X PUT repos/aiandrox/yaritai100list/rulesets/20485718 --input <file>
 | `database_id` | `78718e38-9558-416b-b7c2-61b6a00be62d` | `wrangler.jsonc` にも書くのでコード側にも残る |
 | リージョン | **`APAC`** | `wrangler d1 create` が自動選択した |
 | バインディング名 | **`DB`** | `wrangler.jsonc` で指定。`wrangler d1 create` の出力例は `yaritai100list` になっているが採用しない |
+| マイグレーション | **`0000_create_lists.sql` を適用済み**（2026-08-06） | `npm run db:migrate:remote --workspace @yaritai100list/web` |
+
+### デプロイの状況
+
+**2026-08-06 に初回デプロイを実施した。**
+
+| 項目 | 値 |
+|---|---|
+| URL | https://yaritai100list.aiandrox.workers.dev |
+| デプロイ方法 | `npm run deploy`（`vite build` + `wrangler deploy`） |
+| 確認済みの経路 | `/api/health` / `/api/health/db`（リモート D1 往復）/ `/`（SPA）/ `/lists`（SPA フォールバック）/ `/api/nope`（404）/ 静的アセット |
+
+**⚠️ `SENTRY_DSN` を本番に設定していないため、現時点で本番のエラー通知は無効。**
+利用者が `wrangler secret put SENTRY_DSN` を実行する必要がある（AI は値を持っていない）。
 
 ### コンソールでしか触れないもの
 
