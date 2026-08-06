@@ -46,6 +46,33 @@ export interface AuthEnv {
 }
 
 /**
+ * `accounts` の行から**使わない資格情報を落とす。**
+ *
+ * このアプリは Google を**ログインの手段としてしか使わない**（`PRODUCT_SPEC.md` §3）。
+ * Google の API を呼ばないので、`accessToken` も `idToken` も使い道が無い。
+ * 要求しているスコープは `openid` / `email` / `profile` だけなので漏れても被害は限定的だが、
+ * **使わないものを持ち続ける理由が無い。**
+ *
+ * ⚠️ **Better Auth 1.6.26 に「保存しない」設定は無い。**
+ * `updateAccountOnSignIn` は更新の可否を決めるだけで、初回の保存は止まらない。
+ * そのため `databaseHooks` で列を `null` に潰す。
+ *
+ * `refreshToken` は offline access を要求していないので元から返らないが、
+ * **将来スコープを増やしたときに黙って保存され始めない**よう、ここでも落としておく。
+ * 期限の列も、対応するトークンが無ければ意味を持たないので一緒に落とす。
+ */
+export function withoutOAuthCredentials<T extends object>(account: T) {
+  return {
+    ...account,
+    accessToken: null,
+    refreshToken: null,
+    idToken: null,
+    accessTokenExpiresAt: null,
+    refreshTokenExpiresAt: null,
+  }
+}
+
+/**
  * Better Auth のインスタンスを作る。**リクエストごとに作る。**
  *
  * Workers では D1 のバインディングがリクエストのスコープにしか無いため、
@@ -104,6 +131,24 @@ export function createAuth(db: Db, env: AuthEnv) {
             },
           }
         : {},
+
+    /**
+     * DB に書く直前に内容を差し替える。**書き込みの経路は1つしかない**ので、
+     * ここに置けばログイン・再ログインのどちらでも効く。
+     *
+     * `create` だけでは足りない。**2回目以降のログインは `update` を通る**ため
+     * （`updateAccountOnSignIn` の既定が有効）、片方だけだとトークンが復活する。
+     */
+    databaseHooks: {
+      account: {
+        create: {
+          before: (account) => Promise.resolve({ data: withoutOAuthCredentials(account) }),
+        },
+        update: {
+          before: (account) => Promise.resolve({ data: withoutOAuthCredentials(account) }),
+        },
+      },
+    },
 
     session: {
       modelName: 'sessions',
