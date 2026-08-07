@@ -1,5 +1,5 @@
-import { LISTS_PER_USER_MAX, NEW_LIST_TITLE } from '@yaritai100list/shared'
-import { useCallback, useEffect, useState } from 'react'
+import { exportFileName, LISTS_PER_USER_MAX, NEW_LIST_TITLE } from '@yaritai100list/shared'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'wouter'
 
 import { api } from './api'
@@ -30,6 +30,18 @@ type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; l
 
 /** 直前の操作の結果。**黙って失敗させない**ために画面へ出す。 */
 type Message = { tone: 'info' | 'warn'; text: string } | null
+
+/**
+ * 読み込みが断られた理由の文言（#122 の応答に対応）。
+ *
+ * **サーバーが返す理由をそのまま出さない。** 利用者が次に何をすればいいか分かる形にする。
+ */
+const RESTORE_MESSAGES: Record<string, string> = {
+  'Unsupported Export Version':
+    'このファイルは、いまのアプリでは読み込めない形式です（版が違います）',
+  'Future Completion Date': '未来の日付が入っているため読み込めません',
+  'List Limit Reached': `リストは${String(LISTS_PER_USER_MAX)}つまでです。減らすと読み込めます`,
+}
 
 export function ListsPage({
   session,
@@ -106,6 +118,65 @@ export function ListsPage({
 
     const body = await res.json()
     if ('list' in body) navigate(`/lists/${body.list.id}`)
+  }
+
+  /**
+   * リストをファイルに書き出す（#121）。
+   *
+   * 取得は API、保存はブラウザの仕事なので**ここで DOM を触る。**
+   * ファイル名の組み立ては `packages/shared` の純関数（テストしてある）。
+   */
+  const exportList = async (list: RemoteList) => {
+    setMessage(null)
+
+    const res = await api.api.lists[':listId'].export.$get({ param: { listId: list.id } })
+
+    if (!res.ok) {
+      setMessage({ tone: 'warn', text: '書き出せませんでした。通信を確かめてください' })
+      return
+    }
+
+    const url = URL.createObjectURL(new Blob([await res.text()], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+
+    anchor.href = url
+    anchor.download = exportFileName(list.title, new Date())
+    anchor.click()
+
+    // 解放しないとページを閉じるまでメモリに残る
+    URL.revokeObjectURL(url)
+  }
+
+  /** 書き出したファイルを読み込む（#122）。**新しいリストとして増える。** */
+  const restoreList = async (file: File) => {
+    setMessage(null)
+
+    let body: unknown
+    try {
+      body = JSON.parse(await file.text())
+    } catch {
+      setMessage({ tone: 'warn', text: 'このファイルは読み込めません（JSON ではありません）' })
+      return
+    }
+
+    const res = await fetch('/api/lists/restore', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const failure: { error?: string } = await res.json<{ error?: string }>().catch(() => ({}))
+
+      setMessage({
+        tone: 'warn',
+        text: RESTORE_MESSAGES[failure.error ?? ''] ?? 'このファイルは読み込めません',
+      })
+      return
+    }
+
+    setMessage({ tone: 'info', text: 'ファイルからリストを読み込みました' })
+    await load()
   }
 
   const deleteList = async (listId: string) => {
@@ -208,6 +279,7 @@ export function ListsPage({
             key={list.id}
             number={formatItemNumber(index + 1)}
             list={list}
+            onExport={exportList}
             onDelete={deleteList}
           />
         ))}
@@ -237,6 +309,8 @@ export function ListsPage({
         新しいリストを作る
       </button>
 
+      <RestoreField onPick={restoreList} />
+
       {/*
         ログアウトの置き場所（#114）。**編集画面には出さない。**
         日常的に押すものではないうえ、誤って押すとリストが消えたように見える。
@@ -257,10 +331,12 @@ export function ListsPage({
 function ListRow({
   number,
   list,
+  onExport,
   onDelete,
 }: {
   number: string
   list: RemoteList
+  onExport: (list: RemoteList) => Promise<void>
   onDelete: (listId: string) => Promise<void>
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -277,6 +353,16 @@ function ListRow({
           </span>
           <span className="min-w-0 flex-1 truncate text-slate-900">{list.title}</span>
         </Link>
+
+        <button
+          type="button"
+          aria-label={`${list.title} を書き出す`}
+          title="書き出す"
+          onClick={() => void onExport(list)}
+          className="shrink-0 px-1 text-sm text-slate-400"
+        >
+          ⤓
+        </button>
 
         <button
           type="button"
@@ -315,5 +401,41 @@ function ListRow({
         </p>
       )}
     </li>
+  )
+}
+
+/**
+ * ファイルを選んで読み込む。
+ *
+ * `<input type="file">` は見た目を整えにくいので隠し、ボタンから開く。
+ * **同じファイルを続けて選べるように、読み込んだら値を空に戻す**
+ * （戻さないと `change` が起きず、2回目が無反応になる）。
+ */
+function RestoreField({ onPick }: { onPick: (file: File) => Promise<void> }) {
+  const input = useRef<HTMLInputElement>(null)
+
+  return (
+    <div className="mt-6 text-center">
+      <input
+        ref={input}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+
+          if (file) void onPick(file)
+        }}
+      />
+
+      <button
+        type="button"
+        onClick={() => input.current?.click()}
+        className="text-xs text-brand-deep underline"
+      >
+        ファイルからリストを読み込む
+      </button>
+    </div>
   )
 }
