@@ -18,7 +18,7 @@ import { filledCount, toSlots, type CompletionPermission, type Item, type LocalL
  */
 interface ListEditorProps {
   list: LocalList
-  /** 「叶えた」印を付けられるか。判定は `model.ts` の `toCompletionPermission`。 */
+  /** 「やった」印を付けられるか。判定は `model.ts` の `toCompletionPermission`。 */
   completion: CompletionPermission
   onRenameList: (title: string) => boolean
   onAddItem: (text: string) => boolean
@@ -78,8 +78,9 @@ export function ListEditor({
                 }
 
                 // **できないことを黙って無効化しない。** 無効化だけだと、
-                // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）
-                setPromptedId(item.id)
+                // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）。
+                // もう一度押すと閉じる（案内を消す手段がこれしかない）
+                setPromptedId((current) => (current === item.id ? null : item.id))
               }}
               onRemove={onRemoveItem}
             />
@@ -174,7 +175,8 @@ function ItemRow({
   }
 
   return (
-    <li className={ROW_BORDER}>
+    // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）
+    <li className={`relative ${ROW_BORDER}`}>
       <div className={ROW}>
         <span className={`${NUMBER} ${done ? 'text-brand-deep' : ''}`}>{number}</span>
 
@@ -243,7 +245,11 @@ function ItemRow({
 }
 
 /**
- * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に出す。**
+ * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に重ねて出す。**
+ *
+ * 🔴 **行の間に差し込まない**（#81）。差し込むとリスト全体が押し下がり、
+ * 100行が一斉に動く。押した本人にも、何が起きたのか分からない。
+ * `absolute` で浮かせて、**他の行の位置に影響させない。**
  *
  * 理由ごとに文言を分ける。未ログインと「状態が分からない」を同じ文にすると、
  * ログイン済みの利用者にログインを促してしまう（`toCompletionPermission` の注意書き）。
@@ -263,18 +269,22 @@ function CompletionPrompt({
 
   return (
     <PromptBox>
-      ログインすると「叶えた」印を付けられます{' '}
       {/* ログインの開始は POST なので <a> から叩けない。GET の入口はサーバー側にある */}
       <a href="/api/login/google" className="font-bold text-brand-deep underline">
-        Google でログイン
+        Googleでログイン
       </a>
+      すると、「やった」印を付けられます
     </PromptBox>
   )
 }
 
 function PromptBox({ children }: { children: React.ReactNode }) {
   return (
-    <p role="status" className="mb-1.5 ml-10 rounded bg-white px-2 py-1.5 text-xs text-slate-600">
+    <p
+      role="status"
+      // top-full = 行の下端。行の高さの分だけ下げるので、押した行に貼り付いて見える
+      className="absolute top-full right-0 left-8 z-10 -mt-1 rounded bg-white px-2 py-1.5 text-xs text-slate-600 shadow-md ring-1 ring-brand"
+    >
       {children}
     </p>
   )
