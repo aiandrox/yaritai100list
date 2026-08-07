@@ -1,5 +1,6 @@
 import {
   DEFAULT_LIST_TITLE,
+  NEW_LIST_TITLE,
   ITEM_TEXT_MAX_LENGTH,
   itemTextSchema,
   LIST_TITLE_MAX_LENGTH,
@@ -53,6 +54,12 @@ describe('文字数の上限', () => {
   it('既定のリストタイトルが自分の上限に収まっている', () => {
     // 既定値が自分のバリデーションを通らないと、リスト作成が必ず失敗する
     expect(listTitleSchema.safeParse(DEFAULT_LIST_TITLE).success).toBe(true)
+    expect(listTitleSchema.safeParse(NEW_LIST_TITLE).success).toBe(true)
+  })
+
+  it('最初の1つと、2つ目以降で既定の名前が違う', () => {
+    // 同じ名前にすると、増やしたときに一覧で見分けられない（#110）
+    expect(DEFAULT_LIST_TITLE).not.toBe(NEW_LIST_TITLE)
   })
 })
 

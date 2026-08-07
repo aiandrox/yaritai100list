@@ -68,7 +68,7 @@ export function App() {
           {/* 未ログインで持てるリストは1つだけなので、一覧への導線を出さない */}
           {session.status === 'authenticated' && (
             <Link href="/lists" className="text-xs text-slate-900 underline">
-              マイリスト
+              すべてのリスト
             </Link>
           )}
         </header>

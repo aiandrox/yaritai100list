@@ -26,5 +26,17 @@ export const SERVICE_NAME_EN = 'yaritai100list'
  */
 export const DEFAULT_LIST_TITLE = '人生でやりたいことリスト'
 
+/**
+ * 一覧から**2つ目以降を作った**ときの既定タイトル（2026-08-07 決定、#110）。
+ *
+ * `DEFAULT_LIST_TITLE` と分けているのは、**使う場面が違う**ため。
+ * あちらは「最初の1つ」（未ログインで書き始めたときと、その取り込み）に付く名前で、
+ * 一生分のリストという意味を持たせている。こちらは用途別に増やす2つ目以降なので、
+ * **中身が決まっていないことが分かる名前**にする。
+ *
+ * 12文字。`LIST_TITLE_MAX_LENGTH`（15）に収まることはテストで固定してある。
+ */
+export const NEW_LIST_TITLE = '新しいやりたいことリスト'
+
 export * from './limits'
 export * from './validation'
