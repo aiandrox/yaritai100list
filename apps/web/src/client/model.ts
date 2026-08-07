@@ -414,6 +414,15 @@ export function pickCurrentListId(lists: RemoteList[]): string | null {
 }
 
 /**
+ * 一覧に出す順。**最後に更新したものが上**（トップで開くのと同じ基準）。
+ *
+ * 元の配列は書き換えない。React の state をそのまま渡すため。
+ */
+export function sortListsByUpdated(lists: RemoteList[]): RemoteList[] {
+  return [...lists].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+}
+
+/**
  * サーバーの応答を画面の形に直す。
  *
  * 項目は**サーバーが並び順で返す**ので、ここでは並べ替えない

@@ -81,14 +81,21 @@ export interface ListController {
  */
 export type Rejection = Extract<ListResult, { ok: false }>['reason'] | 'server-error'
 
-export function useList(session: SessionState): ListController {
+/**
+ * @param requestedListId `/lists/:listId` で開いたときのリスト。
+ *   `null` なら**最後に更新したリスト**を選ぶ（`PRODUCT_SPEC.md` §4.3）。
+ */
+export function useList(
+  session: SessionState,
+  requestedListId: string | null = null,
+): ListController {
   const [screen, setScreen] = useState<ListScreen>({ status: 'loading' })
   const [storage, setStorage] = useState<LocalStorage>({ status: 'ok' })
   const [importOutcome, setImportOutcome] = useState<ImportOutcome>('none')
   const [rejection, setRejection] = useState<Rejection | null>(null)
 
   /** ログイン中に開いているリスト。未ログインなら null */
-  const listId = useRef<string | null>(null)
+  const listId = useRef<string | null>(requestedListId)
 
   /**
    * 取り込みは**一度だけ**走らせる。
@@ -206,6 +213,8 @@ export function useList(session: SessionState): ListController {
 
     const start = async () => {
       if (session.status === 'authenticated') {
+        // URL で指定されたリストがあればそれを開く。切り替えたときも追随する
+        listId.current = requestedListId
         if (!imported.current) {
           imported.current = true
           await importStored()
@@ -239,7 +248,7 @@ export function useList(session: SessionState): ListController {
     }
 
     void start()
-  }, [session.status, importStored, loadFromServer, readStored])
+  }, [session.status, requestedListId, importStored, loadFromServer, readStored])
 
   // --- 操作 ---
 
