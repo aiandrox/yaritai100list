@@ -62,8 +62,8 @@ export function App() {
   }, [loadSession])
 
   return (
-    <main>
-      <h1>{SERVICE_NAME}</h1>
+    <main className="mx-auto max-w-md p-4">
+      <h1 className="text-xl font-bold">{SERVICE_NAME}</h1>
       <p>API: {health}</p>
 
       {session.status === 'loading' && <p>読み込み中</p>}
