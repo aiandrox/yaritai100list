@@ -3,7 +3,11 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": []
+
+    // @types/* を勝手に拾わせない方針は Worker 側と同じ。必要なものだけ明示する。
+    // vite/client は `import './index.css'` のような副作用 import の型宣言を入れる
+    // （無いと TS2882 になる）。
+    "types": ["vite/client"]
   },
 
   // worker-configuration.d.ts を含めている理由:

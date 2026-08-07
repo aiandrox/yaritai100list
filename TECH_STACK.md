@@ -516,9 +516,9 @@ Firestore や Supabase の「クライアント直叩き + ルール」モデル
 - **コンソールでしか設定できない項目の一覧と現在値をリポジトリに置く**（§8）
 - **エラー通知を入れる**。コードを読まないなら、壊れたことを知る手段が別途必要
 
-### SPA のスタイリング（2026-08-06 決定、#53）
+### SPA のスタイリング（2026-08-06 決定、#53 / 2026-08-07 導入、#71）
 
-**Tailwind CSS v4 を使う。** 導入は #4（UI 本体）の最初に行う。
+**Tailwind CSS v4 を使う。** 導入済み。
 
 選んだ理由は**使われなくなったスタイルが溜まらない**こと。
 このコードベースは人間がレビューせず、CSS はテストでも担保しない（下記）。
@@ -534,6 +534,21 @@ Firestore や Supabase の「クライアント直叩き + ルール」モデル
 
 **Satori（画像生成、§4.3）の Tailwind とは別の話。** あちらは
 `satori-html` 経由で使えるかを #8 で確認する対象で、こことは経路が違う。
+
+#### 導入の形（#71）
+
+```
+apps/web/src/client/index.css   @import "tailwindcss" の1行。main.tsx から読む
+apps/web/vite.config.ts         @tailwindcss/vite のプラグイン
+```
+
+- **v4 は `tailwind.config.js` を持たない。** テーマを足すときは `index.css` の
+  `@theme` に書く。設定ファイルを探しても無い
+- **`.css` を増やさない。** 増やすと「使われなくなった規則が残る」という
+  導入理由そのものが崩れる。スタイルはユーティリティとして JSX に直接書く
+- 依存は **`apps/web` の workspace の `devDependencies`**（ビルド時にしか要らない）
+- `src/client/tsconfig.json` の `types` に **`vite/client`** を入れてある。
+  無いと `import './index.css'` が **TS2882** になる（`types: []` にしていたため）
 
 ### クライアント（React）のテスト方針（2026-08-06 決定、#43）
 
@@ -591,7 +606,7 @@ jsdom で「クラスが付いている」ことを確認するより、起動�
 | 日本語フォント | **フルセット同梱**。ウェイトは最小限、OFL のフォント（§4.2） |
 | DB | SQL（D1）。NoSQL は採用しない |
 | API 形式 | GraphQL を使わない |
-| SPA のスタイリング | **Tailwind CSS v4**。導入は #4 の最初（理由は §10） |
+| SPA のスタイリング | **Tailwind CSS v4**。導入済み（#71）。`.css` は `src/client/index.css` 1枚だけ（理由は §10） |
 | 認証 | **Better Auth**。セッションストアは **D1 のみ**（KV の `secondaryStorage` は使わない。§8） |
 | Better Auth のバージョン | **`1.6.x` に固定する。1.7 系に上げない**（D1 のマイグレーションが通らない。§13） |
 | ID の設計 | **編集用 `listId` と公開用 `shareId` を分ける**。どちらも推測不可能な値 |
