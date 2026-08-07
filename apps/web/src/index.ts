@@ -18,6 +18,7 @@ import { createDb, type Db } from './db'
 import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId } from './id'
+import { rateLimitCreates } from './rate-limit'
 import { sentryOptions } from './sentry'
 
 /**
@@ -182,31 +183,37 @@ const app = new Hono<AppEnv>()
    * 上限の値は `packages/shared` から取る。SQL に数字を書かない
    * （`CLAUDE.md` の不変条件）。DB の制約としての上限は #6 で足す。
    */
-  .post('/api/lists', requireUser, zValidator('json', createListSchema), async (c) => {
-    const db = createDb(c.env.DB)
-    const userId = c.get('userId')
+  .post(
+    '/api/lists',
+    requireUser,
+    rateLimitCreates,
+    zValidator('json', createListSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const userId = c.get('userId')
 
-    // 推測不可能な ID。連番にしない（CLAUDE.md の不変条件）
-    const id = newId()
-    const title = c.req.valid('json').title ?? DEFAULT_LIST_TITLE
+      // 推測不可能な ID。連番にしない（CLAUDE.md の不変条件）
+      const id = newId()
+      const title = c.req.valid('json').title ?? DEFAULT_LIST_TITLE
 
-    const inserted = await db.all<{ id: string }>(sql`
+      const inserted = await db.all<{ id: string }>(sql`
       insert into ${lists} (id, user_id, title)
       select ${id}, ${userId}, ${title}
       where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
       returning id
     `)
 
-    // 0行 = 上限に達していた。**404 と同じ応答にしない**（理由が分からないと直せない）
-    if (inserted.length === 0) {
-      return c.json({ error: 'List Limit Reached' } as const, 409)
-    }
+      // 0行 = 上限に達していた。**404 と同じ応答にしない**（理由が分からないと直せない）
+      if (inserted.length === 0) {
+        return c.json({ error: 'List Limit Reached' } as const, 409)
+      }
 
-    const [list] = await db.select().from(lists).where(eq(lists.id, id))
-    if (!list) throw new Error('作ったリストを読み戻せなかった')
+      const [list] = await db.select().from(lists).where(eq(lists.id, id))
+      if (!list) throw new Error('作ったリストを読み戻せなかった')
 
-    return c.json({ list }, 201)
-  })
+      return c.json({ list }, 201)
+    },
+  )
 
   /**
    * ブラウザに書いていたリストを取り込む（`PRODUCT_SPEC.md` §2「ログイン時の引き継ぎ」）。
@@ -222,51 +229,57 @@ const app = new Hono<AppEnv>()
    * リストを作れたのに項目が入らない、という中途半端な状態を残さないため、
    * **項目の挿入が失敗したらリストを消してから投げ直す。**
    */
-  .post('/api/lists/import', requireUser, zValidator('json', importListSchema), async (c) => {
-    const db = createDb(c.env.DB)
-    const userId = c.get('userId')
-    const listId = newId()
-    const { title, items: incoming } = c.req.valid('json')
+  .post(
+    '/api/lists/import',
+    requireUser,
+    rateLimitCreates,
+    zValidator('json', importListSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const userId = c.get('userId')
+      const listId = newId()
+      const { title, items: incoming } = c.req.valid('json')
 
-    // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
-    const inserted = await db.all<{ id: string }>(sql`
+      // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
+      const inserted = await db.all<{ id: string }>(sql`
       insert into ${lists} (id, user_id, title)
       select ${listId}, ${userId}, ${title ?? DEFAULT_LIST_TITLE}
       where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
       returning id
     `)
 
-    if (inserted.length === 0) {
-      return c.json({ error: 'List Limit Reached' } as const, 409)
-    }
+      if (inserted.length === 0) {
+        return c.json({ error: 'List Limit Reached' } as const, 409)
+      }
 
-    const rows = incoming.map((item, position) => ({
-      id: newId(),
-      listId,
-      text: item.text,
-      position,
-    }))
+      const rows = incoming.map((item, position) => ({
+        id: newId(),
+        listId,
+        text: item.text,
+        position,
+      }))
 
-    const rest = []
-    for (let i = INSERT_CHUNK; i < rows.length; i += INSERT_CHUNK) {
-      rest.push(db.insert(items).values(rows.slice(i, i + INSERT_CHUNK)))
-    }
+      const rest = []
+      for (let i = INSERT_CHUNK; i < rows.length; i += INSERT_CHUNK) {
+        rest.push(db.insert(items).values(rows.slice(i, i + INSERT_CHUNK)))
+      }
 
-    try {
-      // batch の型は「1つ以上」を要求する。先頭を分けて渡すことで、
-      // 空配列になりえないことを型でも示す（項目が1件以上あることは検証済み）
-      await db.batch([db.insert(items).values(rows.slice(0, INSERT_CHUNK)), ...rest])
-    } catch (error) {
-      // 項目の無い空のリストを残さない
-      await db.delete(lists).where(eq(lists.id, listId))
-      throw error
-    }
+      try {
+        // batch の型は「1つ以上」を要求する。先頭を分けて渡すことで、
+        // 空配列になりえないことを型でも示す（項目が1件以上あることは検証済み）
+        await db.batch([db.insert(items).values(rows.slice(0, INSERT_CHUNK)), ...rest])
+      } catch (error) {
+        // 項目の無い空のリストを残さない
+        await db.delete(lists).where(eq(lists.id, listId))
+        throw error
+      }
 
-    const [list] = await db.select().from(lists).where(eq(lists.id, listId))
-    if (!list) throw new Error('取り込んだリストを読み戻せなかった')
+      const [list] = await db.select().from(lists).where(eq(lists.id, listId))
+      if (!list) throw new Error('取り込んだリストを読み戻せなかった')
 
-    return c.json({ list, items: await selectItems(db, listId) }, 201)
-  })
+      return c.json({ list, items: await selectItems(db, listId) }, 201)
+    },
+  )
 
   /**
    * リスト1件と、その項目。**`requireOwnedList` が認可を通した行だけを使う。**
@@ -320,6 +333,7 @@ const app = new Hono<AppEnv>()
   .post(
     '/api/lists/:listId/items',
     requireUser,
+    rateLimitCreates,
     requireOwnedList,
     zValidator('json', createItemSchema),
     async (c) => {
