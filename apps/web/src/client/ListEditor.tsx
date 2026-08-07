@@ -49,16 +49,20 @@ export function ListEditor({
    * 案内の**外側を押したら閉じる**（#83）。閉じ方が「同じ ✓ をもう一度押す」しか
    * 無いと邪魔になる。Esc でも閉じる（キーボードだけで操作している場合の逃げ道）。
    *
-   * 出している行そのもの（`data-prompt-open` を付けた `li`）の中では閉じない。
-   * 閉じてしまうと、案内の中のログインのリンクを押せず、
-   * ✓ を押したときに「閉じてすぐ開く」ことになって閉じられなくなる。
+   * 🔴 **「外側」は案内の箱の外側。行の外側ではない**（#85 で直した）。
+   * 行を基準にすると、案内のすぐ左にある項目の入力欄を押しても閉じず、
+   * **見えている案内の外を押しているのに消えない。**
+   *
+   * 閉じない例外は2つだけ:
+   * - 案内の中（ログインのリンクを押せなくなる）
+   * - ✓ のボタン（押した瞬間に閉じると、直後の click で開き直して閉じられない）
    */
   useEffect(() => {
     if (promptedId === null) return
 
     const dismiss = (event: Event) => {
       const target = event.target
-      if (target instanceof Element && target.closest('[data-prompt-open]')) return
+      if (target instanceof Element && target.closest('[data-keep-prompt]')) return
 
       setPromptedId(null)
     }
@@ -207,9 +211,8 @@ function ItemRow({
   }
 
   return (
-    // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）。
-    // data-prompt-open は「外側を押したら閉じる」の判定に使う（ListEditor 側）
-    <li className={`relative ${ROW_BORDER}`} data-prompt-open={prompted ? '' : undefined}>
+    // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）
+    <li className={`relative ${ROW_BORDER}`}>
       <div className={ROW}>
         <span className={`${NUMBER} ${done ? 'text-brand-deep' : ''}`}>{number}</span>
 
@@ -230,6 +233,9 @@ function ItemRow({
           onClick={() => {
             onToggle(item)
           }}
+          // 押した瞬間に案内を閉じない。閉じると直後の click で開き直り、
+          // ✓ から閉じられなくなる（判定は ListEditor の dismiss）
+          data-keep-prompt=""
           className={`size-6 shrink-0 rounded-full border-2 text-xs leading-none ${
             done ? 'border-brand-deep bg-brand-deep text-white' : 'border-brand bg-white text-white'
           } ${completion.allowed ? '' : 'border-dashed opacity-60'}`}
@@ -315,6 +321,8 @@ function PromptBox({ children }: { children: React.ReactNode }) {
   return (
     <p
       role="status"
+      // この中を押しても閉じない（ログインのリンクを押せなくなるため）
+      data-keep-prompt=""
       // top-full = 行の下端。行の高さの分だけ下げるので、押した行に貼り付いて見える
       className="absolute top-full right-0 left-8 z-10 -mt-1 rounded bg-white px-2 py-1.5 text-xs text-slate-600 shadow-md ring-1 ring-brand"
     >
