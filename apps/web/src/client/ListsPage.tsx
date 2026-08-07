@@ -31,7 +31,15 @@ type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; l
 /** 直前の操作の結果。**黙って失敗させない**ために画面へ出す。 */
 type Message = { tone: 'info' | 'warn'; text: string } | null
 
-export function ListsPage({ session }: { session: SessionState }) {
+export function ListsPage({
+  session,
+  signOutFailed,
+  onSignOut,
+}: {
+  session: SessionState
+  signOutFailed: boolean
+  onSignOut: () => void
+}) {
   const [, navigate] = useLocation()
   const [state, setState] = useState<State>({ status: 'loading' })
   const [message, setMessage] = useState<Message>(null)
@@ -228,6 +236,20 @@ export function ListsPage({ session }: { session: SessionState }) {
       >
         新しいリストを作る
       </button>
+
+      {/*
+        ログアウトの置き場所（#114）。**編集画面には出さない。**
+        日常的に押すものではないうえ、誤って押すとリストが消えたように見える。
+        それでも消さないのは、アカウントを間違えたときに直せなくなるため
+        （`TECH_STACK.md` §9 の「サーバー側から失効できる」出口でもある）。
+      */}
+      <div className="mt-12 border-t border-brand/40 pt-4 text-center">
+        <button type="button" onClick={onSignOut} className="text-xs text-slate-500 underline">
+          ログアウト
+        </button>
+
+        {signOutFailed && <p className="mt-1 text-xs text-brand-deep">ログアウトに失敗しました</p>}
+      </div>
     </div>
   )
 }

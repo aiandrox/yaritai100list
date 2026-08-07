@@ -78,12 +78,7 @@ export function App() {
           )}
         </header>
 
-        <SessionArea
-          session={session}
-          signOutFailed={signOutFailed}
-          onRetry={() => void loadSession()}
-          onSignOut={() => void signOut()}
-        />
+        <SessionArea session={session} onRetry={() => void loadSession()} />
 
         <Switch>
           {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
@@ -93,7 +88,13 @@ export function App() {
           </Route>
 
           <Route path="/lists">
-            <ListsPage session={session} />
+            {/* ログアウトはここに置く。日常的に押すものではないので、
+                編集画面には出さない（#114） */}
+            <ListsPage
+              session={session}
+              signOutFailed={signOutFailed}
+              onSignOut={() => void signOut()}
+            />
           </Route>
 
           <Route path="/lists/:listId">
@@ -114,17 +115,13 @@ export function App() {
   )
 }
 
-function SessionArea({
-  session,
-  signOutFailed,
-  onRetry,
-  onSignOut,
-}: {
-  session: SessionState
-  signOutFailed: boolean
-  onRetry: () => void
-  onSignOut: () => void
-}) {
+/**
+ * ログイン状態の表示。**ログアウトのボタンはここに置かない**（#114）。
+ *
+ * 日常的に押すものではないうえ、編集画面から誤って押すと
+ * リストが消えたように見える。置き場所は `/lists` の一番下。
+ */
+function SessionArea({ session, onRetry }: { session: SessionState; onRetry: () => void }) {
   return (
     <div className="mb-2 text-right text-xs text-slate-600">
       {session.status === 'error' && (
@@ -136,16 +133,7 @@ function SessionArea({
         </p>
       )}
 
-      {session.status === 'authenticated' && (
-        <p>
-          ログイン中{' '}
-          <button type="button" onClick={onSignOut} className="underline">
-            ログアウト
-          </button>
-        </p>
-      )}
-
-      {signOutFailed && <p className="text-brand-deep">ログアウトに失敗しました</p>}
+      {session.status === 'authenticated' && <p>ログイン中</p>}
     </div>
   )
 }
