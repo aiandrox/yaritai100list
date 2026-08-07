@@ -43,6 +43,13 @@
       "when": 1786081953605,
       "tag": "0005_add_items",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786086462686,
+      "tag": "0006_limit_lists_per_user",
+      "breakpoints": true
     }
   ]
 }
