@@ -40,7 +40,15 @@ export type ListScreen =
   | { status: 'broken' }
   /** サーバーから取れなかった。**未ログインと混ぜない**（書いたものを失わせない） */
   | { status: 'failed' }
-  | { status: 'ready'; list: LocalList; source: ListSource }
+  /**
+   * 表示できる状態。
+   *
+   * `key` は**どのリストを開いているかの識別子**（ローカルなら `'local'`、
+   * サーバーならその `listId`）。画面はこれを React の `key` に使い、
+   * **別のリストに切り替わったら入力欄の下書きを作り直す。**
+   * 無いと、ログアウトしたのに前のタイトルが入力欄に残る（#102 で踏んだ）。
+   */
+  | { status: 'ready'; key: string; list: LocalList; source: ListSource }
 
 /**
  * ブラウザの保存を取り込めたか。
@@ -150,7 +158,12 @@ export function useList(session: SessionState): ListController {
       }
 
       const body = await res.json()
-      setScreen({ status: 'ready', list: toLocalList(body.list, body.items), source: 'server' })
+      setScreen({
+        status: 'ready',
+        key: body.list.id,
+        list: toLocalList(body.list, body.items),
+        source: 'server',
+      })
     } catch {
       setScreen({ status: 'failed' })
     }
@@ -207,7 +220,7 @@ export function useList(session: SessionState): ListController {
 
       if (stored === null) {
         setStorage({ status: 'unavailable' })
-        setScreen({ status: 'ready', list: createEmptyList(), source: 'local' })
+        setScreen({ status: 'ready', key: 'local', list: createEmptyList(), source: 'local' })
         return
       }
 
@@ -219,6 +232,7 @@ export function useList(session: SessionState): ListController {
 
       setScreen({
         status: 'ready',
+        key: 'local',
         list: stored.status === 'loaded' ? stored.list : createEmptyList(),
         source: 'local',
       })
@@ -238,7 +252,7 @@ export function useList(session: SessionState): ListController {
       }
 
       setRejection(null)
-      setScreen({ status: 'ready', list: result.list, source: 'local' })
+      setScreen({ status: 'ready', key: 'local', list: result.list, source: 'local' })
       if (storage.status !== 'unavailable') writeStored(result.list)
 
       return true
@@ -291,7 +305,7 @@ export function useList(session: SessionState): ListController {
 
     startOver: () => {
       // ここでは保存を消さない。最初の編集で上書きされる
-      setScreen({ status: 'ready', list: createEmptyList(), source: 'local' })
+      setScreen({ status: 'ready', key: 'local', list: createEmptyList(), source: 'local' })
     },
 
     renameList: async (title) =>
