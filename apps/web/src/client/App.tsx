@@ -1,6 +1,6 @@
 import { SERVICE_NAME } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Route, Switch } from 'wouter'
+import { Link, Route, Switch, useLocation } from 'wouter'
 
 import { ListPage } from './ListPage'
 import { ListsPage } from './ListsPage'
@@ -17,6 +17,7 @@ import { signOutRequestInit, toSessionState, type SessionState } from './model'
  * **`/lists/xxx` を直接開いてもこの SPA が起動する。**
  */
 export function App() {
+  const [, navigate] = useLocation()
   const [session, setSession] = useState<SessionState>({ status: 'loading' })
   const [signOutFailed, setSignOutFailed] = useState(false)
 
@@ -53,7 +54,11 @@ export function App() {
 
     // サーバー側でセッションを消したので、状態を取り直す
     await loadSession()
-  }, [loadSession])
+
+    // 🔴 **トップへ戻す**（#112）。ログインが要る画面に残ると、
+    // 直前まで見えていたものが消えたように見える
+    navigate('/')
+  }, [loadSession, navigate])
 
   return (
     <div className="min-h-dvh bg-brand-soft">

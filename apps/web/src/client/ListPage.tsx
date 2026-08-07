@@ -34,6 +34,54 @@ const REJECTION_MESSAGES: Record<Rejection, string> = {
 }
 
 export function ListPage({ session, listId }: { session: SessionState; listId?: string }) {
+  // 🔴 **`/lists/:listId` は未ログインでは開かせない**（#112）。
+  // 素通しすると、URL が指すリストではなく**ブラウザに保存した内容**が出てしまい、
+  // URL と画面の中身が食い違う。
+  //
+  // `useList` を呼ぶ前に返す。呼んでしまうと localStorage を読みに行く
+  if (listId !== undefined && session.status !== 'authenticated') {
+    return <SignInRequired session={session} />
+  }
+
+  return <ListPageBody session={session} listId={listId} />
+}
+
+/**
+ * ログインが要る画面に未ログインで来たとき。
+ *
+ * **`error`（確認できない）を未ログインと同じ文言にしない。**
+ * ログイン済みの人にログインを促すことになる（`toCompletionPermission` と同じ考え方）。
+ */
+function SignInRequired({ session }: { session: SessionState }) {
+  if (session.status === 'loading') return <p className="py-8 text-slate-500">読み込み中</p>
+
+  if (session.status === 'error') {
+    return (
+      <Notice tone="warn">
+        ログイン状態を確認できないため、このリストを開けません。通信を確かめてください
+      </Notice>
+    )
+  }
+
+  return (
+    <Notice tone="info">
+      このリストを見るには
+      <a href="/api/login/google" className="font-bold text-brand-deep underline">
+        Googleでログイン
+      </a>
+      してください
+    </Notice>
+  )
+}
+
+function ListPageBody({
+  session,
+  listId,
+}: {
+  session: SessionState
+  // exactOptionalPropertyTypes が有効なので、渡す側に合わせて undefined を明示する
+  listId: string | undefined
+}) {
   const controller = useList(session, listId ?? null)
   const { screen, rejection } = controller
 
