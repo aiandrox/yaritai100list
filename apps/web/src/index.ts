@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
+  buildExportFile,
   DEFAULT_LIST_TITLE,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
@@ -313,6 +314,25 @@ const app = new Hono<AppEnv>()
       return c.json({ list: updated })
     },
   )
+
+  /**
+   * リストを1つ書き出す（#121）。**持ち出すのは自分のリストだけ**
+   * （`requireOwnedList` を通っている）。
+   *
+   * 形は `packages/shared` の `buildExportFile`。**版を持たせてある**ので、
+   * 形を変えたら上げること（読み込み側が断れる）。
+   *
+   * ⚠️ **形式は後から増える。** ブログへの転載用にマークダウンでも書き出す予定がある
+   * （#124）。そのときは**このルートの隣に足す**（`/export/markdown` など）。
+   * ここで分岐を増やして1本にまとめない。中身の作り方が違いすぎる
+   * （あちらは人が読むもので、読み込まない）。
+   */
+  .get('/api/lists/:listId/export', requireUser, requireOwnedList, async (c) => {
+    const list = c.get('list')
+    const rows = await selectItems(createDb(c.env.DB), list.id)
+
+    return c.json(buildExportFile({ title: list.title, items: rows }, new Date()))
+  })
 
   /** リストを削除する。 */
   .delete('/api/lists/:listId', requireUser, requireOwnedList, async (c) => {
