@@ -181,8 +181,8 @@ export function ListsPage({ session }: { session: SessionState }) {
         <div className="mt-3 rounded bg-white px-3 py-3 text-xs text-slate-700">
           <p className="font-bold text-brand-deep">取り込めていない内容があります</p>
           <p className="mt-1">
-            このブラウザに「{pendingImport.title}」（{pendingImport.items.length}件）が
-            残っています。リストを減らしてから取り込んでください。
+            このブラウザに「{pendingImport.title}」が残っています。
+            リストを減らしてから取り込んでください。
           </p>
           <button
             type="button"
