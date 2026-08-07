@@ -1,12 +1,11 @@
 name: CI
 
+# PR だけで走らせる。**main へ入った後のチェックは Deploy が行う**（deploy.yml）。
+# ここでも push を拾うと、マージのたびに同じチェックが2回走る
 on:
   pull_request:
-  push:
-    branches: [main]
 
 # 同じブランチに続けて push したとき、古い実行を止める。
-# private リポジトリの Actions は無料枠が月2,000分なので無駄に回さない。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

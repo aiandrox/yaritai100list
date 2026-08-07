@@ -93,18 +93,30 @@ push 直後に叩いたときは、`gh run list --branch <branch> --limit 1` で
 
 ### デプロイ
 
-**AI がデプロイする**（2026-08-06 の利用者の判断）。指示を待つ必要はない。
+**`main` にマージすると自動で出る**（2026-08-07、#117）。`.github/workflows/deploy.yml`。
+
+```
+チェック → リモートのマイグレーション → デプロイ → 疎通確認
+```
+
+**手で叩く必要はない。** マージしたら `gh run list --workflow Deploy --limit 1` で結果を見る。
+
+- **順序は固定してある。** スキーマを変えたときは**マイグレーションが先**。
+  逆にすると、新しいコードが存在しない列を読んで落ちる
+- **デプロイ前にもう一度チェックを走らせている。**
+  PR 単体では緑でも、**続けてマージした2つが噛み合わないことがある**
+- 落ちたら `gh workflow run Deploy` で流し直せる
+- 本番 URL: https://yaritai100list.aiandrox.workers.dev
+
+手で出したいとき（ワークフローが壊れている場合など）:
 
 ```sh
 npm run deploy                                       # vite build + wrangler deploy
 npm run db:migrate:remote --workspace @yaritai100list/web   # スキーマを変えたときだけ
 ```
 
-- **スキーマを変えたら先にリモートのマイグレーションを当てる。**
-  順序を逆にすると、新しいコードが存在しない列を読んで落ちる
 - **デプロイ直後の数秒は 404 や `error code: 1042` が返る。**
   伝播待ちなので、失敗と判断せず 10 秒ほど待って叩き直す（実際に踏んだ）
-- 本番 URL: https://yaritai100list.aiandrox.workers.dev
 - **シークレット（`SENTRY_DSN` など）は AI では設定できない。**
   値を持っていないため。必要になったら利用者に
   `wrangler secret put <名前>` の実行を依頼する

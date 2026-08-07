@@ -22,6 +22,28 @@
 | Actions の無料枠 | **無制限**（public） | private だと月2,000分だった |
 | ルールセット（`main`） | **設定済み**。PR 必須 / CI 必須 / force push 禁止 | 詳細は下記。bypass は設けていない |
 | Dependabot | `.github/dependabot.yml` で管理 | コード側なのでコンソール作業は不要 |
+| Actions のシークレット | **`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`** | 自動デプロイ（#117）に使う。下記 |
+
+### Actions のシークレット（自動デプロイ）
+
+`main` にマージすると `.github/workflows/deploy.yml` が本番へ出す（2026-08-07、#117）。
+そのために2つのシークレットを登録してある。**値はここに書かない。**
+
+| 名前 | 中身 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare の API トークン（下記の権限） |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare のアカウント ID（秘密ではないが、`wrangler.jsonc` に書かない方針なのでここ） |
+
+登録:
+
+```sh
+gh secret set CLOUDFLARE_API_TOKEN
+gh secret set CLOUDFLARE_ACCOUNT_ID
+```
+
+⚠️ **リポジトリは public。** Actions のシークレットは
+**fork からの PR には渡らない**ため露出しないが、
+`deploy.yml` は `push: main` のみで動かしている（PR では動かさない）。
 
 ### `main` のルールセット
 
@@ -101,12 +123,28 @@ gh api -X PUT repos/aiandrox/yaritai100list/rulesets/20485718 --input <file>
 | 項目 | 値 |
 |---|---|
 | URL | https://yaritai100list.aiandrox.workers.dev |
-| デプロイ方法 | `npm run deploy`（`vite build` + `wrangler deploy`） |
+| デプロイ方法 | **`main` へのマージで自動**（`.github/workflows/deploy.yml`、#117）。手動は `npm run deploy` |
 | 確認済みの経路 | `/api/health` / `/api/health/db`（リモート D1 往復）/ `/`（SPA）/ `/lists`（SPA フォールバック）/ `/api/nope`（404）/ 静的アセット |
 
 `SENTRY_DSN` は設定済み（2026-08-06、利用者が `wrangler secret put` で登録）。
 **シークレットを登録すると新しいバージョンが自動でデプロイされる**（`deployments list` に
 `Source: Secret Change` として残る）。再デプロイは不要。
+
+### API トークン（コンソールで作る）
+
+自動デプロイに使う。**ダッシュボード → My Profile → API Tokens → Create Token**。
+`wrangler` の公式テンプレート「Edit Cloudflare Workers」ではなく、
+**必要な権限だけを付けたカスタムトークン**にする。
+
+| 種別 | 対象 | 権限 |
+|---|---|---|
+| Account | Workers Scripts | Edit |
+| Account | D1 | Edit |
+
+- **Zone の権限は要らない**（カスタムドメインを使っていないため。`TECH_STACK.md` §8）
+- 作った値は GitHub の `CLOUDFLARE_API_TOKEN` に入れる（上記）。
+  **1度しか表示されない。** パスワードマネージャに保存してから登録する
+- 漏れた / 分からなくなったら、ダッシュボードで **Roll**（作り直し）してから登録し直す
 
 ### コンソールでしか触れないもの
 
