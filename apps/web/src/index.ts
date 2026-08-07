@@ -2,6 +2,9 @@ import * as Sentry from '@sentry/cloudflare'
 import {
   buildExportFile,
   DEFAULT_LIST_TITLE,
+  EXPORT_VERSION,
+  exportFileSchema,
+  hasFutureCompletedAt,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   itemTextSchema,
@@ -281,6 +284,87 @@ const app = new Hono<AppEnv>()
       return c.json({ list, items: await selectItems(db, listId) }, 201)
     },
   )
+
+  /**
+   * 書き出したファイルを読み込む（#122）。**新しいリストとして作る。**
+   *
+   * 🔴 **`POST /api/lists/import`（localStorage からの引き継ぎ）とは分けてある。**
+   * あちらは**完了日時を受け取らない**（未ログインでは印を付けられないという
+   * #77 の制約を、受け取る口を作らないことで守っている）。
+   * こちらは持ち出しの復元なので完了日時を受け取る。**混ぜると制約が崩れる。**
+   *
+   * 版が違えば断る。**黙って読める部分だけ読む、ということをしない。**
+   */
+  .post('/api/lists/restore', requireUser, rateLimitCreates, async (c) => {
+    const db = createDb(c.env.DB)
+    const userId = c.get('userId')
+
+    // zValidator を通していないのは、**版だけを先に見て理由を返したい**ため。
+    // スキーマ全体で弾くと「形が違う」としか言えず、古いファイルだと分からない
+    const body: unknown = await c.req.json().catch(() => null)
+
+    const version =
+      typeof body === 'object' && body !== null && 'version' in body ? body.version : undefined
+
+    if (version !== EXPORT_VERSION) {
+      return c.json({ error: 'Unsupported Export Version' } as const, 400)
+    }
+
+    const parsed = exportFileSchema.safeParse(body)
+    if (!parsed.success) {
+      return c.json({ error: 'Bad Request' } as const, 400)
+    }
+
+    // 端末の時計もファイルも信用しない。最低限ここだけは見る
+    if (hasFutureCompletedAt(parsed.data, new Date())) {
+      return c.json({ error: 'Future Completion Date' } as const, 400)
+    }
+
+    const listId = newId()
+    const incoming = parsed.data.list
+
+    // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
+    const inserted = await db.all<{ id: string }>(sql`
+      insert into ${lists} (id, user_id, title)
+      select ${listId}, ${userId}, ${incoming.title}
+      where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
+      returning id
+    `)
+
+    if (inserted.length === 0) {
+      return c.json({ error: 'List Limit Reached' } as const, 409)
+    }
+
+    const rows = incoming.items.map((item, position) => ({
+      id: newId(),
+      listId,
+      text: item.text,
+      position,
+      completedAt: item.completedAt === null ? null : new Date(item.completedAt),
+    }))
+
+    // 項目が0件のリストも書き出せるので、ここは空になりうる。
+    // batch は空配列を受け付けないため、入れるものがあるときだけ呼ぶ
+    if (rows.length > 0) {
+      const rest = []
+      for (let i = INSERT_CHUNK; i < rows.length; i += INSERT_CHUNK) {
+        rest.push(db.insert(items).values(rows.slice(i, i + INSERT_CHUNK)))
+      }
+
+      try {
+        await db.batch([db.insert(items).values(rows.slice(0, INSERT_CHUNK)), ...rest])
+      } catch (error) {
+        // 項目の入っていない中途半端なリストを残さない
+        await db.delete(lists).where(eq(lists.id, listId))
+        throw error
+      }
+    }
+
+    const [list] = await db.select().from(lists).where(eq(lists.id, listId))
+    if (!list) throw new Error('読み込んだリストを読み戻せなかった')
+
+    return c.json({ list, items: await selectItems(db, listId) }, 201)
+  })
 
   /**
    * リスト1件と、その項目。**`requireOwnedList` が認可を通した行だけを使う。**
