@@ -1,19 +1,21 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
   DEFAULT_LIST_TITLE,
+  ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
+  itemTextSchema,
   listTitleSchema,
   visibilitySchema,
 } from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
-import { eq, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { createAuth } from './auth'
-import { requireOwnedList, requireUser } from './authorization'
-import { createDb } from './db'
-import { lists } from './db/schema'
+import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
+import { createDb, type Db } from './db'
+import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId } from './id'
 import { sentryOptions } from './sentry'
@@ -37,6 +39,54 @@ const updateListSchema = z
  * 何も指定しない場合でも `{}` を送ること（Better Auth の 415 と同じ性質の落とし穴）。
  */
 const createListSchema = z.object({ title: listTitleSchema.optional() }).strict()
+
+/** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
+const createItemSchema = z.object({ text: itemTextSchema }).strict()
+
+/**
+ * 項目の変更。
+ *
+ * 🔴 **完了「日時」を受け取らない。** `completed` の真偽値だけを受け取り、
+ * **日時はサーバーが決める。** 端末の時計は狂っていることがあり、
+ * 送られた値をそのまま入れると「未来に叶えたこと」になる。
+ *
+ * 空の本文（`{}`）は拒否する。黙って何もしない応答を返すと、
+ * 送り側の間違いに気づけない。
+ */
+const updateItemSchema = z
+  .object({
+    text: itemTextSchema.optional(),
+    completed: z.boolean().optional(),
+  })
+  .strict()
+  .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
+
+/**
+ * 並び替え。**そのリストの項目 ID を全部、新しい順で受け取る。**
+ *
+ * 差分（「この項目を3番目へ」）ではなく全体を受け取るのは、
+ * 送り側と DB のずれをここで検出できるようにするため
+ * （`TECH_STACK.md` §7 のとおり、並び替えは全件書き直し）。
+ */
+const reorderItemsSchema = z
+  .object({ itemIds: z.array(z.string()).max(ITEMS_PER_LIST_MAX) })
+  .strict()
+
+/** そのリストの項目を並び順で取る。 */
+function selectItems(db: Db, listId: string) {
+  return db.select().from(items).where(eq(items.listId, listId)).orderBy(asc(items.position))
+}
+
+/**
+ * リストの `updated_at` を今にする。
+ *
+ * トップを開いたときに**最後に更新したリスト**を出すため（`PRODUCT_SPEC.md` §4.3）、
+ * **項目を変えたときもリスト側を触る。** 触らないと、項目だけ書き換えたリストが
+ * 「古いリスト」のままになる。
+ */
+function touchList(db: Db, listId: string) {
+  return db.update(lists).set({ updatedAt: new Date() }).where(eq(lists.id, listId))
+}
 
 /**
  * ルートはコンストラクタから直接チェーンする。Hono RPC はメソッドチェーンの
@@ -130,10 +180,17 @@ const app = new Hono<AppEnv>()
   })
 
   /**
-   * リスト1件。**`requireOwnedList` が認可を通した行を返すだけ。**
+   * リスト1件と、その項目。**`requireOwnedList` が認可を通した行だけを使う。**
    * ハンドラは `listId` を触らないので、認可を迂回する余地が無い。
+   *
+   * 項目を別の要求に分けていないのは、**画面が必ず両方を要るため**
+   * （1リストを開くのが基本の画面。`PRODUCT_SPEC.md` §4.3）。
    */
-  .get('/api/lists/:listId', requireUser, requireOwnedList, (c) => c.json({ list: c.get('list') }))
+  .get('/api/lists/:listId', requireUser, requireOwnedList, async (c) => {
+    const list = c.get('list')
+
+    return c.json({ list, items: await selectItems(createDb(c.env.DB), list.id) })
+  })
 
   /** リストのタイトルと公開範囲を変える。 */
   .patch(
@@ -163,6 +220,149 @@ const app = new Hono<AppEnv>()
 
     return c.json({ deleted: true } as const)
   })
+
+  /**
+   * 項目を末尾に足す。
+   *
+   * 🔴 **件数の判定・並び順の決定・挿入を1文で行う**（リストの作成と同じ理由）。
+   * 数えてから入れると、素早く2回押されたときに**上限を超える**し、
+   * **同じ並び順の項目が2つできる。**
+   */
+  .post(
+    '/api/lists/:listId/items',
+    requireUser,
+    requireOwnedList,
+    zValidator('json', createItemSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const listId = c.get('list').id
+      const id = newId()
+      const { text } = c.req.valid('json')
+
+      const inserted = await db.all<{ id: string }>(sql`
+        insert into ${items} (id, list_id, text, position)
+        select ${id}, ${listId}, ${text},
+               (select count(*) from ${items} where ${items.listId} = ${listId})
+        where (select count(*) from ${items} where ${items.listId} = ${listId}) < ${ITEMS_PER_LIST_MAX}
+        returning id
+      `)
+
+      if (inserted.length === 0) {
+        return c.json({ error: 'Item Limit Reached' } as const, 409)
+      }
+
+      await touchList(db, listId)
+
+      const [item] = await db.select().from(items).where(eq(items.id, id))
+      if (!item) throw new Error('作った項目を読み戻せなかった')
+
+      return c.json({ item }, 201)
+    },
+  )
+
+  /**
+   * 項目の本文と完了を変える。
+   *
+   * **完了日時はサーバーが決める**（`updateItemSchema` の注意書き）。
+   * 完了しても並び順は動かさない（`PRODUCT_SPEC.md` §4.5）。
+   */
+  .patch(
+    '/api/lists/:listId/items/:itemId',
+    requireUser,
+    requireOwnedList,
+    requireOwnedItem,
+    zValidator('json', updateItemSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const item = c.get('item')
+      const patch = c.req.valid('json')
+
+      const [updated] = await db
+        .update(items)
+        .set({
+          ...(patch.text === undefined ? {} : { text: patch.text }),
+          ...(patch.completed === undefined
+            ? {}
+            : { completedAt: patch.completed ? new Date() : null }),
+          updatedAt: new Date(),
+        })
+        .where(eq(items.id, item.id))
+        .returning()
+
+      await touchList(db, item.listId)
+
+      return c.json({ item: updated })
+    },
+  )
+
+  /**
+   * 項目を消す。
+   *
+   * **消したら後ろの並び順を詰める。** 詰めないと `position` に穴が空き、
+   * 「0から始まる詰まった連番」という前提が崩れる（`TECH_STACK.md` §7）。
+   * 削除と詰め直しは `batch` で1トランザクションにする。
+   */
+  .delete(
+    '/api/lists/:listId/items/:itemId',
+    requireUser,
+    requireOwnedList,
+    requireOwnedItem,
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const item = c.get('item')
+
+      await db.batch([
+        db.delete(items).where(eq(items.id, item.id)),
+        db
+          .update(items)
+          .set({ position: sql`${items.position} - 1` })
+          .where(and(eq(items.listId, item.listId), gt(items.position, item.position))),
+        touchList(db, item.listId),
+      ])
+
+      return c.json({ deleted: true } as const)
+    },
+  )
+
+  /**
+   * 並び替え。**そのリストの項目 ID を全部、新しい順で受け取って全件書き直す。**
+   *
+   * 🔴 **送られた ID の集合が、いまの項目とぴったり一致することを確かめる。**
+   * 一致を見ないと、**他人の項目 ID を混ぜて自分のリストに引き込む**経路や、
+   * 抜けた項目の並び順が古いまま残る経路ができる。
+   */
+  .put(
+    '/api/lists/:listId/items/order',
+    requireUser,
+    requireOwnedList,
+    zValidator('json', reorderItemsSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const listId = c.get('list').id
+      const { itemIds } = c.req.valid('json')
+
+      const current = await selectItems(db, listId)
+      const currentIds = new Set(current.map((item) => item.id))
+      const sameSet =
+        itemIds.length === current.length &&
+        new Set(itemIds).size === itemIds.length &&
+        itemIds.every((id) => currentIds.has(id))
+
+      if (!sameSet) {
+        return c.json({ error: 'Item Set Mismatch' } as const, 409)
+      }
+
+      await db.batch([
+        // batch は空配列を受け付けないので、必ず1つは入る touchList を先に置く
+        touchList(db, listId),
+        ...itemIds.map((id, position) =>
+          db.update(items).set({ position, updatedAt: new Date() }).where(eq(items.id, id)),
+        ),
+      ])
+
+      return c.json({ items: await selectItems(db, listId) })
+    },
+  )
 
   /**
    * Better Auth の全エンドポイント（セッション取得、サインアウト、コールバック等）。
