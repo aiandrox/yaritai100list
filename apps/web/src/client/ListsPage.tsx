@@ -9,7 +9,7 @@ import {
   hasAnythingToImport,
   LIST_STORAGE_KEY,
   parseStoredList,
-  sortListsByUpdated,
+  sortListsByCreated,
   toImportBody,
   type LocalList,
   type RemoteList,
@@ -47,7 +47,7 @@ export function ListsPage({ session }: { session: SessionState }) {
       }
 
       const { lists } = await res.json()
-      setState({ status: 'ready', lists: sortListsByUpdated(lists) })
+      setState({ status: 'ready', lists: sortListsByCreated(lists) })
     } catch {
       setState({ status: 'failed' })
     }
@@ -75,7 +75,8 @@ export function ListsPage({ session }: { session: SessionState }) {
   const createList = async () => {
     setMessage(null)
 
-    // 上限の判定はサーバーに任せる。**画面側に同じ判定を書かない**（ずれる）
+    // 画面でも押せないようにしているが（#107）、**サーバーの 409 も受ける。**
+    // 別のタブで作った直後など、画面の件数が古いことがある
     const res = await api.api.lists.$post({ json: {} })
 
     if (res.status === 409) {
@@ -170,6 +171,8 @@ export function ListsPage({ session }: { session: SessionState }) {
     return <Notice tone="warn">リストを読み込めませんでした。通信を確かめてください</Notice>
   }
 
+  const atLimit = state.lists.length >= LISTS_PER_USER_MAX
+
   return (
     <div>
       <h1 className="text-xl font-bold text-slate-900">マイリスト</h1>
@@ -213,12 +216,26 @@ export function ListsPage({ session }: { session: SessionState }) {
         ))}
       </ul>
 
-      {/* 🔴 **上限でも押せる形にしておく。** 押せないだけだと、上限なのか
-          壊れているのか区別が付かない（#77 と同じ考え方）。理由はサーバーが返す */}
+      {/*
+        上限に達していたら**押せないようにして、押す前から理由を出す**（#107）。
+
+        完了ボタン（#77）を disabled にしないのとは扱いが違う。あちらは
+        「なぜ押せないか」がログイン状態に依るので押させて説明する必要があるが、
+        こちらは**件数を見れば押す前に理由を出せる。** 押させる意味が無い。
+
+        上限の値は `packages/shared` の定数。**画面側に別の数字を書かない。**
+      */}
+      {atLimit ? (
+        <Notice tone="info">
+          リストは{LISTS_PER_USER_MAX}つまでです。新しく作るには、どれかを削除してください
+        </Notice>
+      ) : null}
+
       <button
         type="button"
+        disabled={atLimit}
         onClick={() => void createList()}
-        className="mt-4 w-full rounded bg-brand-deep px-3 py-2 text-white"
+        className="mt-4 w-full rounded bg-brand-deep px-3 py-2 text-white disabled:bg-slate-300 disabled:text-slate-500"
       >
         新しいリストを作る
       </button>
