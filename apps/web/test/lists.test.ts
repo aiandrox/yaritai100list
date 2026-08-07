@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { LISTS_PER_USER_MAX } from '@yaritai100list/shared'
 import { count, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -68,6 +69,85 @@ describe('lists テーブル', () => {
       await db.delete(users).where(eq(users.id, userId))
 
       expect(await db.select().from(lists)).toEqual([])
+    })
+  })
+
+  describe('1人あたりの上限（DB のトリガー）', () => {
+    /** その利用者のリストを `count` 件まで埋める。 */
+    async function fill(userId: string, count: number, prefix = 'list') {
+      const db = testDb()
+
+      for (let i = 0; i < count; i++) {
+        await db.insert(lists).values({ id: `${prefix}-${String(i)}`, userId, title: 'x' })
+      }
+    }
+
+    it('🔴 上限を超える insert を DB が拒否する', async () => {
+      // アプリ側でも止めているが、**アプリコードだけに頼らない**（TECH_STACK.md §7）
+      const userId = await createTestUser()
+      await fill(userId, LISTS_PER_USER_MAX)
+
+      const insert = env.DB.prepare('insert into lists (id, user_id, title) values (?, ?, ?)')
+        .bind('over', userId, 'x')
+        .run()
+
+      await expect(insert).rejects.toThrow(/lists per user limit reached/)
+    })
+
+    it('🔴 DB が止める件数が LISTS_PER_USER_MAX と一致する', async () => {
+      // トリガーの SQL には上限の数字が直接書いてある（マイグレーション 0006）。
+      // 情報源は packages/shared の1箇所、という不変条件との折り合いとして、
+      // **ここで一致を固定する。** 定数を変えるとこのテストが落ち、
+      // マイグレーションの追加を忘れられない
+      const userId = await createTestUser()
+      await fill(userId, LISTS_PER_USER_MAX - 1)
+
+      // 上限のちょうど手前までは入る
+      await testDb().insert(lists).values({ id: 'last', userId, title: 'x' })
+      expect(await testDb().select({ n: count() }).from(lists)).toEqual([{ n: LISTS_PER_USER_MAX }])
+
+      const insert = env.DB.prepare('insert into lists (id, user_id, title) values (?, ?, ?)')
+        .bind('over', userId, 'x')
+        .run()
+
+      await expect(insert).rejects.toThrow(/lists per user limit reached/)
+    })
+
+    it('🔴 他人のリストは数に入らない', async () => {
+      const other = await createTestUser('other@example.com')
+      await fill(other, LISTS_PER_USER_MAX, 'other')
+
+      const me = await createTestUser('me@example.com')
+
+      await testDb().insert(lists).values({ id: 'mine', userId: me, title: 'x' })
+
+      expect(await testDb().select().from(lists).where(eq(lists.userId, me))).toHaveLength(1)
+    })
+
+    it('🔴 持ち主を付け替えても越えられない', async () => {
+      // API は user_id を受け取らないが、**経路が1つだけという前提に頼らない**
+      const full = await createTestUser('full@example.com')
+      await fill(full, LISTS_PER_USER_MAX, 'full')
+
+      const other = await createTestUser('spare@example.com')
+      await testDb().insert(lists).values({ id: 'moved', userId: other, title: 'x' })
+
+      const update = env.DB.prepare('update lists set user_id = ? where id = ?')
+        .bind(full, 'moved')
+        .run()
+
+      await expect(update).rejects.toThrow(/lists per user limit reached/)
+    })
+
+    it('1つ消せばまた入る', async () => {
+      const userId = await createTestUser()
+      await fill(userId, LISTS_PER_USER_MAX)
+
+      await testDb().delete(lists).where(eq(lists.id, 'list-0'))
+
+      await testDb().insert(lists).values({ id: 'again', userId, title: 'x' })
+
+      expect(await testDb().select({ n: count() }).from(lists)).toEqual([{ n: LISTS_PER_USER_MAX }])
     })
   })
 
