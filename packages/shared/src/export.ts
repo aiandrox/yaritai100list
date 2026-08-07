@@ -87,6 +87,21 @@ export function buildExportFile(
 }
 
 /**
+ * 完了日時に**未来のものが混ざっていないか**。
+ *
+ * 🔴 読み込みは「完了日時はサーバーが決める」（#89）の例外なので、
+ * **最低限ここだけは見る。** ファイルは手で編集できるし、書き出した端末の時計が
+ * 狂っていることもある。未来の日時が入ると「まだ来ていない日に叶えた」ことになる。
+ *
+ * 過去は見ない。**いつ叶えたかは持ち主のもの**で、こちらが妥当性を決める話ではない。
+ */
+export function hasFutureCompletedAt(file: ExportFile, now: Date): boolean {
+  return file.list.items.some(
+    (item) => item.completedAt !== null && Date.parse(item.completedAt) > now.getTime(),
+  )
+}
+
+/**
  * 書き出すファイルの名前。
  *
  * **日付を入れる。** 同じリストを何度も書き出したときに上書きされず、
