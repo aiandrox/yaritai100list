@@ -1,0 +1,86 @@
+name: Deploy
+
+# main に入ったものを本番へ出す。マージ以外の経路で main が動くことは無い
+# （ルールセットで PR 必須・force push 禁止。docs/console-settings.md）。
+on:
+  push:
+    branches: [main]
+  # 落ちたときに、直さず手で流し直せる逃げ道
+  workflow_dispatch:
+
+# 🔴 **走っているデプロイを止めない。** 途中で切ると、
+# マイグレーションだけ当たってコードが古いままになりうる。
+# 続けてマージされた場合は、前のデプロイが終わってから次が走る。
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # .node-version を唯一の情報源にする。ここに数字を書かない
+          node-version-file: .node-version
+          cache: npm
+
+      - name: install
+        run: npm ci
+
+      # 🔴 **PR で緑でも、続けてマージした2つが噛み合わないことがある。**
+      # ここで落ちたら以降のステップは走らない（本番は前のままで残る）。
+      # CI と重複するが、壊れたものを出すよりチェックを2回走らせる方が安い
+      - name: check
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run format:check
+          npm test
+
+      # 🔴 **コードより先にスキーマを当てる。**
+      # 逆にすると、新しいコードが存在しない列を読んで落ちる（docs/workflow.md §5）。
+      # 当てるものが無ければ何もしない（適用済みは d1_migrations で判定される）
+      - name: migrate
+        run: npm run db:migrate:remote --workspace @yaritai100list/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: deploy
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # ⚠️ **デプロイ直後の数秒は 404 や `error code: 1042` が返る**（実際に踏んだ）。
+      # 伝播待ちなので、失敗と判断せず待って叩き直す。
+      #
+      # 見るのは「SPA が返る」ことと「D1 まで往復できる」ことの2つ。
+      # ここが赤ならデプロイは成功しているが**本番は壊れている**ので、気づける方がよい
+      - name: smoke
+        run: |
+          set -euo pipefail
+          base=https://yaritai100list.aiandrox.workers.dev
+
+          for path in / /api/health/db; do
+            for attempt in $(seq 1 20); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "$base$path" || echo 000)
+              if [ "$code" = "200" ]; then
+                echo "$path -> $code"
+                break
+              fi
+
+              if [ "$attempt" = "20" ]; then
+                echo "$path が 200 にならなかった（最後の応答: $code）" >&2
+                exit 1
+              fi
+
+              sleep 3
+            done
+          done
