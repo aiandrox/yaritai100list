@@ -122,6 +122,10 @@ export function App() {
             )}
 
             <ListEditor
+              // 🔴 **開いているリストが変われば作り直す**（#102）。
+              // 入力欄の下書きは各コンポーネントが持っているので、
+              // 作り直さないと**ログアウトしても前のタイトルが残る**
+              key={screen.key}
               list={screen.list}
               // 未ログインでは「やった」印を付けられない（PRODUCT_SPEC.md §2）。
               // 判定は model.ts の純関数。ここでは status を見比べない
@@ -236,7 +240,8 @@ function StorageNotice({
         <a href="/api/login/google" className="font-bold text-brand-deep underline">
           Googleでログイン
         </a>
-        すると、端末を変えても見れるようになります。ずっと残したい方はログインしてください
+        すると、保存したリストを見られます。端末を変えても見られるので、
+        ずっと残したい方はログインしてください
       </Notice>
     )
   }
