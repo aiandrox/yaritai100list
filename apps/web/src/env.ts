@@ -1,7 +1,7 @@
 import type { InferSelectModel } from 'drizzle-orm'
 
 import type { AuthEnv } from './auth'
-import type { lists } from './db/schema'
+import type { items, lists } from './db/schema'
 import type { SentryEnv } from './sentry'
 
 /**
@@ -30,5 +30,12 @@ export interface AppEnv {
      * ミドルウェアを付け忘れたハンドラには触れるリストが無い、という構造にしている。
      */
     list: InferSelectModel<typeof lists>
+
+    /**
+     * `requireOwnedItem` が入れる。**すでにリストとの紐付けを確認した項目。**
+     *
+     * `list` と同じ考え方で、ハンドラは `itemId` ではなくこれを受け取る。
+     */
+    item: InferSelectModel<typeof items>
   }
 }

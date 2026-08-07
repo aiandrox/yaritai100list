@@ -4,7 +4,7 @@ import { createMiddleware } from 'hono/factory'
 
 import { createAuth } from './auth'
 import { createDb } from './db'
-import { lists } from './db/schema'
+import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 
 /**
@@ -74,6 +74,40 @@ export const requireOwnedList = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   c.set('list', list)
+
+  return next()
+})
+
+/**
+ * URL の `itemId` が**そのリストの項目**であることを要求する。
+ *
+ * **`requireOwnedList` の後に置く。** リストの所有者チェックは済んでいる前提で、
+ * ここでは「その項目がこのリストのものか」だけを見る。
+ *
+ * 🔴 **他人のリストの項目 ID を渡されても、応答は「見つからない」で揃える。**
+ * `requireOwnedList` が先に 404 を返すので他人のリストには入れないが、
+ * **自分のリストの URL に他人の項目 ID を混ぜる**経路がありうる。
+ * `list_id` で絞ることで、その項目が存在するかどうかも漏らさない。
+ */
+export const requireOwnedItem = createMiddleware<AppEnv>(async (c, next) => {
+  const itemId = c.req.param('itemId')
+
+  // `:itemId` を持たないルートに付けた場合。他の「見つからない」と応答を揃える
+  if (itemId === undefined) {
+    return c.json({ error: 'Not Found' } as const, 404)
+  }
+
+  const [item] = await createDb(c.env.DB)
+    .select()
+    .from(items)
+    .where(and(eq(items.id, itemId), eq(items.listId, c.get('list').id)))
+    .limit(1)
+
+  if (!item) {
+    return c.json({ error: 'Not Found' } as const, 404)
+  }
+
+  c.set('item', item)
 
   return next()
 })
