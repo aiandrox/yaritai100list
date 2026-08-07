@@ -4,7 +4,19 @@
  * ここだけをテストする（`TECH_STACK.md` §10 の方針。#43 で決定）。
  * テストは workerd の中で走るので、**このファイルに DOM の API を持ち込まないこと。**
  * 持ち込むとテストが落ちる。描画と配線は `*.tsx` 側に置く。
+ *
+ * **時刻と ID もここでは作らない。** `Date.now()` や `crypto.randomUUID()` を
+ * 関数の中で呼ぶと、戻り値が呼ぶたびに変わってテストで固定できない。
+ * 呼び出し側（`*.tsx`）が作って引数で渡す。
  */
+
+import {
+  DEFAULT_LIST_TITLE,
+  ITEMS_PER_LIST_MAX,
+  itemTextSchema,
+  listTitleSchema,
+} from '@yaritai100list/shared'
+import { z } from 'zod'
 
 /**
  * ログイン状態。
@@ -76,4 +88,231 @@ export function signOutRequestInit(): {
     headers: { 'content-type': 'application/json' },
     body: '{}',
   }
+}
+
+// ---------------------------------------------------------------------------
+// 未ログインで書くリスト（#4 / #72）
+// ---------------------------------------------------------------------------
+
+/**
+ * やりたいこと1件。
+ *
+ * **完了は真偽値ではなく日時**（`PRODUCT_SPEC.md` §3）。
+ * いつ叶えたかは思い出として意味があるので、`true` に潰さない。
+ */
+export interface Item {
+  /**
+   * クライアント内で一意な ID。**呼び出し側が `crypto.randomUUID()` などで作って渡す。**
+   *
+   * 配列の添字を ID 代わりにしない。途中の項目を消したときに以降の同一性がずれ、
+   * React が別の項目を使い回して**入力中のフォーカスや値が隣に飛ぶ。**
+   */
+  id: string
+  text: string
+  /** 完了日時（epoch ms）。未完了なら `null`。 */
+  completedAt: number | null
+}
+
+/**
+ * 未ログインで持てる唯一のリスト（`PRODUCT_SPEC.md` §2）。
+ *
+ * **並び順は `items` の配列順そのもの。** 並び順の列を別に持たない。
+ * 2つあると必ずずれるし、ずれたときにどちらが正しいか決められない。
+ * 表示上の番号は配列の添字 + 1（`formatItemNumber`）。
+ *
+ * **項目の実体は可変長。** 100個の空スロットは持たない（`PRODUCT_SPEC.md` §3）。
+ * 空枠は表示のときだけ作る（`toSlots`）。
+ */
+export interface LocalList {
+  title: string
+  items: Item[]
+}
+
+/**
+ * 操作の結果。**失敗を握り潰さない。**
+ *
+ * 上限に当たったのか、入力が不正なのか、対象が見つからないのかで
+ * 画面に出すべきことが違う。`null` を返して呼び出し側に推測させない。
+ */
+export type ListResult =
+  | { ok: true; list: LocalList }
+  | { ok: false; reason: 'invalid-text' | 'invalid-title' | 'list-full' | 'not-found' }
+
+export function createEmptyList(): LocalList {
+  return { title: DEFAULT_LIST_TITLE, items: [] }
+}
+
+/**
+ * 項目を末尾に足す。
+ *
+ * 検証は `packages/shared` の `itemTextSchema` に任せる（前後の空白は落ちる）。
+ * **ここで文字数を書かない。** 上限の情報源は1箇所（`CLAUDE.md` の不変条件）。
+ */
+export function addItem(list: LocalList, item: { id: string; text: string }): ListResult {
+  if (list.items.length >= ITEMS_PER_LIST_MAX) return { ok: false, reason: 'list-full' }
+
+  const text = itemTextSchema.safeParse(item.text)
+  if (!text.success) return { ok: false, reason: 'invalid-text' }
+
+  return {
+    ok: true,
+    list: { ...list, items: [...list.items, { id: item.id, text: text.data, completedAt: null }] },
+  }
+}
+
+/** 項目の本文を変える。完了日時は触らない。 */
+export function updateItemText(list: LocalList, id: string, text: string): ListResult {
+  if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
+
+  const parsed = itemTextSchema.safeParse(text)
+  if (!parsed.success) return { ok: false, reason: 'invalid-text' }
+
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, text: parsed.data })) }
+}
+
+/**
+ * 完了にする / 取り消す。
+ *
+ * `completedAt` に `null` を渡すと取り消し。**リスト内の位置は動かさない**
+ * （`PRODUCT_SPEC.md` §4.5。番号 = 並び順が動くと、どれを完了したのか分からなくなる）。
+ */
+export function setItemCompletedAt(
+  list: LocalList,
+  id: string,
+  completedAt: number | null,
+): ListResult {
+  if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
+
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, completedAt })) }
+}
+
+export function removeItem(list: LocalList, id: string): ListResult {
+  if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
+
+  return { ok: true, list: { ...list, items: list.items.filter((item) => item.id !== id) } }
+}
+
+/**
+ * 項目を `toIndex` の位置へ動かす（並び替え）。
+ *
+ * 画面の並び替え（DnD）は MVP では省略可だが、**データは並び順前提にしておく**
+ * という決定があるので、計算だけ先に置く（`PRODUCT_SPEC.md` §4.4）。
+ *
+ * `toIndex` は移動**後**の添字。範囲外は端に丸める（画面から来る値を信用しない）。
+ */
+export function moveItem(list: LocalList, id: string, toIndex: number): ListResult {
+  const from = list.items.findIndex((item) => item.id === id)
+  if (from === -1) return { ok: false, reason: 'not-found' }
+
+  const moved = list.items[from]
+  if (!moved) return { ok: false, reason: 'not-found' }
+
+  const rest = list.items.filter((item) => item.id !== id)
+  const to = Math.min(Math.max(Math.trunc(toIndex), 0), rest.length)
+
+  return { ok: true, list: { ...list, items: [...rest.slice(0, to), moved, ...rest.slice(to)] } }
+}
+
+/** リストのタイトルを変える。検証は `listTitleSchema`（空文字は通らない）。 */
+export function renameList(list: LocalList, title: string): ListResult {
+  const parsed = listTitleSchema.safeParse(title)
+  if (!parsed.success) return { ok: false, reason: 'invalid-title' }
+
+  return { ok: true, list: { ...list, title: parsed.data } }
+}
+
+function mapItem(list: LocalList, id: string, fn: (item: Item) => Item): LocalList {
+  return { ...list, items: list.items.map((item) => (item.id === id ? fn(item) : item)) }
+}
+
+// --- 表示 -------------------------------------------------------------------
+
+/**
+ * 100枠の表示用。**未入力の枠も含めて常に `ITEMS_PER_LIST_MAX` 個返す**
+ * （`PRODUCT_SPEC.md` §4.1）。データ側に空スロットを作らないための変換。
+ */
+export interface Slot {
+  number: string
+  item: Item | null
+}
+
+export function toSlots(list: LocalList): Slot[] {
+  return Array.from({ length: ITEMS_PER_LIST_MAX }, (_, index) => ({
+    number: formatItemNumber(index + 1),
+    item: list.items[index] ?? null,
+  }))
+}
+
+/** 表示上の番号。`001` から始まる連番（`PRODUCT_SPEC.md` §3）。 */
+export function formatItemNumber(n: number): string {
+  return String(n).padStart(3, '0')
+}
+
+/**
+ * 「23 / 100」の左側。**達成度ではなく埋まり具合**（`PRODUCT_SPEC.md` §3）。
+ *
+ * 完了した数ではない。ここを完了数にすると、埋めることの動機付けが消える。
+ */
+export function filledCount(list: LocalList): number {
+  return list.items.length
+}
+
+// --- 保存 -------------------------------------------------------------------
+
+/**
+ * localStorage のキー。**読み書きそのものは `*.tsx` 側**（ここに DOM を持ち込まない）。
+ *
+ * 末尾の `v1` は保存形式の版。形を変えるときは新しいキーにして、
+ * 古いキーからの引き継ぎを明示的に書く。同じキーのまま形を変えると、
+ * 既存の利用者の保存が全部「壊れている」に落ちる。
+ */
+export const LIST_STORAGE_KEY = 'yaritai100list:list:v1'
+
+/**
+ * 保存の読み込み結果。
+ *
+ * 🔴 **`broken` を `empty` に混ぜないこと。** 混ぜると、読めなかっただけの保存に
+ * 空リストを上書きして**利用者の書いたものを消す。** 区別があれば、画面側は
+ * 「読めなかった」と伝えて上書きを止められる。`toSessionState` と同じ考え方。
+ */
+export type StoredListResult =
+  { status: 'empty' } | { status: 'loaded'; list: LocalList } | { status: 'broken' }
+
+/**
+ * 保存されている形。**上限（文字数・件数）はここで検査しない。**
+ *
+ * 検査すると、後で上限を下げたときに既存の保存が丸ごと `broken` になり、
+ * 1項目のために100項目を捨てることになる。上限は「新しく入れるとき」に効かせる
+ * （`addItem` / `updateItemText`）。
+ */
+const storedListSchema = z.object({
+  title: z.string(),
+  items: z.array(
+    z.object({
+      id: z.string(),
+      text: z.string(),
+      completedAt: z.number().nullable(),
+    }),
+  ),
+})
+
+export function serializeList(list: LocalList): string {
+  return JSON.stringify(list)
+}
+
+/** 保存されていなければ `null` を渡す（localStorage の `getItem` の戻り値をそのまま）。 */
+export function parseStoredList(raw: string | null): StoredListResult {
+  if (raw === null) return { status: 'empty' }
+
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    return { status: 'broken' }
+  }
+
+  const parsed = storedListSchema.safeParse(json)
+  if (!parsed.success) return { status: 'broken' }
+
+  return { status: 'loaded', list: parsed.data }
 }
