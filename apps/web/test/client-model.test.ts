@@ -139,11 +139,11 @@ describe('addItem', () => {
   it('空文字と空白だけは通らない', () => {
     expect(addItem(createEmptyList(), { id: 'i1', text: '' })).toEqual({
       ok: false,
-      reason: 'invalid-text',
+      reason: 'text-empty',
     })
     expect(addItem(createEmptyList(), { id: 'i1', text: '   ' })).toEqual({
       ok: false,
-      reason: 'invalid-text',
+      reason: 'text-empty',
     })
   })
 
@@ -154,7 +154,22 @@ describe('addItem', () => {
     expect(expectOk(addItem(createEmptyList(), { id: 'i1', text: justFits })).items).toHaveLength(1)
     expect(addItem(createEmptyList(), { id: 'i1', text: tooLong })).toEqual({
       ok: false,
-      reason: 'invalid-text',
+      reason: 'text-too-long',
+    })
+  })
+
+  it('🔴 「空」と「長すぎ」で理由を分ける', () => {
+    // 同じ理由にすると、長すぎて弾かれた人に「入力してください」と出て、
+    // 何を直せばいいのか分からない（#79 で実際に踏んだ）
+    const tooLong = 'あ'.repeat(ITEM_TEXT_MAX_LENGTH + 1)
+
+    expect(addItem(createEmptyList(), { id: 'i1', text: '' })).toEqual({
+      ok: false,
+      reason: 'text-empty',
+    })
+    expect(addItem(createEmptyList(), { id: 'i1', text: tooLong })).toEqual({
+      ok: false,
+      reason: 'text-too-long',
     })
   })
 
@@ -182,14 +197,17 @@ describe('updateItemText', () => {
     })
   })
 
-  it('検証は追加のときと同じ。空にはできない', () => {
+  it('検証は追加のときと同じ。空にも、長すぎにもできない', () => {
     expect(updateItemText(listOf('南極に行く'), 'i1', '  ')).toEqual({
       ok: false,
-      reason: 'invalid-text',
+      reason: 'text-empty',
     })
+    expect(
+      updateItemText(listOf('南極に行く'), 'i1', 'あ'.repeat(ITEM_TEXT_MAX_LENGTH + 1)),
+    ).toEqual({ ok: false, reason: 'text-too-long' })
   })
 
-  it('無い ID なら not-found。invalid-text と区別する', () => {
+  it('無い ID なら not-found。入力の不正と区別する', () => {
     // 消した項目の入力欄から遅れて届いた変更を、検証エラーとして見せない
     expect(updateItemText(listOf('南極に行く'), 'nope', '北極に行く')).toEqual({
       ok: false,
@@ -271,11 +289,14 @@ describe('renameList', () => {
   it('🔴 上限は shared の listTitleSchema で決まる', () => {
     const tooLong = 'あ'.repeat(LIST_TITLE_MAX_LENGTH + 1)
 
-    expect(renameList(createEmptyList(), tooLong)).toEqual({ ok: false, reason: 'invalid-title' })
+    expect(renameList(createEmptyList(), tooLong)).toEqual({
+      ok: false,
+      reason: 'title-too-long',
+    })
   })
 
   it('空にはできない', () => {
-    expect(renameList(createEmptyList(), '  ')).toEqual({ ok: false, reason: 'invalid-title' })
+    expect(renameList(createEmptyList(), '  ')).toEqual({ ok: false, reason: 'title-empty' })
   })
 
   it('既定のタイトルは上限に収まっている', () => {

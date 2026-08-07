@@ -1,4 +1,9 @@
-import { SERVICE_NAME } from '@yaritai100list/shared'
+import {
+  ITEM_TEXT_MAX_LENGTH,
+  ITEMS_PER_LIST_MAX,
+  LIST_TITLE_MAX_LENGTH,
+  SERVICE_NAME,
+} from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 
 import { ListEditor } from './ListEditor'
@@ -44,10 +49,19 @@ type StorageState =
   /** 書き込みに失敗した（容量など）。**黙って失敗しない。** */
   | { status: 'save-failed' }
 
+/**
+ * 断られた理由ごとの文言。
+ *
+ * 🔴 **「空」と「長すぎ」を同じ文言にしない**（#79 で実際に踏んだ）。
+ * 長すぎて弾かれた人に「1文字以上入力してください」と出しても、何を直せばいいのか
+ * 分からない。文字数は `packages/shared` の定数から出す（ここに数字を書かない）。
+ */
 const ERROR_MESSAGES = {
-  'invalid-text': 'やりたいことは1文字以上で入力してください',
-  'invalid-title': 'タイトルは1文字以上で入力してください',
-  'list-full': '100件まで書けます。減らすと続けて書けます',
+  'text-empty': 'やりたいことを入力してください',
+  'text-too-long': `やりたいことは${String(ITEM_TEXT_MAX_LENGTH)}文字までです`,
+  'title-empty': 'タイトルを入力してください',
+  'title-too-long': `タイトルは${String(LIST_TITLE_MAX_LENGTH)}文字までです`,
+  'list-full': `${String(ITEMS_PER_LIST_MAX)}件まで書けます。減らすと続けて書けます`,
   'not-found': '対象の項目が見つかりませんでした',
 } as const
 

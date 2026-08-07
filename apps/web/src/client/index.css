@@ -25,3 +25,18 @@
   --color-brand-soft: #fff5f6;
   --color-brand-deep: #b34452;
 }
+
+/*
+ * 🔴 **押せるものにカーソルを戻す**（#79）。
+ *
+ * Tailwind v4 の preflight は `button` に `cursor: pointer` を付けない
+ * （v3 からの変更。素の HTML の既定に合わせたため）。そのままだと
+ * **押せる場所か見分けられない。** 各ボタンに `cursor-pointer` を書くより、
+ * ここで1回だけ戻す方が書き忘れが起きない。
+ */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
