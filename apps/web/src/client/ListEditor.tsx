@@ -13,18 +13,21 @@ import { filledCount, toSlots, type CompletionPermission, type Item, type LocalL
  * 何が正しい値かは `model.ts` の純関数が決める（`TECH_STACK.md` §10）。
  * このファイルはテストしない。
  *
- * 変更を伝える関数は**受理されたかを真偽値で返す。** 入力欄は受理されたときだけ
- * 下書きを捨てる。捨ててから拒否されると、利用者が書いた文字が黙って消える。
+ * 変更を伝える関数は**受理されたかを返す。** 入力欄は受理されたときだけ下書きを捨てる。
+ * 捨ててから拒否されると、利用者が書いた文字が黙って消える。
+ *
+ * ログイン中はサーバーへの往復になるので**非同期**（`Promise<boolean>`）。
+ * 保存先が localStorage かサーバーかを、この画面は区別しない。
  */
 interface ListEditorProps {
   list: LocalList
   /** 「やった」印を付けられるか。判定は `model.ts` の `toCompletionPermission`。 */
   completion: CompletionPermission
-  onRenameList: (title: string) => boolean
-  onAddItem: (text: string) => boolean
-  onUpdateItemText: (id: string, text: string) => boolean
-  onToggleItem: (item: Item) => void
-  onRemoveItem: (id: string) => void
+  onRenameList: (title: string) => Promise<boolean>
+  onAddItem: (text: string) => Promise<boolean>
+  onUpdateItemText: (id: string, text: string) => Promise<boolean>
+  onToggleItem: (item: Item) => Promise<boolean>
+  onRemoveItem: (id: string) => Promise<boolean>
 }
 
 export function ListEditor({
@@ -109,7 +112,7 @@ export function ListEditor({
               onToggle={(item) => {
                 if (completion.allowed) {
                   setPromptedId(null)
-                  onToggleItem(item)
+                  void onToggleItem(item)
                   return
                 }
 
@@ -118,7 +121,7 @@ export function ListEditor({
                 // もう一度押すと閉じる（案内を消す手段がこれしかない）
                 setPromptedId((current) => (current === item.id ? null : item.id))
               }}
-              onRemove={onRemoveItem}
+              onRemove={(id) => void onRemoveItem(id)}
             />
           ) : index === nextIndex ? (
             // key を固定して**同じ入力欄を使い回す**。項目を足すと1つ下へ移るが、
@@ -133,12 +136,18 @@ export function ListEditor({
   )
 }
 
-function ListTitleField({ title, onRename }: { title: string; onRename: (t: string) => boolean }) {
+function ListTitleField({
+  title,
+  onRename,
+}: {
+  title: string
+  onRename: (t: string) => Promise<boolean>
+}) {
   const [draft, setDraft] = useState(title)
 
-  const commit = () => {
+  const commit = async () => {
     if (draft === title) return
-    if (!onRename(draft)) setDraft(title) // 拒否されたら見えている値を実際の値に戻す
+    if (!(await onRename(draft))) setDraft(title) // 拒否されたら見えている値を実際の値に戻す
   }
 
   return (
@@ -151,7 +160,7 @@ function ListTitleField({ title, onRename }: { title: string; onRename: (t: stri
       onChange={(e) => {
         setDraft(e.target.value)
       }}
-      onBlur={commit}
+      onBlur={() => void commit()}
       onKeyDown={(e) => {
         if (isCommitKey(e)) e.currentTarget.blur()
       }}
@@ -198,16 +207,16 @@ function ItemRow({
   item: Item
   completion: CompletionPermission
   prompted: boolean
-  onCommit: (id: string, text: string) => boolean
+  onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onRemove: (id: string) => void
 }) {
   const [draft, setDraft] = useState(item.text)
   const done = item.completedAt !== null
 
-  const commit = () => {
+  const commit = async () => {
     if (draft === item.text) return
-    if (!onCommit(item.id, draft)) setDraft(item.text)
+    if (!(await onCommit(item.id, draft))) setDraft(item.text)
   }
 
   return (
@@ -251,7 +260,7 @@ function ItemRow({
           onChange={(e) => {
             setDraft(e.target.value)
           }}
-          onBlur={commit}
+          onBlur={() => void commit()}
           onKeyDown={(e) => {
             if (isCommitKey(e)) e.currentTarget.blur()
           }}
@@ -331,17 +340,17 @@ function PromptBox({ children }: { children: React.ReactNode }) {
   )
 }
 
-function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => boolean }) {
+function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => Promise<boolean> }) {
   const [draft, setDraft] = useState('')
 
-  const commit = () => {
+  const commit = async () => {
     // 空白だけの入力は「書いていない」として扱う。エラーを出す場面ではない
     if (draft.trim() === '') {
       setDraft('')
       return
     }
 
-    if (onAdd(draft)) setDraft('')
+    if (await onAdd(draft)) setDraft('')
   }
 
   return (
@@ -357,10 +366,10 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
         onChange={(e) => {
           setDraft(e.target.value)
         }}
-        onBlur={commit}
+        onBlur={() => void commit()}
         onKeyDown={(e) => {
           // Enter で続けて書ける。この入力欄は使い回されるのでフォーカスは外れない
-          if (isCommitKey(e)) commit()
+          if (isCommitKey(e)) void commit()
         }}
         className={`${TEXT_INPUT} text-slate-900 placeholder:text-slate-400`}
       />

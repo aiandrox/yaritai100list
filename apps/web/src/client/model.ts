@@ -372,3 +372,81 @@ export function parseStoredList(raw: string | null): StoredListResult {
 
   return { status: 'loaded', list: parsed.data }
 }
+
+// ---------------------------------------------------------------------------
+// サーバーとのやりとり（#5 / #91）
+// ---------------------------------------------------------------------------
+
+/**
+ * サーバーから返るリストのうち、画面が使う部分。
+ *
+ * **日時は文字列。** `c.json()` を通ると `Date` は ISO 文字列になるので、
+ * `Date` として扱わない（`new Date(...)` を通すのはここだけにする）。
+ */
+export interface RemoteList {
+  id: string
+  title: string
+  updatedAt: string
+}
+
+export interface RemoteItem {
+  id: string
+  text: string
+  completedAt: string | null
+}
+
+/**
+ * トップで開くリストを選ぶ。**最後に更新したもの**（`PRODUCT_SPEC.md` §4.3）。
+ *
+ * リストを1つしか持っていない人に、選ぶ操作を作らないための決まり。
+ * 1つも無ければ `null`（呼び出し側が作る）。
+ */
+export function pickCurrentListId(lists: RemoteList[]): string | null {
+  let current: RemoteList | null = null
+
+  for (const list of lists) {
+    if (!current || Date.parse(list.updatedAt) > Date.parse(current.updatedAt)) {
+      current = list
+    }
+  }
+
+  return current?.id ?? null
+}
+
+/**
+ * サーバーの応答を画面の形に直す。
+ *
+ * 項目は**サーバーが並び順で返す**ので、ここでは並べ替えない
+ * （並び順の情報源を2つにしない）。
+ */
+export function toLocalList(list: { title: string }, items: RemoteItem[]): LocalList {
+  return {
+    title: list.title,
+    items: items.map((item) => ({
+      id: item.id,
+      text: item.text,
+      completedAt: item.completedAt === null ? null : Date.parse(item.completedAt),
+    })),
+  }
+}
+
+/**
+ * 取り込み（`POST /api/lists/import`）に送る内容。
+ *
+ * **完了の状態は送らない。** 未ログインでは印を付けられないので（#77）
+ * ブラウザ側に完了した項目は存在せず、サーバーも受け取らない。
+ */
+export function toImportBody(list: LocalList): { title: string; items: { text: string }[] } {
+  return { title: list.title, items: list.items.map((item) => ({ text: item.text })) }
+}
+
+/**
+ * 取り込むべきものがあるか。**1項目も書いていなければ取り込まない**
+ * （`PRODUCT_SPEC.md` §2）。
+ *
+ * サーバーでも弾いているが（`min(1)`）、**空で呼ばないのは画面側の責任**。
+ * 呼んでしまうと 400 になり、「失敗した」と見える。
+ */
+export function hasAnythingToImport(stored: StoredListResult): boolean {
+  return stored.status === 'loaded' && stored.list.items.length > 0
+}

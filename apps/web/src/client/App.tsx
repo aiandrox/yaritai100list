@@ -8,46 +8,19 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { ListEditor } from './ListEditor'
 import {
-  addItem,
-  createEmptyList,
-  LIST_STORAGE_KEY,
-  parseStoredList,
-  removeItem,
-  renameList,
-  serializeList,
-  setItemCompletedAt,
   signOutRequestInit,
   toCompletionPermission,
   toSessionState,
-  updateItemText,
-  type Item,
-  type ListResult,
-  type LocalList,
   type SessionState,
 } from './model'
+import { useList, type ImportOutcome, type ListController, type Rejection } from './useList'
 
 /**
- * 未ログインでも書ける画面（#4）。
+ * 画面の入口。
  *
- * **判定と計算は `model.ts` の純関数に置く**（`TECH_STACK.md` §10 の方針）。
- * ここに残すのは、localStorage との読み書き・取得の配線・描画だけ。
+ * **判定と変換は `model.ts` の純関数**（`TECH_STACK.md` §10）、
+ * **読み書きの配線は `useList.ts`**。ここに残すのは描画と、セッションの取得だけ。
  */
-
-/**
- * 保存の状態。**「読めなかった」を「まだ何も無い」に混ぜない。**
- *
- * 混ぜると、読めなかっただけの保存に空リストを上書きして
- * 利用者の書いたものを消す（`parseStoredList` の注意書きと同じ話）。
- */
-type StorageState =
-  | { status: 'loading' }
-  | { status: 'ok' }
-  /** 保存はあるが読めない。**利用者が了解するまで書き込まない。** */
-  | { status: 'broken' }
-  /** localStorage 自体が使えない（プライベートブラウズなど）。書けるが残らない。 */
-  | { status: 'unavailable' }
-  /** 書き込みに失敗した（容量など）。**黙って失敗しない。** */
-  | { status: 'save-failed' }
 
 /**
  * 断られた理由ごとの文言。
@@ -56,22 +29,21 @@ type StorageState =
  * 長すぎて弾かれた人に「1文字以上入力してください」と出しても、何を直せばいいのか
  * 分からない。文字数は `packages/shared` の定数から出す（ここに数字を書かない）。
  */
-const ERROR_MESSAGES = {
+const REJECTION_MESSAGES: Record<Rejection, string> = {
   'text-empty': 'やりたいことを入力してください',
   'text-too-long': `やりたいことは${String(ITEM_TEXT_MAX_LENGTH)}文字までです`,
   'title-empty': 'タイトルを入力してください',
   'title-too-long': `タイトルは${String(LIST_TITLE_MAX_LENGTH)}文字までです`,
   'list-full': `${String(ITEMS_PER_LIST_MAX)}件まで書けます。減らすと続けて書けます`,
   'not-found': '対象の項目が見つかりませんでした',
-} as const
+  'server-error': '保存できませんでした。通信を確かめて、もう一度試してください',
+}
 
 export function App() {
   const [session, setSession] = useState<SessionState>({ status: 'loading' })
   const [signOutFailed, setSignOutFailed] = useState(false)
 
-  const [list, setList] = useState<LocalList | null>(null)
-  const [storage, setStorage] = useState<StorageState>({ status: 'loading' })
-  const [error, setError] = useState<string | null>(null)
+  const controller = useList(session)
 
   // --- セッション（#3 で入れた配線。消さないこと） ---
 
@@ -108,61 +80,7 @@ export function App() {
     await loadSession()
   }, [loadSession])
 
-  // --- localStorage ---
-
-  useEffect(() => {
-    let raw: string | null
-
-    try {
-      raw = window.localStorage.getItem(LIST_STORAGE_KEY)
-    } catch {
-      // 保存できないだけで、書くことはできる。空のリストで始める
-      setList(createEmptyList())
-      setStorage({ status: 'unavailable' })
-      return
-    }
-
-    const stored = parseStoredList(raw)
-
-    if (stored.status === 'broken') {
-      // **リストを作らない。** 作ると最初の編集で保存を上書きしてしまう
-      setStorage({ status: 'broken' })
-      return
-    }
-
-    setList(stored.status === 'loaded' ? stored.list : createEmptyList())
-    setStorage({ status: 'ok' })
-  }, [])
-
-  /**
-   * 変更を反映して保存する。**保存は変更のたびにここだけで行う。**
-   *
-   * `useEffect` で `list` を監視して保存すると、読み込み直後にも走るため、
-   * 「読めなかった保存」を上書きする経路ができてしまう。
-   */
-  const applyResult = useCallback(
-    (result: ListResult): boolean => {
-      if (!result.ok) {
-        setError(ERROR_MESSAGES[result.reason])
-        return false
-      }
-
-      setError(null)
-      setList(result.list)
-
-      if (storage.status === 'unavailable') return true
-
-      try {
-        window.localStorage.setItem(LIST_STORAGE_KEY, serializeList(result.list))
-        setStorage({ status: 'ok' })
-      } catch {
-        setStorage({ status: 'save-failed' })
-      }
-
-      return true
-    },
-    [storage.status],
-  )
+  const { screen, rejection } = controller
 
   return (
     <div className="min-h-dvh bg-brand-soft">
@@ -180,49 +98,39 @@ export function App() {
           onSignOut={() => void signOut()}
         />
 
-        {storage.status === 'loading' && <p className="py-8 text-slate-500">読み込み中</p>}
+        <ImportNotice outcome={controller.importOutcome} />
 
-        {storage.status === 'broken' && (
-          <BrokenStorageNotice
-            onStartOver={() => {
-              // ここでは保存を消さない。最初の編集で上書きされる
-              setList(createEmptyList())
-              setStorage({ status: 'ok' })
-            }}
-          />
+        {screen.status === 'loading' && <p className="py-8 text-slate-500">読み込み中</p>}
+
+        {screen.status === 'broken' && <BrokenStorageNotice onStartOver={controller.startOver} />}
+
+        {screen.status === 'failed' && (
+          <Notice tone="warn">
+            リストを読み込めませんでした。書き換えて失わないよう、編集を止めています。
+            通信を確かめて、ページを開き直してください
+          </Notice>
         )}
 
-        {list && (
+        {screen.status === 'ready' && (
           <>
-            <StorageNotice storage={storage} session={session} />
+            <StorageNotice controller={controller} session={session} />
 
-            {error !== null && (
+            {rejection !== null && (
               <p role="alert" className="mb-2 rounded bg-white px-3 py-2 text-sm text-brand-deep">
-                {error}
+                {REJECTION_MESSAGES[rejection]}
               </p>
             )}
 
             <ListEditor
-              list={list}
+              list={screen.list}
               // 未ログインでは「やった」印を付けられない（PRODUCT_SPEC.md §2）。
               // 判定は model.ts の純関数。ここでは status を見比べない
               completion={toCompletionPermission(session)}
-              onRenameList={(title) => applyResult(renameList(list, title))}
-              onAddItem={(text) => applyResult(addItem(list, { id: crypto.randomUUID(), text }))}
-              onUpdateItemText={(id, text) => applyResult(updateItemText(list, id, text))}
-              onToggleItem={(item: Item) => {
-                // 案内を出すのは ListEditor だが、**印を付けない判断はここでもする。**
-                // 配線を間違えたときに、黙って未ログインの完了が保存される方が重い
-                if (!toCompletionPermission(session).allowed) return
-
-                // 完了日時は**呼び出し側で作る**（model.ts に時計を持ち込まない）
-                applyResult(
-                  setItemCompletedAt(list, item.id, item.completedAt === null ? Date.now() : null),
-                )
-              }}
-              onRemoveItem={(id) => {
-                applyResult(removeItem(list, id))
-              }}
+              onRenameList={controller.renameList}
+              onAddItem={controller.addItem}
+              onUpdateItemText={controller.updateItemText}
+              onToggleItem={controller.toggleItem}
+              onRemoveItem={controller.removeItem}
             />
           </>
         )}
@@ -268,12 +176,46 @@ function SessionArea({
 }
 
 /**
- * 「保存されていない可能性がある」ことを伝える導線（`PRODUCT_SPEC.md` §4.1）。
+ * ブラウザに書いていた内容を取り込めたかの案内（`PRODUCT_SPEC.md` §2）。
  *
- * ログインの動機付けなので、**未ログインのときだけログインの入口を出す。**
- * ログイン済みでもいまは localStorage にしか保存していない（サーバーへの保存は #5）。
+ * 🔴 **取り込めなかったことを黙らない。** ブラウザ側のデータは消していないので、
+ * リストを整理すれば取り込める、と分かるようにする。
  */
-function StorageNotice({ storage, session }: { storage: StorageState; session: SessionState }) {
+function ImportNotice({ outcome }: { outcome: ImportOutcome }) {
+  if (outcome === 'imported') {
+    return (
+      <Notice tone="info">このブラウザに書いていた内容を、新しいリストとして取り込みました</Notice>
+    )
+  }
+
+  if (outcome === 'limit-reached') {
+    return (
+      <Notice tone="warn">
+        リストの数が上限のため、このブラウザに書いていた内容を取り込めませんでした。
+        内容はこのブラウザに残してあります。リストを整理してから開き直すと取り込めます
+      </Notice>
+    )
+  }
+
+  return null
+}
+
+/**
+ * どこに保存されているかの案内。
+ *
+ * ログイン中は**サーバーに保存されている**ので、ログインを促さない。
+ */
+function StorageNotice({
+  controller,
+  session,
+}: {
+  controller: ListController
+  session: SessionState
+}) {
+  const { screen, storage } = controller
+
+  if (screen.status === 'ready' && screen.source === 'server') return null
+
   if (storage.status === 'unavailable') {
     return (
       <Notice tone="warn">
@@ -299,8 +241,6 @@ function StorageNotice({ storage, session }: { storage: StorageState; session: S
     )
   }
 
-  // ログイン済みでも、いまの保存先は localStorage だけ（サーバーへの保存は #5）。
-  // ログインを促す文言は出さない
   return <Notice tone="info">いまはこのブラウザにだけ保存されています</Notice>
 }
 
