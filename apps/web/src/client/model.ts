@@ -386,6 +386,7 @@ export function parseStoredList(raw: string | null): StoredListResult {
 export interface RemoteList {
   id: string
   title: string
+  createdAt: string
   updatedAt: string
 }
 
@@ -414,12 +415,19 @@ export function pickCurrentListId(lists: RemoteList[]): string | null {
 }
 
 /**
- * 一覧に出す順。**最後に更新したものが上**（トップで開くのと同じ基準）。
+ * 一覧に出す順。**作った順**（`PRODUCT_SPEC.md` §4.3）。
+ *
+ * 🔴 **更新した順にしない**（#108 で直した）。更新順だと、タイトルを直したり
+ * 項目を書いたりするたびに**そのリストが先頭へ飛び、どれを触ったか見失う。**
+ * 「完了しても項目の位置は動かさない」（§4.5）のと同じ理由。
+ *
+ * トップ（`/`）が**最後に更新したリスト**を開くのは別の話
+ * （あちらは1つを選ぶ基準で、並べる基準ではない）。
  *
  * 元の配列は書き換えない。React の state をそのまま渡すため。
  */
-export function sortListsByUpdated(lists: RemoteList[]): RemoteList[] {
-  return [...lists].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+export function sortListsByCreated(lists: RemoteList[]): RemoteList[] {
+  return [...lists].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
 }
 
 /**

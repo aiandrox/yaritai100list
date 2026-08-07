@@ -18,7 +18,7 @@ import {
   removeItem,
   renameList,
   serializeList,
-  sortListsByUpdated,
+  sortListsByCreated,
   setItemCompletedAt,
   toCompletionPermission,
   toImportBody,
@@ -344,9 +344,9 @@ describe('pickCurrentListId', () => {
   it('🔴 最後に更新したリストを選ぶ', () => {
     // リストを1つしか持っていない人に選ぶ操作を作らないための決まり（PRODUCT_SPEC.md §4.3）
     const id = pickCurrentListId([
-      { id: 'old', title: 'a', updatedAt: '2026-08-01T00:00:00.000Z' },
-      { id: 'newest', title: 'b', updatedAt: '2026-08-07T00:00:00.000Z' },
-      { id: 'middle', title: 'c', updatedAt: '2026-08-05T00:00:00.000Z' },
+      { id: 'old', title: 'a', createdAt: 'x', updatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'newest', title: 'b', createdAt: 'x', updatedAt: '2026-08-07T00:00:00.000Z' },
+      { id: 'middle', title: 'c', createdAt: 'x', updatedAt: '2026-08-05T00:00:00.000Z' },
     ])
 
     expect(id).toBe('newest')
@@ -357,22 +357,32 @@ describe('pickCurrentListId', () => {
   })
 })
 
-describe('sortListsByUpdated', () => {
+describe('sortListsByCreated', () => {
   const lists = [
-    { id: 'old', title: 'a', updatedAt: '2026-08-01T00:00:00.000Z' },
-    { id: 'newest', title: 'b', updatedAt: '2026-08-07T00:00:00.000Z' },
-    { id: 'middle', title: 'c', updatedAt: '2026-08-05T00:00:00.000Z' },
+    { id: 'second', title: 'a', createdAt: '2026-08-05T00:00:00.000Z', updatedAt: 'x' },
+    { id: 'first', title: 'b', createdAt: '2026-08-01T00:00:00.000Z', updatedAt: 'x' },
+    { id: 'third', title: 'c', createdAt: '2026-08-07T00:00:00.000Z', updatedAt: 'x' },
   ]
 
-  it('最後に更新したものが上（トップで開くのと同じ基準）', () => {
-    expect(sortListsByUpdated(lists).map((list) => list.id)).toEqual(['newest', 'middle', 'old'])
+  it('作った順に並ぶ', () => {
+    expect(sortListsByCreated(lists).map((list) => list.id)).toEqual(['first', 'second', 'third'])
+  })
+
+  it('🔴 更新しても並びが変わらない', () => {
+    // 更新順だと、タイトルを直すたびにそのリストが先頭へ飛び、
+    // どれを触ったか見失う（#108 で直した）
+    const edited = lists.map((list) =>
+      list.id === 'first' ? { ...list, updatedAt: '2099-01-01T00:00:00.000Z' } : list,
+    )
+
+    expect(sortListsByCreated(edited).map((list) => list.id)).toEqual(['first', 'second', 'third'])
   })
 
   it('元の配列を書き換えない', () => {
     // React の state をそのまま渡すので、破壊的に並べ替えると再描画が起きない
-    sortListsByUpdated(lists)
+    sortListsByCreated(lists)
 
-    expect(lists.map((list) => list.id)).toEqual(['old', 'newest', 'middle'])
+    expect(lists.map((list) => list.id)).toEqual(['second', 'first', 'third'])
   })
 })
 
