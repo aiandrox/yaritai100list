@@ -11,13 +11,17 @@ import {
   createEmptyList,
   filledCount,
   formatItemNumber,
+  hasAnythingToImport,
   moveItem,
+  pickCurrentListId,
   parseStoredList,
   removeItem,
   renameList,
   serializeList,
   setItemCompletedAt,
   toCompletionPermission,
+  toImportBody,
+  toLocalList,
   toSessionState,
   toSlots,
   updateItemText,
@@ -332,6 +336,77 @@ describe('toSlots / formatItemNumber / filledCount', () => {
     const list = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
 
     expect(filledCount(list)).toBe(3)
+  })
+})
+
+describe('pickCurrentListId', () => {
+  it('🔴 最後に更新したリストを選ぶ', () => {
+    // リストを1つしか持っていない人に選ぶ操作を作らないための決まり（PRODUCT_SPEC.md §4.3）
+    const id = pickCurrentListId([
+      { id: 'old', title: 'a', updatedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'newest', title: 'b', updatedAt: '2026-08-07T00:00:00.000Z' },
+      { id: 'middle', title: 'c', updatedAt: '2026-08-05T00:00:00.000Z' },
+    ])
+
+    expect(id).toBe('newest')
+  })
+
+  it('1つも無ければ null（呼び出し側が作る）', () => {
+    expect(pickCurrentListId([])).toBeNull()
+  })
+})
+
+describe('toLocalList', () => {
+  it('サーバーの応答を画面の形に直す。完了日時は数値になる', () => {
+    const list = toLocalList({ title: '2026年の目標' }, [
+      { id: 'i1', text: '南極に行く', completedAt: '2026-08-07T00:00:00.000Z' },
+      { id: 'i2', text: 'オーロラを見る', completedAt: null },
+    ])
+
+    expect(list).toEqual({
+      title: '2026年の目標',
+      items: [
+        { id: 'i1', text: '南極に行く', completedAt: Date.parse('2026-08-07T00:00:00.000Z') },
+        { id: 'i2', text: 'オーロラを見る', completedAt: null },
+      ],
+    })
+  })
+
+  it('🔴 並べ替えない（並び順の情報源をサーバーに1本化する）', () => {
+    const list = toLocalList({ title: 'x' }, [
+      { id: 'i2', text: '2番目に入っている', completedAt: null },
+      { id: 'i1', text: '1番目に入っている', completedAt: null },
+    ])
+
+    expect(list.items.map((item) => item.id)).toEqual(['i2', 'i1'])
+  })
+})
+
+describe('toImportBody / hasAnythingToImport', () => {
+  it('本文だけを送る', () => {
+    const list = listOf('南極に行く', 'オーロラを見る')
+
+    expect(toImportBody(list)).toEqual({
+      title: DEFAULT_LIST_TITLE,
+      items: [{ text: '南極に行く' }, { text: 'オーロラを見る' }],
+    })
+  })
+
+  it('🔴 完了の状態を送らない（未ログインでは印を付けられないため）', () => {
+    const completed = expectOk(setItemCompletedAt(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+
+    // 送る口を作ると #77 の制約を迂回できてしまう
+    expect(toImportBody(completed).items).toEqual([{ text: '南極に行く' }])
+  })
+
+  it('🔴 1項目も無ければ取り込まない', () => {
+    expect(hasAnythingToImport({ status: 'loaded', list: createEmptyList() })).toBe(false)
+    expect(hasAnythingToImport({ status: 'empty' })).toBe(false)
+    expect(hasAnythingToImport({ status: 'broken' })).toBe(false)
+  })
+
+  it('1項目でもあれば取り込む', () => {
+    expect(hasAnythingToImport({ status: 'loaded', list: listOf('南極に行く') })).toBe(true)
   })
 })
 
