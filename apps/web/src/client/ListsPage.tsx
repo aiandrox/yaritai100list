@@ -1,4 +1,4 @@
-import { LISTS_PER_USER_MAX, LIST_TITLE_MAX_LENGTH } from '@yaritai100list/shared'
+import { LISTS_PER_USER_MAX, NEW_LIST_TITLE } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation } from 'wouter'
 
@@ -17,7 +17,8 @@ import {
 } from './model'
 
 /**
- * マイリストの一覧（`PRODUCT_SPEC.md` §4.3）。
+ * リストの一覧（`PRODUCT_SPEC.md` §4.3 の「マイリスト管理」）。
+ * **画面での呼び名は「すべてのリスト」**（#110）。
  *
  * ここは**切り替えと管理のための画面**。トップ（`/`）は一覧ではなく
  * 最後に更新したリストを直接出す（リストが1つしかない人に無駄な操作を作らない）。
@@ -76,8 +77,11 @@ export function ListsPage({ session }: { session: SessionState }) {
     setMessage(null)
 
     // 画面でも押せないようにしているが（#107）、**サーバーの 409 も受ける。**
-    // 別のタブで作った直後など、画面の件数が古いことがある
-    const res = await api.api.lists.$post({ json: {} })
+    // 別のタブで作った直後など、画面の件数が古いことがある。
+    //
+    // 名前は shared の定数。**最初の1つ（DEFAULT_LIST_TITLE）とは別の名前**にして、
+    // 増やしたときに一覧で見分けられるようにする（#110）
+    const res = await api.api.lists.$post({ json: { title: NEW_LIST_TITLE } })
 
     if (res.status === 409) {
       setMessage({
@@ -94,20 +98,6 @@ export function ListsPage({ session }: { session: SessionState }) {
 
     const body = await res.json()
     if ('list' in body) navigate(`/lists/${body.list.id}`)
-  }
-
-  const renameList = async (listId: string, title: string): Promise<boolean> => {
-    setMessage(null)
-
-    const res = await api.api.lists[':listId'].$patch({ param: { listId }, json: { title } })
-
-    if (!res.ok) {
-      setMessage({ tone: 'warn', text: 'タイトルを変えられませんでした' })
-      return false
-    }
-
-    await load()
-    return true
   }
 
   const deleteList = async (listId: string) => {
@@ -175,7 +165,7 @@ export function ListsPage({ session }: { session: SessionState }) {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-slate-900">マイリスト</h1>
+      <h1 className="text-xl font-bold text-slate-900">すべてのリスト</h1>
       <p className="mt-1 text-xs text-slate-500 tabular-nums">
         {state.lists.length} / {LISTS_PER_USER_MAX}
       </p>
@@ -210,7 +200,6 @@ export function ListsPage({ session }: { session: SessionState }) {
             key={list.id}
             number={formatItemNumber(index + 1)}
             list={list}
-            onRename={renameList}
             onDelete={deleteList}
           />
         ))}
@@ -246,48 +235,25 @@ export function ListsPage({ session }: { session: SessionState }) {
 function ListRow({
   number,
   list,
-  onRename,
   onDelete,
 }: {
   number: string
   list: RemoteList
-  onRename: (listId: string, title: string) => Promise<boolean>
   onDelete: (listId: string) => Promise<void>
 }) {
-  const [draft, setDraft] = useState(list.title)
   const [confirming, setConfirming] = useState(false)
-
-  const commit = async () => {
-    if (draft === list.title) return
-    if (!(await onRename(list.id, draft))) setDraft(list.title)
-  }
 
   return (
     <li className="border-b border-brand/40">
-      <div className="flex items-center gap-2 py-2">
-        <span className="w-8 shrink-0 text-right text-xs text-slate-500 tabular-nums">
-          {number}
-        </span>
-
-        <input
-          type="text"
-          value={draft}
-          aria-label={`${number} 番目のリストのタイトル`}
-          // 上限は shared の定数。ここに数字を書かない（CLAUDE.md の不変条件）
-          maxLength={LIST_TITLE_MAX_LENGTH}
-          onChange={(e) => {
-            setDraft(e.target.value)
-          }}
-          onBlur={() => void commit()}
-          onKeyDown={(e) => {
-            // 変換確定の Enter を拾わない（#79 で踏んだ）
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur()
-          }}
-          className="min-w-0 flex-1 rounded bg-transparent px-1 py-1 text-slate-900 focus:bg-white focus:outline-2 focus:outline-brand-deep"
-        />
-
-        <Link href={`/lists/${list.id}`} className="shrink-0 text-xs text-brand-deep underline">
-          開く
+      <div className="flex items-center gap-2">
+        {/* 🔴 **一覧では名前を編集できない**（#110）。名前を押すとそのリストへ行く。
+            名前を直すのはリストの画面。編集の場所を2つ作ると、
+            どちらが効いているのか分からなくなる */}
+        <Link href={`/lists/${list.id}`} className="flex min-w-0 flex-1 items-center gap-2 py-3">
+          <span className="w-8 shrink-0 text-right text-xs text-slate-500 tabular-nums">
+            {number}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-slate-900">{list.title}</span>
         </Link>
 
         <button
