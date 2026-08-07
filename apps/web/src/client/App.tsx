@@ -12,6 +12,7 @@ import {
   serializeList,
   setItemCompletedAt,
   signOutRequestInit,
+  toCompletionPermission,
   toSessionState,
   updateItemText,
   type Item,
@@ -189,10 +190,17 @@ export function App() {
 
             <ListEditor
               list={list}
+              // 未ログインでは「叶えた」印を付けられない（PRODUCT_SPEC.md §2）。
+              // 判定は model.ts の純関数。ここでは status を見比べない
+              completion={toCompletionPermission(session)}
               onRenameList={(title) => applyResult(renameList(list, title))}
               onAddItem={(text) => applyResult(addItem(list, { id: crypto.randomUUID(), text }))}
               onUpdateItemText={(id, text) => applyResult(updateItemText(list, id, text))}
               onToggleItem={(item: Item) => {
+                // 案内を出すのは ListEditor だが、**印を付けない判断はここでもする。**
+                // 配線を間違えたときに、黙って未ログインの完了が保存される方が重い
+                if (!toCompletionPermission(session).allowed) return
+
                 // 完了日時は**呼び出し側で作る**（model.ts に時計を持ち込まない）
                 applyResult(
                   setItemCompletedAt(list, item.id, item.completedAt === null ? Date.now() : null),

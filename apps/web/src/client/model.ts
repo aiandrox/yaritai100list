@@ -58,6 +58,35 @@ export function toSessionState(response: { ok: boolean; body: unknown }): Sessio
 }
 
 /**
+ * 「叶えた」印を付けられるか（`PRODUCT_SPEC.md` §2、2026-08-07 決定）。
+ *
+ * **未ログインでは完了にできない。** 完了は後から見返して意味を持つ記録なので、
+ * ブラウザにしか無い状態で貯めても消える。**消えて困るものを貯め始める地点を
+ * ログインに合わせる**、というのが理由。書くこと自体には障壁を作らない。
+ *
+ * 🔴 **`error` を「できる」に倒さない。** ログイン状態が分からないだけなのに
+ * 印を付けられると、ログインしていない人の完了がブラウザに残る。
+ * かといって「未ログイン」と同じ文言を出すと、ログイン済みの人に
+ * ログインを促すことになる。**理由を分けて返し、文言も分ける。**
+ */
+export type CompletionPermission =
+  | { allowed: true }
+  | { allowed: false; reason: 'sign-in-required' | 'session-loading' | 'session-unknown' }
+
+export function toCompletionPermission(session: SessionState): CompletionPermission {
+  switch (session.status) {
+    case 'authenticated':
+      return { allowed: true }
+    case 'anonymous':
+      return { allowed: false, reason: 'sign-in-required' }
+    case 'loading':
+      return { allowed: false, reason: 'session-loading' }
+    case 'error':
+      return { allowed: false, reason: 'session-unknown' }
+  }
+}
+
+/**
  * `POST /api/auth/sign-out` に送る内容。**`App.tsx` とテストで同じものを使う。**
  *
  * 🔴 **`content-type: application/json` と本文 `{}` の両方が要る。**

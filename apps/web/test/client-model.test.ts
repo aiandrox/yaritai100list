@@ -17,6 +17,7 @@ import {
   renameList,
   serializeList,
   setItemCompletedAt,
+  toCompletionPermission,
   toSessionState,
   toSlots,
   updateItemText,
@@ -55,6 +56,36 @@ describe('toSessionState', () => {
     expect(toSessionState({ ok: true, body: {} })).toEqual({ status: 'error' })
     expect(toSessionState({ ok: true, body: 'ok' })).toEqual({ status: 'error' })
     expect(toSessionState({ ok: true, body: undefined })).toEqual({ status: 'error' })
+  })
+})
+
+describe('toCompletionPermission', () => {
+  it('🔴 未ログインでは「叶えた」印を付けられない', () => {
+    // 完了はログインの動機（PRODUCT_SPEC.md §2、2026-08-07 決定）
+    expect(toCompletionPermission({ status: 'anonymous' })).toEqual({
+      allowed: false,
+      reason: 'sign-in-required',
+    })
+  })
+
+  it('ログイン中なら付けられる', () => {
+    expect(toCompletionPermission({ status: 'authenticated' })).toEqual({ allowed: true })
+  })
+
+  it('🔴 ログイン状態を確認できないときは付けられない。できる方に倒さない', () => {
+    // 倒すと、ログインしていない人の完了がブラウザに残る
+    expect(toCompletionPermission({ status: 'error' })).toEqual({
+      allowed: false,
+      reason: 'session-unknown',
+    })
+  })
+
+  it('🔴 確認中と未ログインで理由を分ける', () => {
+    // 同じ理由にすると、確認中のログイン済みの利用者にログインを促してしまう
+    expect(toCompletionPermission({ status: 'loading' })).toEqual({
+      allowed: false,
+      reason: 'session-loading',
+    })
   })
 })
 

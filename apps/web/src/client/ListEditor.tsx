@@ -5,7 +5,7 @@ import {
 } from '@yaritai100list/shared'
 import { useState } from 'react'
 
-import { filledCount, toSlots, type Item, type LocalList } from './model'
+import { filledCount, toSlots, type CompletionPermission, type Item, type LocalList } from './model'
 
 /**
  * リストの編集画面。**ここに置くのは描画と入力欄の下書きだけ。**
@@ -18,6 +18,8 @@ import { filledCount, toSlots, type Item, type LocalList } from './model'
  */
 interface ListEditorProps {
   list: LocalList
+  /** 「叶えた」印を付けられるか。判定は `model.ts` の `toCompletionPermission`。 */
+  completion: CompletionPermission
   onRenameList: (title: string) => boolean
   onAddItem: (text: string) => boolean
   onUpdateItemText: (id: string, text: string) => boolean
@@ -27,6 +29,7 @@ interface ListEditorProps {
 
 export function ListEditor({
   list,
+  completion,
   onRenameList,
   onAddItem,
   onUpdateItemText,
@@ -34,6 +37,13 @@ export function ListEditor({
   onRemoveItem,
 }: ListEditorProps) {
   const filled = filledCount(list)
+
+  /**
+   * 完了を押せないときに、その行の下へ理由を出すための状態。
+   *
+   * **画面の上の方にまとめて出さない。** 押した行から離れた場所に出ても目に入らない。
+   */
+  const [promptedId, setPromptedId] = useState<string | null>(null)
 
   // 次に書ける枠は「埋まっている数」の位置。ここより後ろの枠は表示だけで、触れない。
   // どこにでも書けると、書いた行と入る行がずれて驚く（項目は末尾に足されるため）
@@ -57,8 +67,20 @@ export function ListEditor({
               key={slot.item.id}
               number={slot.number}
               item={slot.item}
+              completion={completion}
+              prompted={promptedId === slot.item.id}
               onCommit={onUpdateItemText}
-              onToggle={onToggleItem}
+              onToggle={(item) => {
+                if (completion.allowed) {
+                  setPromptedId(null)
+                  onToggleItem(item)
+                  return
+                }
+
+                // **できないことを黙って無効化しない。** 無効化だけだと、
+                // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）
+                setPromptedId(item.id)
+              }}
               onRemove={onRemoveItem}
             />
           ) : index === nextIndex ? (
@@ -101,7 +123,8 @@ function ListTitleField({ title, onRename }: { title: string; onRename: (t: stri
   )
 }
 
-const ROW = 'flex items-center gap-2 border-b border-brand/40 py-1.5'
+const ROW = 'flex items-center gap-2 py-1.5'
+const ROW_BORDER = 'border-b border-brand/40'
 const NUMBER = 'w-8 shrink-0 text-right text-xs tabular-nums'
 const TEXT_INPUT =
   'min-w-0 flex-1 rounded bg-transparent px-1 py-1 text-base focus:bg-white focus:outline-2 focus:outline-brand-deep'
@@ -109,12 +132,16 @@ const TEXT_INPUT =
 function ItemRow({
   number,
   item,
+  completion,
+  prompted,
   onCommit,
   onToggle,
   onRemove,
 }: {
   number: string
   item: Item
+  completion: CompletionPermission
+  prompted: boolean
   onCommit: (id: string, text: string) => boolean
   onToggle: (item: Item) => void
   onRemove: (id: string) => void
@@ -128,58 +155,109 @@ function ItemRow({
   }
 
   return (
-    <li className={ROW}>
-      <span className={`${NUMBER} ${done ? 'text-brand-deep' : 'text-slate-400'}`}>{number}</span>
+    <li className={ROW_BORDER}>
+      <div className={ROW}>
+        <span className={`${NUMBER} ${done ? 'text-brand-deep' : 'text-slate-400'}`}>{number}</span>
 
-      <button
-        type="button"
-        // 押されている状態を色だけで伝えない（読み上げと、色が見えない環境のため）
-        aria-pressed={done}
-        aria-label={done ? '完了を取り消す' : '完了にする'}
-        onClick={() => {
-          onToggle(item)
-        }}
-        className={`size-6 shrink-0 rounded-full border-2 text-xs leading-none ${
-          done ? 'border-brand-deep bg-brand-deep text-white' : 'border-brand bg-white text-white'
-        }`}
-      >
-        ✓
-      </button>
+        <button
+          type="button"
+          // 押されている状態を色だけで伝えない（読み上げと、色が見えない環境のため）
+          aria-pressed={done}
+          // 🔴 `disabled` にしない。押せないと押しても何も起きず、理由を出せない。
+          // 支援技術には aria-disabled で「いまは効かない」と伝える
+          aria-disabled={!completion.allowed}
+          aria-label={
+            completion.allowed
+              ? done
+                ? '完了を取り消す'
+                : '完了にする'
+              : '完了にする（ログインが要る）'
+          }
+          onClick={() => {
+            onToggle(item)
+          }}
+          className={`size-6 shrink-0 rounded-full border-2 text-xs leading-none ${
+            done ? 'border-brand-deep bg-brand-deep text-white' : 'border-brand bg-white text-white'
+          } ${completion.allowed ? '' : 'border-dashed opacity-60'}`}
+        >
+          ✓
+        </button>
 
-      <input
-        type="text"
-        value={draft}
-        aria-label={`${number} 番目のやりたいこと`}
-        maxLength={ITEM_TEXT_MAX_LENGTH}
-        onChange={(e) => {
-          setDraft(e.target.value)
-        }}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-        }}
-        // 完了しても**行の位置は動かさない**（PRODUCT_SPEC.md §4.5）。
-        // 動くと番号と項目の対応が崩れて、どれを完了したのか分からなくなる
-        className={`${TEXT_INPUT} ${done ? 'text-slate-400 line-through' : 'text-slate-900'}`}
-      />
+        <input
+          type="text"
+          value={draft}
+          aria-label={`${number} 番目のやりたいこと`}
+          maxLength={ITEM_TEXT_MAX_LENGTH}
+          onChange={(e) => {
+            setDraft(e.target.value)
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+          }}
+          // 完了しても**行の位置は動かさない**（PRODUCT_SPEC.md §4.5）。
+          // 動くと番号と項目の対応が崩れて、どれを完了したのか分からなくなる
+          className={`${TEXT_INPUT} ${done ? 'text-slate-400 line-through' : 'text-slate-900'}`}
+        />
 
-      {done && item.completedAt !== null && (
-        <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">
-          {new Date(item.completedAt).toLocaleDateString('ja-JP')}
-        </span>
-      )}
+        {done && item.completedAt !== null && (
+          <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">
+            {new Date(item.completedAt).toLocaleDateString('ja-JP')}
+          </span>
+        )}
 
-      <button
-        type="button"
-        aria-label={`${number} 番目を削除`}
-        onClick={() => {
-          onRemove(item.id)
-        }}
-        className="shrink-0 px-1 text-sm text-slate-400"
-      >
-        ×
-      </button>
+        <button
+          type="button"
+          aria-label={`${number} 番目を削除`}
+          onClick={() => {
+            onRemove(item.id)
+          }}
+          className="shrink-0 px-1 text-sm text-slate-400"
+        >
+          ×
+        </button>
+      </div>
+
+      {prompted && !completion.allowed && <CompletionPrompt reason={completion.reason} />}
     </li>
+  )
+}
+
+/**
+ * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に出す。**
+ *
+ * 理由ごとに文言を分ける。未ログインと「状態が分からない」を同じ文にすると、
+ * ログイン済みの利用者にログインを促してしまう（`toCompletionPermission` の注意書き）。
+ */
+function CompletionPrompt({
+  reason,
+}: {
+  reason: Exclude<CompletionPermission, { allowed: true }>['reason']
+}) {
+  if (reason === 'session-loading') {
+    return <PromptBox>ログイン状態を確認しています</PromptBox>
+  }
+
+  if (reason === 'session-unknown') {
+    return <PromptBox>ログイン状態を確認できないため、いまは印を付けられません</PromptBox>
+  }
+
+  return (
+    <PromptBox>
+      ログインすると「叶えた」印を付けられます{' '}
+      {/* ログインの開始は POST なので <a> から叩けない。GET の入口はサーバー側にある */}
+      <a href="/api/login/google" className="font-bold text-brand-deep underline">
+        Google でログイン
+      </a>
+    </PromptBox>
+  )
+}
+
+function PromptBox({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="status" className="mb-1.5 ml-10 rounded bg-white px-2 py-1.5 text-xs text-slate-600">
+      {children}
+    </p>
   )
 }
 
@@ -197,7 +275,7 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
   }
 
   return (
-    <li className={ROW}>
+    <li className={`${ROW} ${ROW_BORDER}`}>
       <span className={`${NUMBER} text-slate-400`}>{number}</span>
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand" />
       <input
@@ -228,7 +306,7 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
  */
 function EmptyRow({ number }: { number: string }) {
   return (
-    <li className={`${ROW} opacity-50`} aria-hidden="true">
+    <li className={`${ROW} ${ROW_BORDER} opacity-50`} aria-hidden="true">
       <span className={`${NUMBER} text-slate-300`}>{number}</span>
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand/50" />
       <span className="flex-1" />
