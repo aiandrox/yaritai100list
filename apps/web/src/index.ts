@@ -1,7 +1,12 @@
 import * as Sentry from '@sentry/cloudflare'
-import { listTitleSchema, visibilitySchema } from '@yaritai100list/shared'
+import {
+  DEFAULT_LIST_TITLE,
+  LISTS_PER_USER_MAX,
+  listTitleSchema,
+  visibilitySchema,
+} from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
@@ -10,6 +15,7 @@ import { requireOwnedList, requireUser } from './authorization'
 import { createDb } from './db'
 import { lists } from './db/schema'
 import type { AppEnv } from './env'
+import { newId } from './id'
 import { sentryOptions } from './sentry'
 
 /**
@@ -22,6 +28,15 @@ const updateListSchema = z
     visibility: visibilitySchema.optional(),
   })
   .strict()
+
+/**
+ * リストの作成で受け付ける内容。
+ *
+ * タイトルは省略できる（既定は `DEFAULT_LIST_TITLE`）。
+ * ⚠️ **本文が空の POST は 400 になる。** `zValidator('json', ...)` は本文を要求するので、
+ * 何も指定しない場合でも `{}` を送ること（Better Auth の 415 と同じ性質の落とし穴）。
+ */
+const createListSchema = z.object({ title: listTitleSchema.optional() }).strict()
 
 /**
  * ルートはコンストラクタから直接チェーンする。Hono RPC はメソッドチェーンの
@@ -75,6 +90,43 @@ const app = new Hono<AppEnv>()
       .where(eq(lists.userId, c.get('userId')))
 
     return c.json({ lists: rows })
+  })
+
+  /**
+   * リストを作る。
+   *
+   * 🔴 **件数の判定と挿入を1文で行う。**
+   * 「数えてから入れる」と、素早く2回押されたときに**両方が上限内だと判断して
+   * 上限を超える。** `where (select count(*) ...) < 上限` を付けた insert なら、
+   * 入らなかったことが「0行返る」で分かる。
+   *
+   * 上限の値は `packages/shared` から取る。SQL に数字を書かない
+   * （`CLAUDE.md` の不変条件）。DB の制約としての上限は #6 で足す。
+   */
+  .post('/api/lists', requireUser, zValidator('json', createListSchema), async (c) => {
+    const db = createDb(c.env.DB)
+    const userId = c.get('userId')
+
+    // 推測不可能な ID。連番にしない（CLAUDE.md の不変条件）
+    const id = newId()
+    const title = c.req.valid('json').title ?? DEFAULT_LIST_TITLE
+
+    const inserted = await db.all<{ id: string }>(sql`
+      insert into ${lists} (id, user_id, title)
+      select ${id}, ${userId}, ${title}
+      where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
+      returning id
+    `)
+
+    // 0行 = 上限に達していた。**404 と同じ応答にしない**（理由が分からないと直せない）
+    if (inserted.length === 0) {
+      return c.json({ error: 'List Limit Reached' } as const, 409)
+    }
+
+    const [list] = await db.select().from(lists).where(eq(lists.id, id))
+    if (!list) throw new Error('作ったリストを読み戻せなかった')
+
+    return c.json({ list }, 201)
   })
 
   /**
