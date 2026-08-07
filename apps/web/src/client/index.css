@@ -10,3 +10,18 @@
  * ユーティリティの生成が有効になる。テーマを足すときは下の `@theme` に書く。
  */
 @import 'tailwindcss';
+
+/*
+ * 配色（`PRODUCT_SPEC.md` §4.5）。**色の値を書くのはここだけ。**
+ * JSX には `bg-brand` のような名前だけを書く。
+ *
+ * `--color-*` に置いた名前がそのままユーティリティになる（v4 の名前空間）。
+ *
+ * `brand` は明るいので、**その上に置く文字は暗い色にする**（白だとコントラストが出ない）。
+ * 文字色として使うのは `brand-deep`（`brand-soft` の背景に対して約 5.2:1）。
+ */
+@theme {
+  --color-brand: #ffa2ab;
+  --color-brand-soft: #fff5f6;
+  --color-brand-deep: #b34452;
+}
