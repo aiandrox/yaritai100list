@@ -3,7 +3,7 @@ import {
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
 } from '@yaritai100list/shared'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { filledCount, toSlots, type CompletionPermission, type Item, type LocalList } from './model'
 
@@ -44,6 +44,38 @@ export function ListEditor({
    * **画面の上の方にまとめて出さない。** 押した行から離れた場所に出ても目に入らない。
    */
   const [promptedId, setPromptedId] = useState<string | null>(null)
+
+  /**
+   * 案内の**外側を押したら閉じる**（#83）。閉じ方が「同じ ✓ をもう一度押す」しか
+   * 無いと邪魔になる。Esc でも閉じる（キーボードだけで操作している場合の逃げ道）。
+   *
+   * 出している行そのもの（`data-prompt-open` を付けた `li`）の中では閉じない。
+   * 閉じてしまうと、案内の中のログインのリンクを押せず、
+   * ✓ を押したときに「閉じてすぐ開く」ことになって閉じられなくなる。
+   */
+  useEffect(() => {
+    if (promptedId === null) return
+
+    const dismiss = (event: Event) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-prompt-open]')) return
+
+      setPromptedId(null)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPromptedId(null)
+    }
+
+    // click ではなく pointerdown。押した時点で閉じる方が、邪魔だと感じた動きに合う
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [promptedId])
 
   // 次に書ける枠は「埋まっている数」の位置。ここより後ろの枠は表示だけで、触れない。
   // どこにでも書けると、書いた行と入る行がずれて驚く（項目は末尾に足されるため）
@@ -175,8 +207,9 @@ function ItemRow({
   }
 
   return (
-    // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）
-    <li className={`relative ${ROW_BORDER}`}>
+    // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）。
+    // data-prompt-open は「外側を押したら閉じる」の判定に使う（ListEditor 側）
+    <li className={`relative ${ROW_BORDER}`} data-prompt-open={prompted ? '' : undefined}>
       <div className={ROW}>
         <span className={`${NUMBER} ${done ? 'text-brand-deep' : ''}`}>{number}</span>
 
