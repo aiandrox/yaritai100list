@@ -116,16 +116,35 @@ function ListTitleField({ title, onRename }: { title: string; onRename: (t: stri
       }}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
+        if (isCommitKey(e)) e.currentTarget.blur()
       }}
       className="w-full rounded-md bg-transparent text-xl font-bold text-slate-900 focus:bg-white focus:outline-2 focus:outline-brand-deep"
     />
   )
 }
 
+/**
+ * 🔴 **変換中の Enter を「入力の確定」として扱わない**（#79 で実際に踏んだ）。
+ *
+ * 日本語入力では、変換を確定する Enter が先に来る。これを入力の確定として
+ * 扱って `setDraft('')` すると、React が持っている値と IME が後から書き込む文字が
+ * ずれ、**文字が二重になったり、次の行の入力欄に残ったりする。**
+ *
+ * `isComposing` が `true` の間は何もしない。変換が終わってからの Enter だけを見る。
+ * **キーボードでしか再現しないので、テストでは担保できない**（`TECH_STACK.md` §10）。
+ */
+function isCommitKey(event: React.KeyboardEvent): boolean {
+  return event.key === 'Enter' && !event.nativeEvent.isComposing
+}
+
 const ROW = 'flex items-center gap-2 py-1.5'
 const ROW_BORDER = 'border-b border-brand/40'
-const NUMBER = 'w-8 shrink-0 text-right text-xs tabular-nums'
+
+/**
+ * 番号の見た目。**枠が埋まっているかで濃さを変えない**（#79）。
+ * 変えると、書ける枠が「使えない」ように見える。100 という枠を見せるのが目的。
+ */
+const NUMBER = 'w-8 shrink-0 text-right text-xs tabular-nums text-slate-500'
 const TEXT_INPUT =
   'min-w-0 flex-1 rounded bg-transparent px-1 py-1 text-base focus:bg-white focus:outline-2 focus:outline-brand-deep'
 
@@ -157,7 +176,7 @@ function ItemRow({
   return (
     <li className={ROW_BORDER}>
       <div className={ROW}>
-        <span className={`${NUMBER} ${done ? 'text-brand-deep' : 'text-slate-400'}`}>{number}</span>
+        <span className={`${NUMBER} ${done ? 'text-brand-deep' : ''}`}>{number}</span>
 
         <button
           type="button"
@@ -193,7 +212,7 @@ function ItemRow({
           }}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
+            if (isCommitKey(e)) e.currentTarget.blur()
           }}
           // 完了しても**行の位置は動かさない**（PRODUCT_SPEC.md §4.5）。
           // 動くと番号と項目の対応が崩れて、どれを完了したのか分からなくなる
@@ -276,7 +295,7 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
 
   return (
     <li className={`${ROW} ${ROW_BORDER}`}>
-      <span className={`${NUMBER} text-slate-400`}>{number}</span>
+      <span className={NUMBER}>{number}</span>
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand" />
       <input
         type="text"
@@ -290,7 +309,7 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
         onBlur={commit}
         onKeyDown={(e) => {
           // Enter で続けて書ける。この入力欄は使い回されるのでフォーカスは外れない
-          if (e.key === 'Enter') commit()
+          if (isCommitKey(e)) commit()
         }}
         className={`${TEXT_INPUT} text-slate-900 placeholder:text-slate-400`}
       />
@@ -306,8 +325,8 @@ function NextRow({ number, onAdd }: { number: string; onAdd: (text: string) => b
  */
 function EmptyRow({ number }: { number: string }) {
   return (
-    <li className={`${ROW} ${ROW_BORDER} opacity-50`} aria-hidden="true">
-      <span className={`${NUMBER} text-slate-300`}>{number}</span>
+    <li className={`${ROW} ${ROW_BORDER}`} aria-hidden="true">
+      <span className={NUMBER}>{number}</span>
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand/50" />
       <span className="flex-1" />
     </li>

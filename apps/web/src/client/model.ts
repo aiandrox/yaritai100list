@@ -162,10 +162,31 @@ export interface LocalList {
  *
  * 上限に当たったのか、入力が不正なのか、対象が見つからないのかで
  * 画面に出すべきことが違う。`null` を返して呼び出し側に推測させない。
+ *
+ * 🔴 **「空」と「長すぎ」を1つの理由にまとめない**（#79 で実際に踏んだ）。
+ * まとめると、長すぎて弾かれた人に「1文字以上入力してください」と出て、
+ * **何を直せばいいのか分からない。**
  */
 export type ListResult =
   | { ok: true; list: LocalList }
-  | { ok: false; reason: 'invalid-text' | 'invalid-title' | 'list-full' | 'not-found' }
+  | {
+      ok: false
+      reason:
+        | 'text-empty'
+        | 'text-too-long'
+        | 'title-empty'
+        | 'title-too-long'
+        | 'list-full'
+        | 'not-found'
+    }
+
+/**
+ * Zod の失敗が「長すぎ」かを見る。**文字数の値はここに書かない**
+ * （上限は `packages/shared` のスキーマが持っている）。
+ */
+function isTooLong(error: z.ZodError): boolean {
+  return error.issues.some((issue) => issue.code === 'too_big')
+}
 
 export function createEmptyList(): LocalList {
   return { title: DEFAULT_LIST_TITLE, items: [] }
@@ -181,7 +202,9 @@ export function addItem(list: LocalList, item: { id: string; text: string }): Li
   if (list.items.length >= ITEMS_PER_LIST_MAX) return { ok: false, reason: 'list-full' }
 
   const text = itemTextSchema.safeParse(item.text)
-  if (!text.success) return { ok: false, reason: 'invalid-text' }
+  if (!text.success) {
+    return { ok: false, reason: isTooLong(text.error) ? 'text-too-long' : 'text-empty' }
+  }
 
   return {
     ok: true,
@@ -194,7 +217,9 @@ export function updateItemText(list: LocalList, id: string, text: string): ListR
   if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 
   const parsed = itemTextSchema.safeParse(text)
-  if (!parsed.success) return { ok: false, reason: 'invalid-text' }
+  if (!parsed.success) {
+    return { ok: false, reason: isTooLong(parsed.error) ? 'text-too-long' : 'text-empty' }
+  }
 
   return { ok: true, list: mapItem(list, id, (item) => ({ ...item, text: parsed.data })) }
 }
@@ -245,7 +270,9 @@ export function moveItem(list: LocalList, id: string, toIndex: number): ListResu
 /** リストのタイトルを変える。検証は `listTitleSchema`（空文字は通らない）。 */
 export function renameList(list: LocalList, title: string): ListResult {
   const parsed = listTitleSchema.safeParse(title)
-  if (!parsed.success) return { ok: false, reason: 'invalid-title' }
+  if (!parsed.success) {
+    return { ok: false, reason: isTooLong(parsed.error) ? 'title-too-long' : 'title-empty' }
+  }
 
   return { ok: true, list: { ...list, title: parsed.data } }
 }
