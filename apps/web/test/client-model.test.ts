@@ -60,7 +60,7 @@ describe('toSessionState', () => {
 })
 
 describe('toCompletionPermission', () => {
-  it('🔴 未ログインでは「叶えた」印を付けられない', () => {
+  it('🔴 未ログインでは「やった」印を付けられない', () => {
     // 完了はログインの動機（PRODUCT_SPEC.md §2、2026-08-07 決定）
     expect(toCompletionPermission({ status: 'anonymous' })).toEqual({
       allowed: false,

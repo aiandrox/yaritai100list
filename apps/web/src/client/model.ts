@@ -58,7 +58,7 @@ export function toSessionState(response: { ok: boolean; body: unknown }): Sessio
 }
 
 /**
- * 「叶えた」印を付けられるか（`PRODUCT_SPEC.md` §2、2026-08-07 決定）。
+ * 「やった」印を付けられるか（`PRODUCT_SPEC.md` §2、2026-08-07 決定）。
  *
  * **未ログインでは完了にできない。** 完了は後から見返して意味を持つ記録なので、
  * ブラウザにしか無い状態で貯めても消える。**消えて困るものを貯め始める地点を

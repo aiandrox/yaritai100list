@@ -204,7 +204,7 @@ export function App() {
 
             <ListEditor
               list={list}
-              // 未ログインでは「叶えた」印を付けられない（PRODUCT_SPEC.md §2）。
+              // 未ログインでは「やった」印を付けられない（PRODUCT_SPEC.md §2）。
               // 判定は model.ts の純関数。ここでは status を見比べない
               completion={toCompletionPermission(session)}
               onRenameList={(title) => applyResult(renameList(list, title))}
@@ -286,21 +286,22 @@ function StorageNotice({ storage, session }: { storage: StorageState; session: S
     return <Notice tone="warn">保存できませんでした。書いた内容が残らないおそれがあります</Notice>
   }
 
-  return (
-    <Notice tone="info">
-      いまはこのブラウザにだけ保存されています。端末を変えると見られません
-      {session.status === 'anonymous' && (
-        <>
-          {' '}
-          {/* ログインの開始は POST なので <a> から叩けない。
-              サーバー側に GET の入口を用意している（/api/login/google） */}
-          <a href="/api/login/google" className="font-bold text-brand-deep underline">
-            Google でログイン
-          </a>
-        </>
-      )}
-    </Notice>
-  )
+  if (session.status === 'anonymous') {
+    return (
+      <Notice tone="info">
+        {/* ログインの開始は POST なので <a> から叩けない。
+            サーバー側に GET の入口を用意している（/api/login/google） */}
+        <a href="/api/login/google" className="font-bold text-brand-deep underline">
+          Googleでログイン
+        </a>
+        すると、端末を変えても見れるようになります。ずっと残したい方はログインしてください
+      </Notice>
+    )
+  }
+
+  // ログイン済みでも、いまの保存先は localStorage だけ（サーバーへの保存は #5）。
+  // ログインを促す文言は出さない
+  return <Notice tone="info">いまはこのブラウザにだけ保存されています</Notice>
 }
 
 function BrokenStorageNotice({ onStartOver }: { onStartOver: () => void }) {
