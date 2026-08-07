@@ -72,6 +72,35 @@ const reorderItemsSchema = z
   .object({ itemIds: z.array(z.string()).max(ITEMS_PER_LIST_MAX) })
   .strict()
 
+/**
+ * localStorage からの取り込みで受け取る内容（`PRODUCT_SPEC.md` §2）。
+ *
+ * 🔴 **完了の状態を受け取らない。** 未ログインでは「やった」印を付けられないので
+ * （#77）、ブラウザ側に完了した項目は存在しない。受け取る口を作ると、
+ * **その制約を要求の組み立てだけで迂回できてしまう。**
+ *
+ * **1項目も無いものは取り込まない**という規則があるので、`min(1)` で弾く。
+ * 画面側でも呼ぶ前に判定するが（#91）、規則はサーバーにも置く。
+ */
+const importListSchema = z
+  .object({
+    title: listTitleSchema.optional(),
+    items: z
+      .array(z.object({ text: itemTextSchema }).strict())
+      .min(1)
+      .max(ITEMS_PER_LIST_MAX),
+  })
+  .strict()
+
+/**
+ * 一度の `insert` に入れる項目の数。
+ *
+ * ⚠️ **D1 は1文あたりのバインド変数に上限がある**（100件を1文で入れると
+ * `too many SQL variables` で落ちる。#89 で踏んだ）。1行4列なので20行ずつに割る。
+ * 分けても `batch` に渡せば1トランザクションのまま。
+ */
+const INSERT_CHUNK = 20
+
 /** そのリストの項目を並び順で取る。 */
 function selectItems(db: Db, listId: string) {
   return db.select().from(items).where(eq(items.listId, listId)).orderBy(asc(items.position))
@@ -177,6 +206,66 @@ const app = new Hono<AppEnv>()
     if (!list) throw new Error('作ったリストを読み戻せなかった')
 
     return c.json({ list }, 201)
+  })
+
+  /**
+   * ブラウザに書いていたリストを取り込む（`PRODUCT_SPEC.md` §2「ログイン時の引き継ぎ」）。
+   *
+   * 規則をそのまま実装している:
+   *
+   * - **常に新しいリストとして足す。** すでに持っているリストへのマージはしない
+   *   （意図しない混ざりを防ぐ）。1つ目かどうかで挙動を変える必要は無い
+   * - **1項目も無いものは取り込まない**（`importListSchema` の `min(1)`）
+   * - **上限に達していたら取り込まない。** 409 を返して、
+   *   ブラウザ側のデータを消さずに残せるようにする（勝手に捨てない）
+   *
+   * リストを作れたのに項目が入らない、という中途半端な状態を残さないため、
+   * **項目の挿入が失敗したらリストを消してから投げ直す。**
+   */
+  .post('/api/lists/import', requireUser, zValidator('json', importListSchema), async (c) => {
+    const db = createDb(c.env.DB)
+    const userId = c.get('userId')
+    const listId = newId()
+    const { title, items: incoming } = c.req.valid('json')
+
+    // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
+    const inserted = await db.all<{ id: string }>(sql`
+      insert into ${lists} (id, user_id, title)
+      select ${listId}, ${userId}, ${title ?? DEFAULT_LIST_TITLE}
+      where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
+      returning id
+    `)
+
+    if (inserted.length === 0) {
+      return c.json({ error: 'List Limit Reached' } as const, 409)
+    }
+
+    const rows = incoming.map((item, position) => ({
+      id: newId(),
+      listId,
+      text: item.text,
+      position,
+    }))
+
+    const rest = []
+    for (let i = INSERT_CHUNK; i < rows.length; i += INSERT_CHUNK) {
+      rest.push(db.insert(items).values(rows.slice(i, i + INSERT_CHUNK)))
+    }
+
+    try {
+      // batch の型は「1つ以上」を要求する。先頭を分けて渡すことで、
+      // 空配列になりえないことを型でも示す（項目が1件以上あることは検証済み）
+      await db.batch([db.insert(items).values(rows.slice(0, INSERT_CHUNK)), ...rest])
+    } catch (error) {
+      // 項目の無い空のリストを残さない
+      await db.delete(lists).where(eq(lists.id, listId))
+      throw error
+    }
+
+    const [list] = await db.select().from(lists).where(eq(lists.id, listId))
+    if (!list) throw new Error('取り込んだリストを読み戻せなかった')
+
+    return c.json({ list, items: await selectItems(db, listId) }, 201)
   })
 
   /**
