@@ -591,6 +591,27 @@ apps/web/vite.config.ts         @tailwindcss/vite のプラグイン
 - `src/client/tsconfig.json` の `types` に **`vite/client`** を入れてある。
   無いと `import './index.css'` が **TS2882** になる（`types: []` にしていたため）
 
+### SPA のルーティング（2026-08-07 決定、#100）
+
+**wouter を使う。** #4 で「必要になるのは #6」として先送りしていた選定。
+
+必要なのは3経路だけ（`/`、`/lists`、`/lists/:listId`）で、
+ネストしたレイアウトもデータ読み込みの仕組みも要らない。
+
+| 案 | 判断 |
+|---|---|
+| **wouter** | **採用。** 使う概念が `Route` / `Switch` / `Link` / `useLocation` の4つで、API 全体を一度に読み切れる |
+| react-router | 見送り。**概念が多い**（data router、loader、framework mode）。AI が後から「この構成では使えない機能」に手を伸ばす risk が高い。バンドルも約10倍 |
+| 自前で history API を触る | 見送り。**戻る/進むとリンクの横取りは、壊れても型にもテストにも出ない**（`*.tsx` はテストしない方針）。ここだけは実績のあるものに任せる |
+
+学習データは react-router の方が多いが（§1 の評価軸5）、
+**API の総量が小さいことの方が効く**と判断した（同 3・4）。
+
+**画面のパスを Worker に通していない。** `wrangler.jsonc` の `run_worker_first` は
+`/api/*` だけで、静的ファイルに当たらないパスは
+`not_found_handling: single-page-application` が `index.html` を返す。
+**`/lists/xxx` を直接開いても SPA が起動する。**
+
 ### クライアント（React）のテスト方針（2026-08-06 決定、#43）
 
 **当面 jsdom は入れない。クライアントのロジックを DOM から切り離した純関数にして、
@@ -665,6 +686,7 @@ jsdom で「クラスが付いている」ことを確認するより、起動�
 | DB | SQL（D1）。NoSQL は採用しない |
 | API 形式 | GraphQL を使わない |
 | SPA のスタイリング | **Tailwind CSS v4**。導入済み（#71）。`.css` は `src/client/index.css` 1枚だけ（理由は §10） |
+| SPA のルーティング | **wouter**（#100）。経路は3つだけで、概念の少なさを優先した（§10） |
 | 認証 | **Better Auth**。セッションストアは **D1 のみ**（KV の `secondaryStorage` は使わない。§8） |
 | Better Auth のバージョン | **`1.6.x` に固定する。1.7 系に上げない**（D1 のマイグレーションが通らない。§13） |
 | ID の設計 | **編集用 `listId` と公開用 `shareId` を分ける**。どちらも推測不可能な値 |

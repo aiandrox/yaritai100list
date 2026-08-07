@@ -18,6 +18,7 @@ import {
   removeItem,
   renameList,
   serializeList,
+  sortListsByUpdated,
   setItemCompletedAt,
   toCompletionPermission,
   toImportBody,
@@ -353,6 +354,25 @@ describe('pickCurrentListId', () => {
 
   it('1つも無ければ null（呼び出し側が作る）', () => {
     expect(pickCurrentListId([])).toBeNull()
+  })
+})
+
+describe('sortListsByUpdated', () => {
+  const lists = [
+    { id: 'old', title: 'a', updatedAt: '2026-08-01T00:00:00.000Z' },
+    { id: 'newest', title: 'b', updatedAt: '2026-08-07T00:00:00.000Z' },
+    { id: 'middle', title: 'c', updatedAt: '2026-08-05T00:00:00.000Z' },
+  ]
+
+  it('最後に更新したものが上（トップで開くのと同じ基準）', () => {
+    expect(sortListsByUpdated(lists).map((list) => list.id)).toEqual(['newest', 'middle', 'old'])
+  })
+
+  it('元の配列を書き換えない', () => {
+    // React の state をそのまま渡すので、破壊的に並べ替えると再描画が起きない
+    sortListsByUpdated(lists)
+
+    expect(lists.map((list) => list.id)).toEqual(['old', 'newest', 'middle'])
   })
 })
 
