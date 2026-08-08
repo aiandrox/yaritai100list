@@ -146,6 +146,62 @@ describe('公開されているリスト', () => {
     expect(body).toContain('noindex')
   })
 
+  /**
+   * OGP 画像（#173）。
+   *
+   * 🔴 見るのは **「更新すると URL が変わること」。**
+   * SNS は画像を強くキャッシュするので、ここが効いていないと
+   * **更新しても古い画像が出続ける**（しかもこちらからは消せない）。
+   */
+  describe('OGP 画像', () => {
+    /** `og:image` に書かれた URL を取り出す。 */
+    function imageUrlIn(body: string): string | null {
+      return /<meta property="og:image" content="([^"]+)"/.exec(body)?.[1] ?? null
+    }
+
+    it('URL に更新日時が入っている', async () => {
+      const list = await createList({ visibility: 'public' })
+
+      const url = imageUrlIn(await (await request(`/share/${list.shareId}`)).text())
+      const [row] = await testDb().select().from(lists).where(eq(lists.id, list.id))
+
+      expect(url).toBe(`${testBaseUrl()}/og/${list.shareId}?v=${String(row?.updatedAt.getTime())}`)
+    })
+
+    it('🔴 リストを更新すると URL が変わる', async () => {
+      const list = await createList({ visibility: 'public' })
+
+      const before = imageUrlIn(await (await request(`/share/${list.shareId}`)).text())
+
+      await testDb()
+        .update(lists)
+        .set({ updatedAt: new Date(Date.now() + 60_000) })
+        .where(eq(lists.id, list.id))
+
+      const after = imageUrlIn(await (await request(`/share/${list.shareId}`)).text())
+
+      expect(before).not.toBeNull()
+      expect(after).not.toBe(before)
+    })
+
+    it('画像があるので大きいカードにする', async () => {
+      const list = await createList({ visibility: 'public' })
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('content="summary_large_image"')
+    })
+
+    it('🔴 見つからないページには画像を出さない', async () => {
+      // 存在しないリストの画像は作れない。
+      // 枠だけ空いたカードになるので、カードの種類も戻す
+      const body = await (await request('/share/no-such-share-id')).text()
+
+      expect(body).not.toContain('og:image')
+      expect(body).toContain('content="summary"')
+    })
+  })
+
   it('項目が0件でも壊れない', async () => {
     const list = await createList({ visibility: 'unlisted' })
 

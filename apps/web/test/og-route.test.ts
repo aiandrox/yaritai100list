@@ -2,7 +2,7 @@ import { exports } from 'cloudflare:workers'
 import { OG_SIGNATURE_TTL_SECONDS } from '@yaritai100list/shared'
 import { describe, expect, it } from 'vitest'
 
-import { buildOgPayload, cacheControlFor, renderRequestUrl } from '../src/og'
+import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from '../src/og'
 import { lists } from '../src/db/schema'
 import { createTestUser, testBaseUrl, testDb } from './helpers'
 
@@ -95,6 +95,33 @@ describe('renderRequestUrl', () => {
     )
 
     expect(url).toContain('.com/og?')
+  })
+})
+
+describe('ogImageUrl', () => {
+  it('🔴 更新日時が入る（入らないと SNS が古い画像を出し続ける）', () => {
+    const url = ogImageUrl('https://example.com', 'abc123', new Date('2026-08-08T00:00:00.000Z'))
+
+    expect(url).toBe('https://example.com/og/abc123?v=1786147200000')
+  })
+
+  it('🔴 更新すると別の URL になる', () => {
+    const at = (iso: string) => ogImageUrl('https://example.com', 'abc123', new Date(iso))
+
+    expect(at('2026-08-08T00:00:00.000Z')).not.toBe(at('2026-08-08T00:00:01.000Z'))
+  })
+
+  it('絶対 URL にする（SNS は相対パスを解決しない）', () => {
+    expect(ogImageUrl('https://example.com', 'x', new Date(0))).toMatch(/^https:\/\//)
+  })
+
+  // `v` が付くので、この URL は恒久キャッシュになる（`cacheControlFor`）
+  it('cacheControlFor が恒久キャッシュと判断する形になっている', () => {
+    const version = new URL(ogImageUrl('https://example.com', 'x', new Date(1))).searchParams.get(
+      'v',
+    )
+
+    expect(cacheControlFor(version ?? undefined)).toContain('immutable')
   })
 })
 

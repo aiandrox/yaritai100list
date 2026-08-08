@@ -234,20 +234,20 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 
 ## Deno Deploy（画像生成）
 
-**organization まで作成済み**（#1、2026-08-06）。**アプリの作成はまだ**（#172）。
+**organization**（#1、2026-08-06）と**アプリ**（#172、2026-08-08）の両方を作成済み。
 
 | 項目 | 現在値 | 備考 |
 |---|---|---|
 | コンソール | https://console.deno.com | Classic（`dash.deno.com`）は 2026-07-20 廃止 |
 | organization slug | **`aiandrox`** | |
 | プラン | **Free** | **クレジットカード登録は不要**（2026-08-06 にサインアップ画面で確認） |
-| アプリ名 | **`yaritai100list-render`**（未作成） | #172 で作る。**この名前で作る**（`RENDER_URL` がこの名前を前提にしている） |
-| 想定ホスト名 | `yaritai100list-render.aiandrox.deno.net` | |
+| アプリ名 | **`yaritai100list-render`** | **この名前で作る**（`RENDER_URL` がこの名前を前提にしている） |
+| ホスト名 | `yaritai100list-render.aiandrox.deno.net` | |
 | HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない。**Cloudflare 側は設定済み**（2026-08-08） |
 
-### アプリを作るときの設定（#172）
+### アプリを作るときの設定（#172、2026-08-08 に設定済み）
 
-コードは `apps/render` に用意してある。**コンソールで作るときに指定するもの:**
+コードは `apps/render` にある。**コンソールで作るときに指定したもの:**
 
 | 項目 | 値 | 理由 |
 |---|---|---|
@@ -256,6 +256,8 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 | ルートディレクトリ | **リポジトリの root（`.`）** | ⚠️ `apps/render` にすると **`packages/shared` が見えなくなる** |
 | エントリポイント | **`apps/render/main.ts`** | |
 | 環境変数 | `RENDER_HMAC_SECRET` | **Cloudflare 側と同じ値**（値はここに書かない） |
+| インストールコマンド | `npm install`（既定のまま） | ⚠️ root に `package.json` があるため Deno は node_modules を使う解決になる。**消すと壊れうる** |
+| ビルドコマンド | なし | Deno なのでビルド不要 |
 
 **デプロイは Deno Deploy の GitHub 連携に任せる**（`main` への push で出る）。
 Cloudflare 側（`.github/workflows/deploy.yml`）とは別系統になるが、

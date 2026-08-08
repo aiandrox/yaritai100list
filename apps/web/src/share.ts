@@ -1,4 +1,4 @@
-import { SERVICE_NAME } from '@yaritai100list/shared'
+import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SERVICE_NAME } from '@yaritai100list/shared'
 import { html, raw } from 'hono/html'
 
 // 🔴 **色と幅は SPA と同じファイルから読む**（#159）。
@@ -73,6 +73,8 @@ export interface SharedItem {
 export interface SharedList {
   title: string
   items: SharedItem[]
+  /** OGP 画像の絶対 URL（#173）。呼び出し側で組み立てる（`src/og.ts`） */
+  imageUrl: string
 }
 
 /**
@@ -98,6 +100,8 @@ function formatCompletedAt(completedAt: number): string {
 function layout(options: {
   title: string
   description: string
+  /** OGP 画像の絶対 URL（#173）。「見つからない」ページには無い */
+  imageUrl?: string
   body: HtmlEscapedString | Promise<HtmlEscapedString>
 }) {
   return html`<!doctype html>
@@ -108,11 +112,25 @@ function layout(options: {
         <title>${options.title}</title>
         <meta name="description" content="${options.description}" />
 
-        <!-- OGP。画像（og:image）は #8 で足す -->
+        <!--
+          OGP（#173）。画像があるときだけ大きいカードにする。
+          🔴 **画像が無いのに summary_large_image にしない。**
+          画像の枠だけが空いたカードになる。
+          ⚠️ この中にバッククォートを書かない（テンプレートリテラルが終わる）
+        -->
         <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${options.description}" />
-        <meta name="twitter:card" content="summary" />
+        ${
+          options.imageUrl === undefined
+            ? html`<meta name="twitter:card" content="summary" />`
+            : html`
+                <meta property="og:image" content="${options.imageUrl}" />
+                <meta property="og:image:width" content="${String(OG_IMAGE_WIDTH)}" />
+                <meta property="og:image:height" content="${String(OG_IMAGE_HEIGHT)}" />
+                <meta name="twitter:card" content="summary_large_image" />
+              `
+        }
 
         <!--
           🔴 検索には載せない（PRODUCT_SPEC.md §5.1）。
@@ -148,6 +166,7 @@ export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<H
   return layout({
     title: `${list.title}｜${SERVICE_NAME}`,
     description,
+    imageUrl: list.imageUrl,
     body: html`
       <h1>${list.title}</h1>
       <p class="count">${description}</p>
