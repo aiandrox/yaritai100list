@@ -36,7 +36,6 @@ export const EXPORT_IMAGE_HEIGHT = 1414
  * （`og-template.ts` の同じコメントを参照）。
  */
 const COLORS = {
-  brand: '#ffa2ab',
   brandSoft: '#fff5f6',
   brandDeep: '#b34452',
   ink: '#0f172a',
@@ -180,8 +179,10 @@ function row(index: number, item: { text: string; completed: boolean } | undefin
           justifyContent: 'flex-end',
           fontSize: 20,
           fontWeight: 700,
-          // 「やった」印が付いているかを**番号の色でも見せる**（共有ページと同じ）
-          color: item?.completed === true ? COLORS.brandDeep : COLORS.brand,
+          // 🔴 **番号は全部同じ色**（2026-08-08 の利用者の判断）。
+          // 「やった」かどうかは**項目テキスト側**（取り消し線と文字色）で見せる。
+          // 番号でも出し分けると、001〜100 の並びが読みにくくなる
+          color: COLORS.brandDeep,
         },
         number,
       ),
