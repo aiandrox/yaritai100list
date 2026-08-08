@@ -336,7 +336,7 @@ DB も認証状態も持たない。渡すデータに HMAC で署名すれば�
 | `/discover` | 取り入れ面（将来） | 不要（取り入れ操作のみ要） | SPA |
 | `/share/:shareId` | 共有公開ページ（OGP メタタグ付き） | 不要 | **SSR** |
 | `/og/:shareId?v=` | OGP 画像（Deno Deploy に署名付きで生成を依頼、CDN でキャッシュ） | 不要 | 画像 |
-| `/export/:listId` | ダウンロード画像 | 要 | 画像 |
+| `/api/lists/:listId/image` | ダウンロード画像（#192）。**`/api/*` に入れた**ので `run_worker_first` の追加が要らず、`requireOwnedList` もそのまま使える | 要 | 画像 |
 | `/api/*` | JSON | 混在 | — |
 
 **`/` で一覧を見せず、最後に更新したリストを直接開く。**

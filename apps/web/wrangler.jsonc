@@ -50,7 +50,7 @@
   // - /api/*            JSON API・認証のコールバック（このコミットで有効）
   // - /share/:shareId   共有公開ページの SSR（#137 で有効）
   // - /og/:shareId      OGP 画像（#8）
-  // - /export/:listId   ダウンロード画像（#9）
+  // - /api/lists/:listId/image  ダウンロード画像（#9）。**/api/* に入るので追加は不要**
   //
   // 全部を Worker に通す（run_worker_first: true）ことはしない。
   // 静的ファイルの配信まで Worker の実行回数を消費するため、無料枠に効く。
@@ -72,6 +72,16 @@
       // 名前空間の識別子。**他のバインディングと重複しない整数**であればよい
       "namespace_id": "1001",
       "simple": { "limit": 60, "period": 60 },
+    },
+    {
+      // 画像出力（#192）。**作成系より厳しくする。**
+      // 1回で 100 項目をラスタライズするので、他の操作とは重さが桁違い
+      // （生成サービスの CPU 枠を溶かす。`TECH_STACK.md` §9）。
+      //
+      // 60 秒で 10 回。押し直す分には当たらない。
+      "name": "IMAGE_RATE_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 10, "period": 60 },
     },
   ],
 
