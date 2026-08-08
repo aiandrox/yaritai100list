@@ -1,5 +1,9 @@
 import { SERVICE_NAME } from '@yaritai100list/shared'
 import { html, raw } from 'hono/html'
+
+// 🔴 **色と幅は SPA と同じファイルから読む**（#159）。
+// 別々に書くと必ずずれる（実際 #143 で SPA だけ広がった）
+import tokens from './tokens.css?raw'
 // 型は `hono/html` から出ていないので、実体のある場所から取る
 import type { HtmlEscapedString } from 'hono/utils/html'
 
@@ -22,37 +26,42 @@ import type { HtmlEscapedString } from 'hono/utils/html'
  */
 
 /**
- * このページのスタイル。**1ファイルに閉じている。**
+ * このページのスタイル。
  *
- * SPA は Tailwind を通るが（`src/client/index.css`）、**ここはビルドを通らない**ので
- * 使えない。外部の CSS を参照しようにも、ビルド後のファイル名にはハッシュが付く。
+ * SPA は Tailwind を通るが（`src/client/index.css`）、**ここはビルドを通らない。**
+ * 外部の CSS を参照しようにも、ビルド後のファイル名にはハッシュが付く。
+ * そこで**素の CSS を書く**が、🔴 **色と幅は `tokens.css` から読む**（#159）。
+ * 値を2箇所に書くと必ずずれる。
  *
- * ⚠️ **色の値がここと `index.css` の2箇所にある。** 変えるときは両方。
- * 増やさないこと（3箇所目を作るくらいなら、生成する仕組みを入れる）。
+ * 見た目は SPA の枠（`src/client/Layout.tsx`）に合わせてある。
+ * **合わせないものは意図的に**: ログイン状態も「すべてのリスト」への導線も出さない
+ * （見るのは URL を渡された人で、この人はログインしていない）。
  */
 const PAGE_STYLE = `
-  :root { --brand: #ffa2ab; --brand-soft: #fff5f6; --brand-deep: #b34452; --ink: #0f172a; }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 1rem; background: var(--brand-soft); color: var(--ink);
+    margin: 0; background: var(--brand-soft); color: #0f172a;
     font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
     line-height: 1.6;
   }
-  main { max-width: 28rem; margin: 0 auto; }
+  .page { max-width: var(--page-max-width); margin: 0 auto; padding: 0 1rem 6rem; }
+  header {
+    background: var(--brand); margin: 0 -1rem 1rem; padding: .75rem 1rem;
+    font-size: .75rem; font-weight: 700;
+  }
+  header a { color: #0f172a; text-decoration: none; }
   h1 { font-size: 1.25rem; margin: 0; }
   .count { color: var(--brand-deep); font-weight: 700; margin: .25rem 0 1rem; }
   ol { list-style: none; margin: 0; padding: 0; }
   li {
-    display: flex; align-items: baseline; gap: .5rem;
-    padding: .4rem 0; border-bottom: 1px solid color-mix(in srgb, var(--brand) 40%, transparent);
+    display: flex; align-items: center; gap: .5rem; min-height: 2.75rem;
+    padding: .375rem 0; border-bottom: 1px solid color-mix(in srgb, var(--brand) 40%, transparent);
   }
-  .number { color: #64748b; font-size: .7rem; font-variant-numeric: tabular-nums; width: 2rem; text-align: right; }
+  .number { color: #64748b; font-size: .75rem; font-variant-numeric: tabular-nums; width: 2rem; text-align: right; }
   .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   li.done .text { text-decoration: line-through; color: #94a3b8; }
   li.done .number { color: var(--brand-deep); }
   .date { color: var(--brand-deep); font-size: .65rem; font-variant-numeric: tabular-nums; }
-  footer { margin-top: 2rem; text-align: center; font-size: .7rem; }
-  footer a { color: var(--brand-deep); }
 `
 
 export interface SharedItem {
@@ -113,11 +122,15 @@ function layout(options: {
         <meta name="robots" content="noindex, nofollow" />
 
         <style>
+          ${raw(tokens)}
           ${raw(PAGE_STYLE)}
         </style>
       </head>
       <body>
-        <main>${options.body}</main>
+        <div class="page">
+          <header><a href="/">${SERVICE_NAME}</a></header>
+          <main>${options.body}</main>
+        </div>
       </body>
     </html>`
 }
@@ -154,8 +167,6 @@ export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<H
           `,
         )}
       </ol>
-
-      <footer><a href="/">${SERVICE_NAME}</a></footer>
     `,
   })
 }
@@ -174,7 +185,6 @@ export function renderShareNotFound(): HtmlEscapedString | Promise<HtmlEscapedSt
     body: html`
       <h1>見つかりません</h1>
       <p>このリンクは無効になっているか、公開されていません。</p>
-      <footer><a href="/">${SERVICE_NAME}</a></footer>
     `,
   })
 }

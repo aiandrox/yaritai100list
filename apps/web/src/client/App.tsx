@@ -1,8 +1,8 @@
-import { SERVICE_NAME } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Route, Switch, useLocation } from 'wouter'
 
 import { ExportPage } from './ExportPage'
+import { Layout } from './Layout'
 import { ListPage } from './ListPage'
 import { ListsPage } from './ListsPage'
 import { SharePage } from './SharePage'
@@ -63,84 +63,53 @@ export function App() {
   }, [loadSession, navigate])
 
   return (
-    <div className="min-h-dvh bg-brand-soft">
-      {/*
-        モバイル縦1カラムを主対象にする（PRODUCT_SPEC.md §4.5）。
-        広い画面では中央に寄せるだけで、**列は増やさない。**
+    <Layout showListsLink={session.status === 'authenticated'}>
+      <SessionArea session={session} onRetry={() => void loadSession()} />
 
-        🔴 **幅を決めるのはここ1箇所。** 画面ごとに別の幅を書かない（#143）。
+      <Switch>
+        {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
+            リストを1つしか持っていない人に無駄な1タップを作らない */}
+        <Route path="/">
+          <ListPage session={session} />
+        </Route>
 
-        `max-w-xl`（36rem）。`max-w-md`（28rem）では項目の入力欄が窮屈だった。
-        ⚠️ **効くのは広い画面だけ。** よくある電話の横幅（約 24rem）は
-        どちらの上限より狭いので、モバイルの見え方は変わらない
-      */}
-      <div className="mx-auto max-w-xl px-4 pb-24">
-        <header className="-mx-4 mb-4 flex items-baseline justify-between bg-brand px-4 py-3">
-          <Link href="/" className="text-xs font-bold text-slate-900">
-            {SERVICE_NAME}
-          </Link>
+        <Route path="/lists">
+          {/* ログアウトはここに置く。日常的に押すものではないので、
+              編集画面には出さない（#114） */}
+          <ListsPage
+            session={session}
+            signOutFailed={signOutFailed}
+            onSignOut={() => void signOut()}
+          />
+        </Route>
 
-          {/* 未ログインで持てるリストは1つだけなので、一覧への導線を出さない */}
-          {session.status === 'authenticated' && (
-            <Link href="/lists" className="text-xs text-slate-900 underline">
-              すべてのリスト
+        {/* :listId より先に置かなくても段数が違うので当たらないが、
+            関係のある経路を近くに並べておく */}
+        <Route path="/lists/:listId/export">
+          {(params) => <ExportPage session={session} listId={params.listId} />}
+        </Route>
+
+        <Route path="/lists/:listId/share">
+          {(params) => <SharePage session={session} listId={params.listId} />}
+        </Route>
+
+        <Route path="/lists/:listId">
+          {(params) => <ListPage session={session} listId={params.listId} />}
+        </Route>
+
+        <Route>
+          <Notice tone="warn">
+            このページはありません。
+            <Link href="/" className="underline">
+              トップへ戻る
             </Link>
-          )}
-        </header>
-
-        <SessionArea session={session} onRetry={() => void loadSession()} />
-
-        <Switch>
-          {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
-              リストを1つしか持っていない人に無駄な1タップを作らない */}
-          <Route path="/">
-            <ListPage session={session} />
-          </Route>
-
-          <Route path="/lists">
-            {/* ログアウトはここに置く。日常的に押すものではないので、
-                編集画面には出さない（#114） */}
-            <ListsPage
-              session={session}
-              signOutFailed={signOutFailed}
-              onSignOut={() => void signOut()}
-            />
-          </Route>
-
-          {/* :listId より先に置かなくても段数が違うので当たらないが、
-              関係のある経路を近くに並べておく */}
-          <Route path="/lists/:listId/export">
-            {(params) => <ExportPage session={session} listId={params.listId} />}
-          </Route>
-
-          <Route path="/lists/:listId/share">
-            {(params) => <SharePage session={session} listId={params.listId} />}
-          </Route>
-
-          <Route path="/lists/:listId">
-            {(params) => <ListPage session={session} listId={params.listId} />}
-          </Route>
-
-          <Route>
-            <Notice tone="warn">
-              このページはありません。
-              <Link href="/" className="underline">
-                トップへ戻る
-              </Link>
-            </Notice>
-          </Route>
-        </Switch>
-      </div>
-    </div>
+          </Notice>
+        </Route>
+      </Switch>
+    </Layout>
   )
 }
 
-/**
- * ログイン状態の表示。**ログアウトのボタンはここに置かない**（#114）。
- *
- * 日常的に押すものではないうえ、編集画面から誤って押すと
- * リストが消えたように見える。置き場所は `/lists` の一番下。
- */
 function SessionArea({ session, onRetry }: { session: SessionState; onRetry: () => void }) {
   return (
     <div className="mb-2 text-right text-xs text-slate-600">

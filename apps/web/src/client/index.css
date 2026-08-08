@@ -12,18 +12,20 @@
 @import 'tailwindcss';
 
 /*
- * 配色（`PRODUCT_SPEC.md` §4.5）。**色の値を書くのはここだけ。**
+ * 🔴 **値そのものは `src/tokens.css` にある。ここには書かない**（#159）。
+ * 共有ページ（SSR）も同じファイルを読むので、色と幅の情報源が1つになる。
+ */
+@import '../tokens.css';
+
+/*
+ * トークンを Tailwind のユーティリティに配る。
+ * `--color-*` に置いた名前がそのままユーティリティになる（v4 の名前空間）ので、
  * JSX には `bg-brand` のような名前だけを書く。
- *
- * `--color-*` に置いた名前がそのままユーティリティになる（v4 の名前空間）。
- *
- * `brand` は明るいので、**その上に置く文字は暗い色にする**（白だとコントラストが出ない）。
- * 文字色として使うのは `brand-deep`（`brand-soft` の背景に対して約 5.2:1）。
  */
 @theme {
-  --color-brand: #ffa2ab;
-  --color-brand-soft: #fff5f6;
-  --color-brand-deep: #b34452;
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-deep: var(--brand-deep);
 }
 
 /*
