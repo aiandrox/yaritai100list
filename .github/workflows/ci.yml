@@ -25,6 +25,12 @@ jobs:
           node-version-file: .node-version
           cache: npm
 
+      # 画像生成サービス（apps/render）は Deno。npm の道具では見られないので、
+      # **Deno の道具で型と動きを見る**（#172）
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: install
         id: install
         run: npm ci
