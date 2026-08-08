@@ -24,7 +24,7 @@ import { createDb, type Db } from './db'
 import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
-import { buildOgPayload, cacheControlFor, renderRequestUrl } from './og'
+import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
 import { rateLimitCreates } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions } from './sentry'
@@ -644,6 +644,8 @@ const app = new Hono<AppEnv>()
     return c.html(
       renderSharePage({
         title: list.title,
+        // 🔴 **更新日時を URL に入れる**（#173）。入れないと SNS が古い画像を出し続ける
+        imageUrl: ogImageUrl(new URL(c.req.url).origin, list.shareId, list.updatedAt),
         items: rows.map((item) => ({
           text: item.text,
           completedAt: item.completedAt === null ? null : item.completedAt.getTime(),

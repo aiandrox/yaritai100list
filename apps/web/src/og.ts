@@ -47,6 +47,19 @@ export function buildOgPayload(
 }
 
 /**
+ * 共有ページの `og:image` に書く URL（#173）。
+ *
+ * 🔴 **更新日時を `v` に入れる。** SNS は画像を強くキャッシュするので、
+ * URL が変わらないと**リストを更新しても古い画像が出続ける。**
+ * 逆に `v` が付いていることで、こちらは恒久キャッシュにできる（`cacheControlFor`）。
+ *
+ * ⚠️ **絶対 URL にする。** SNS は相対パスを解決しない。
+ */
+export function ogImageUrl(origin: string, shareId: string, updatedAt: Date): string {
+  return `${origin}/og/${shareId}?v=${String(updatedAt.getTime())}`
+}
+
+/**
  * 生成サービスに投げる URL。**GET にしてあるのは、あちら側でもキャッシュが効くから。**
  */
 export function renderRequestUrl(base: string, payload: OgPayload, signature: string): string {
