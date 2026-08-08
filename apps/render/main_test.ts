@@ -1,6 +1,12 @@
 import { assertEquals, assertStringIncludes } from '@std/assert'
 
-import { signOgPayload, type OgPayload } from '../../packages/shared/src/index.ts'
+import {
+  EXPORT_IMAGE_SIGNATURE_HEADER,
+  signExportImagePayload,
+  signOgPayload,
+  type ExportImagePayload,
+  type OgPayload,
+} from '../../packages/shared/src/index.ts'
 
 /**
  * 画像生成サービスのテスト（#172）。
@@ -129,6 +135,118 @@ Deno.test('🔴 ログに署名を書かない', async () => {
     assertEquals(line.includes(signature), false)
     assertEquals(line.includes(SECRET), false)
   }
+})
+
+/**
+ * 画像出力（#191）。**POST。本文に署名する。**
+ *
+ * 🔴 見るのは OGP と同じ **「署名が合わないものを描かないこと」。**
+ * 経路が増えても、抜けたら踏み台になるのは変わらない。
+ */
+
+function exportPayload(overrides: Partial<ExportImagePayload> = {}): ExportImagePayload {
+  return {
+    title: '人生でやりたいことリスト',
+    items: [
+      { text: '南極に行く', completed: true },
+      { text: 'オーロラを見る', completed: false },
+    ],
+    exp: Math.floor(Date.now() / 1000) + 300,
+    ...overrides,
+  }
+}
+
+async function exportRequest(
+  data: ExportImagePayload,
+  options: { signature?: string; method?: string; headers?: Record<string, string> } = {},
+) {
+  const body = JSON.stringify(data)
+
+  return handler(
+    new Request('http://localhost/export', {
+      method: options.method ?? 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': String(new TextEncoder().encode(body).length),
+        [EXPORT_IMAGE_SIGNATURE_HEADER]:
+          options.signature ?? (await signExportImagePayload(data, SECRET)),
+        ...options.headers,
+      },
+      body,
+    }),
+  )
+}
+
+Deno.test('署名が合えば PNG を返す', async () => {
+  const res = await exportRequest(exportPayload())
+
+  assertEquals(res.status, 200)
+  assertEquals(res.headers.get('content-type'), 'image/png')
+
+  const head = new Uint8Array(await res.arrayBuffer()).slice(0, 4)
+  assertEquals([...head], [0x89, 0x50, 0x4e, 0x47])
+})
+
+Deno.test('🔴 署名が無ければ描かない', async () => {
+  const res = await exportRequest(exportPayload(), { signature: '' })
+
+  assertEquals(res.status, 403)
+})
+
+Deno.test('🔴 本文を書き換えると描かない', async () => {
+  const data = exportPayload()
+  const signature = await signExportImagePayload(data, SECRET)
+
+  const res = await exportRequest({ ...data, title: '書き換えたタイトル' }, { signature })
+
+  assertEquals(res.status, 403)
+})
+
+Deno.test('🔴 期限が切れていたら描かない', async () => {
+  const expired = exportPayload({ exp: Math.floor(Date.now() / 1000) - 1 })
+
+  assertEquals((await exportRequest(expired)).status, 403)
+})
+
+Deno.test('🔴 GET では受け付けない', async () => {
+  const res = await handler(new Request('http://localhost/export'))
+
+  assertEquals(res.status, 405)
+})
+
+Deno.test('🔴 100件を超える本文は描かない', async () => {
+  const item = { text: '南極に行く', completed: false }
+  const tooMany = exportPayload({ items: Array.from({ length: 101 }, () => item) })
+
+  assertEquals((await exportRequest(tooMany)).status, 403)
+})
+
+Deno.test('🔴 大きすぎる本文は読む前に切る', async () => {
+  // 署名は正しくても、読むだけ無駄なので手前で落とす
+  const data = exportPayload()
+  const res = await exportRequest(data, { headers: { 'content-length': String(200 * 1024) } })
+
+  assertEquals(res.status, 413)
+})
+
+Deno.test('壊れた JSON でも落ちない', async () => {
+  const res = await handler(new Request('http://localhost/export', { method: 'POST', body: '{' }))
+
+  assertEquals(res.status, 403)
+})
+
+Deno.test('描かなかった理由がログに残る（画像出力も）', async () => {
+  const written: string[] = []
+  const original = console.error
+  console.error = (message: unknown) => written.push(String(message))
+
+  try {
+    await exportRequest(exportPayload(), { signature: '' })
+  } finally {
+    console.error = original
+  }
+
+  assertStringIncludes(written[0] ?? '', '署名')
 })
 
 Deno.test('知らない経路は 404', async () => {

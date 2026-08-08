@@ -47,6 +47,22 @@ export const exportImagePayloadSchema = z
 export type ExportImagePayload = z.infer<typeof exportImagePayloadSchema>
 
 /**
+ * 署名を載せるヘッダの名前。
+ *
+ * 🔴 **両側で同じ名前を使うため、ここに置く。**
+ * OGP はクエリに `sig` を載せているが、こちらは本文に署名するので置き場が無い。
+ */
+export const EXPORT_IMAGE_SIGNATURE_HEADER = 'x-signature'
+
+/**
+ * 本文の大きさの上限（バイト）。
+ *
+ * 🔴 **Zod で弾く前に切る。** 100件 × 22文字は JSON にしても 10KB 程度。
+ * それより桁が大きいものは、読むだけ無駄（`TECH_STACK.md` §9）。
+ */
+export const EXPORT_IMAGE_MAX_BODY_BYTES = 100 * 1024
+
+/**
  * 署名の有効期間（秒）。
  *
  * OGP（1時間）より短い **5分**。

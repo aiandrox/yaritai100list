@@ -2,18 +2,34 @@ import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import satori from 'satori'
 
 import {
+  buildExportImageTemplate,
   buildOgTemplate,
+  EXPORT_IMAGE_HEIGHT,
+  EXPORT_IMAGE_MAX_BODY_BYTES,
+  EXPORT_IMAGE_SIGNATURE_HEADER,
+  EXPORT_IMAGE_WIDTH,
+  exportImagePayloadSchema,
+  isExportImagePayloadExpired,
   isOgPayloadExpired,
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
   ogPayloadSchema,
+  verifyExportImagePayload,
   verifyOgPayload,
+  type OgElement,
 } from '../../packages/shared/src/index.ts'
 
 /**
- * 画像生成サービス（Deno Deploy）。#172。
+ * 画像生成サービス（Deno Deploy）。#172 / #191。
  *
  * **やることは1つだけ: 渡されたデータを描いて PNG で返す。**
+ *
+ * 経路は2つ。**中身も見た目も別だが、仕組みは全部共通**（`PRODUCT_SPEC.md` §5.3）。
+ *
+ * | | | |
+ * |---|---|---|
+ * | `GET /og` | SNS のカード | クエリに署名（小さいので URL に載る） |
+ * | `POST /export` | やりたいこと全部 | 本文に署名（100項目は URL に載らない。#189） |
  *
  * 🔴 **公開/非公開をここで判断しない**（`CLAUDE.md` の不変条件）。
  * 認可は呼び出し側（Cloudflare Workers）で済んでいて、
@@ -102,32 +118,107 @@ async function readPayload(url: URL, now: Date) {
   return parsed.data
 }
 
-export async function handler(request: Request): Promise<Response> {
-  const url = new URL(request.url)
+/**
+ * 描いて PNG にする。**2つの経路で共通**（`TECH_STACK.md` §4.3）。
+ *
+ * ⚠️ 戻り値を `Uint8Array<ArrayBuffer>` と書いているのは、
+ * `Response` が `ArrayBufferLike` を受け取らないため（素の `Uint8Array` だと型が合わない）。
+ */
+async function toPng(
+  element: OgElement,
+  width: number,
+  height: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const svg = await satori(element as never, { width, height, fonts: FONTS })
 
-  // 生きているかの確認用。**中身は返さない**
-  if (url.pathname === '/health') return new Response('ok')
+  return new Uint8Array(new Resvg(svg).render().asPng())
+}
 
-  if (url.pathname !== '/og') return new Response('Not Found', { status: 404 })
+const forbidden = () => new Response('Forbidden', { status: 403 })
 
-  const payload = await readPayload(url, new Date())
-  if (!payload) return new Response('Forbidden', { status: 403 })
+/**
+ * 画像出力（#191）。**POST。本文に署名する。**
+ *
+ * OGP と違ってクエリに載せられない（100項目 × 22文字。#189）。
+ * 署名は `x-signature` ヘッダで受け取る。
+ */
+async function handleExport(request: Request, now: Date): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 })
+  }
 
-  const svg = await satori(buildOgTemplate(payload) as never, {
-    width: OG_IMAGE_WIDTH,
-    height: OG_IMAGE_HEIGHT,
-    fonts: FONTS,
+  // 🔴 **読む前に切る。** 桁の大きい本文は、読むだけ無駄（`TECH_STACK.md` §9）
+  const declared = Number(request.headers.get('content-length') ?? 0)
+  if (declared > EXPORT_IMAGE_MAX_BODY_BYTES) {
+    console.error('export: 本文が大きすぎる')
+    return new Response('Payload Too Large', { status: 413 })
+  }
+
+  const body: unknown = await request.json().catch(() => null)
+  const parsed = exportImagePayloadSchema.safeParse(body)
+
+  if (!parsed.success) {
+    // どの項目が形として通らなかったか。**値は書かない**
+    console.error(
+      `export: 形が違う（${parsed.error.issues.map((issue) => issue.path.join('.')).join(', ')}）`,
+    )
+    return forbidden()
+  }
+
+  if (isExportImagePayloadExpired(parsed.data, now)) {
+    console.error('export: 期限が切れている（呼び出し側の時計がずれている可能性）')
+    return forbidden()
+  }
+
+  const signature = request.headers.get(EXPORT_IMAGE_SIGNATURE_HEADER) ?? ''
+  if (!(await verifyExportImagePayload(parsed.data, signature, SECRET!, now))) {
+    console.error('export: 署名が合わない（両側の RENDER_HMAC_SECRET が違う可能性）')
+    return forbidden()
+  }
+
+  const png = await toPng(
+    buildExportImageTemplate(parsed.data),
+    EXPORT_IMAGE_WIDTH,
+    EXPORT_IMAGE_HEIGHT,
+  )
+
+  return new Response(png, {
+    headers: {
+      'content-type': 'image/png',
+      // ⚠️ **キャッシュさせない。** URL にバージョンが無く（POST なので）、
+      // 中身は押すたびに変わりうる。OGP とはここが違う
+      'cache-control': 'no-store',
+    },
   })
+}
 
-  const png = new Resvg(svg).render().asPng()
+/** OGP 画像（#172）。**GET。クエリに署名。** */
+async function handleOg(url: URL, now: Date): Promise<Response> {
+  const payload = await readPayload(url, now)
+  if (!payload) return forbidden()
 
-  return new Response(new Uint8Array(png), {
+  const png = await toPng(buildOgTemplate(payload), OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT)
+
+  return new Response(png, {
     headers: {
       'content-type': 'image/png',
       // 呼び出し側（Cloudflare）でもキャッシュするが、ここでも効かせておく
       'cache-control': 'public, max-age=31536000, immutable',
     },
   })
+}
+
+export async function handler(request: Request): Promise<Response> {
+  const url = new URL(request.url)
+  const now = new Date()
+
+  // 生きているかの確認用。**中身は返さない**
+  if (url.pathname === '/health') return new Response('ok')
+
+  if (url.pathname === '/og') return handleOg(url, now)
+  if (url.pathname === '/export') return handleExport(request, now)
+
+  return new Response('Not Found', { status: 404 })
 }
 
 // Deno Deploy はモジュールの既定の輸出を見る
