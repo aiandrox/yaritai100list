@@ -1,4 +1,5 @@
 import { exports } from 'cloudflare:workers'
+import { LIST_TITLE_MAX_LENGTH } from '@yaritai100list/shared'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -161,8 +162,8 @@ describe('入力の検証', () => {
     const res = await request('/api/lists/v-list', {
       method: 'PATCH',
       headers: { ...Object.fromEntries(me.headers), 'content-type': 'application/json' },
-      // リストタイトルの上限は 15 文字（packages/shared）
-      body: JSON.stringify({ title: 'あ'.repeat(16) }),
+      // 上限は packages/shared の定数。**ここに数字を書かない**（変えたときに落ちる）
+      body: JSON.stringify({ title: 'あ'.repeat(LIST_TITLE_MAX_LENGTH + 1) }),
     })
 
     expect(res.status).toBe(400)
