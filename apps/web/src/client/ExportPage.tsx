@@ -298,10 +298,15 @@ function ExportPageBody({ listId }: { listId: string }) {
   )
 }
 
-/** 行の形の選択肢。**見本を添える。** 名前だけでは何が出るのか分からない */
-const STYLES: { value: MarkdownStyle; label: string; sample: string }[] = [
-  { value: 'checklist', label: 'チェックリスト', sample: '- [x] グランピング' },
-  { value: 'numbered', label: '連番', sample: '1. グランピング' },
+/**
+ * 行の形の選択肢。
+ *
+ * **見本は添えない。** すぐ下がプレビューなので、
+ * 選択肢の横にも出すと**同じものが2箇所に出る**（2026-08-08 の利用者の指示）。
+ */
+const STYLES: { value: MarkdownStyle; label: string }[] = [
+  { value: 'checklist', label: 'チェックリスト' },
+  { value: 'numbered', label: '連番' },
 ]
 
 /**
@@ -339,7 +344,6 @@ function MarkdownOptionsForm({
                 }}
               />
               {option.label}
-              <code className="text-[11px] text-slate-500">{option.sample}</code>
             </label>
           ))}
         </div>
