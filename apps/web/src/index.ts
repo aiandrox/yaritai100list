@@ -418,6 +418,26 @@ const app = new Hono<AppEnv>()
     return c.json(buildExportFile({ title: list.title, items: rows }, new Date()))
   })
 
+  /**
+   * 共有リンクを作り直す（#136）。**古い URL はこの時点で無効になる。**
+   *
+   * 「うっかり送った相手に見られ続ける」状態から抜ける手段（`PRODUCT_SPEC.md` §5.1）。
+   * 公開範囲は変えない。**止めたいだけなら非公開にする方が早い**が、
+   * 「公開は続けたいが、渡した相手には見せたくない」を満たせるのはこちらだけ。
+   *
+   * `updated_at` も新しくする。リストに対する操作なので、
+   * トップで開く「最後に更新したリスト」の対象になってよい。
+   */
+  .post('/api/lists/:listId/share-id', requireUser, requireOwnedList, async (c) => {
+    const [updated] = await createDb(c.env.DB)
+      .update(lists)
+      .set({ shareId: newShareId(), updatedAt: new Date() })
+      .where(eq(lists.id, c.get('list').id))
+      .returning()
+
+    return c.json({ list: updated })
+  })
+
   /** リストを削除する。 */
   .delete('/api/lists/:listId', requireUser, requireOwnedList, async (c) => {
     await createDb(c.env.DB)
