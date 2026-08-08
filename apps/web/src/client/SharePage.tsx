@@ -202,8 +202,20 @@ function SharePageBody({ listId }: { listId: string }) {
         <section className="mt-4 rounded bg-white px-3 py-3">
           <h2 className="font-bold text-slate-900">共有する URL</h2>
 
-          <p className="mt-2 rounded bg-brand-soft px-2 py-2 text-[11px] break-all text-slate-700">
+          {/*
+            URL そのものを開けるようにする（#153）。**渡す前に見え方を確かめられる。**
+            別のタブで開くのは、設定の画面に戻れなくなると不便なため
+          */}
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 block rounded bg-brand-soft px-2 py-2 text-[11px] break-all text-brand-deep underline"
+          >
             {url}
+          </a>
+          <p className="mt-1 text-xs text-slate-500">
+            押すと、渡した相手に見える画面が別のタブで開きます
           </p>
 
           <button

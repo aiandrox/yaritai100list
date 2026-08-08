@@ -4,6 +4,8 @@ import {
   LIST_TITLE_MAX_LENGTH,
 } from '@yaritai100list/shared'
 
+import { Link } from 'wouter'
+
 import { ListEditor } from './ListEditor'
 import { Notice } from './Notice'
 import { toCompletionPermission, type SessionState } from './model'
@@ -103,6 +105,23 @@ function ListPageBody({
       {screen.status === 'ready' && (
         <>
           <StorageNotice controller={controller} session={session} />
+
+          {/*
+            共有への導線（#153）。**`/` でも出す。**
+            開いているリストの ID は `screen.key`（サーバーのときは `listId`）。
+
+            未ログイン（`source === 'local'`）では出さない。共有はログインが要る
+          */}
+          {screen.source === 'server' && (
+            <p className="mb-2 text-right">
+              <Link
+                href={`/lists/${screen.key}/share`}
+                className="text-xs text-brand-deep underline"
+              >
+                共有の設定
+              </Link>
+            </p>
+          )}
 
           {rejection !== null && (
             <p role="alert" className="mb-2 rounded bg-white px-3 py-2 text-sm text-brand-deep">
