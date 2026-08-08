@@ -313,6 +313,22 @@ export function filledCount(list: LocalList): number {
   return list.items.length
 }
 
+/**
+ * 「やった」印を付けた数（#145）。
+ *
+ * **埋まり具合（`filledCount`）を置き換えない。** 並べて出す。
+ * 100 という枠がまだ埋まっていないことを見せるのがあちらの役目で、
+ * こちらは「そのうち何個叶えたか」。**別のことを言っている。**
+ *
+ * ⚠️ 画面に出すときの分母は **100（上限）** にする。
+ * マークダウン（#129）は分母を「入力済みの数」にしているが、あちらは**転載用**で、
+ * 読む人が知りたいのは達成の割合。画面は**枠がまだ空いていること**を見せる場所なので、
+ * 分母を揃えない。
+ */
+export function completedCount(list: LocalList): number {
+  return list.items.filter((item) => item.completedAt !== null).length
+}
+
 // --- 保存 -------------------------------------------------------------------
 
 /**

@@ -5,7 +5,14 @@ import {
 } from '@yaritai100list/shared'
 import { useEffect, useRef, useState } from 'react'
 
-import { filledCount, toSlots, type CompletionPermission, type Item, type LocalList } from './model'
+import {
+  completedCount,
+  filledCount,
+  toSlots,
+  type CompletionPermission,
+  type Item,
+  type LocalList,
+} from './model'
 
 /**
  * リストの編集画面。**ここに置くのは描画と入力欄の下書きだけ。**
@@ -40,6 +47,7 @@ export function ListEditor({
   onRemoveItem,
 }: ListEditorProps) {
   const filled = filledCount(list)
+  const completed = completedCount(list)
 
   /**
    * 完了を押せないときに、その行の下へ理由を出すための状態。
@@ -92,11 +100,26 @@ export function ListEditor({
     <div>
       <ListTitleField title={list.title} onRename={onRenameList} />
 
-      <p className="mt-1 flex items-baseline gap-1 text-brand-deep">
-        <span className="text-2xl font-bold tabular-nums">{filled}</span>
-        <span className="text-sm tabular-nums">/ {ITEMS_PER_LIST_MAX}</span>
-        {/* 「達成度ではなく埋まり具合」（PRODUCT_SPEC.md §3）と分かる言葉を添える */}
-        <span className="text-xs text-slate-500">書けた</span>
+      {/*
+        2つの数字は**別のことを言っている**（#145）。
+        「書けた」は 100 という枠がまだ埋まっていないことを見せる（PRODUCT_SPEC.md §1）。
+        「やった」はそのうち何個叶えたか。**片方に置き換えない。**
+
+        分母はどちらも 100（上限）。マークダウン（#129）が分母を入力済みの数に
+        しているのは、あちらが転載用で読む人が知りたいのが達成の割合だから
+      */}
+      <p className="mt-1 flex items-baseline gap-3 text-brand-deep">
+        <span className="flex items-baseline gap-1">
+          <span className="text-2xl font-bold tabular-nums">{filled}</span>
+          <span className="text-sm tabular-nums">/ {ITEMS_PER_LIST_MAX}</span>
+          <span className="text-xs text-slate-500">書けた</span>
+        </span>
+
+        <span className="flex items-baseline gap-1">
+          <span className="text-2xl font-bold tabular-nums">{completed}</span>
+          <span className="text-sm tabular-nums">/ {ITEMS_PER_LIST_MAX}</span>
+          <span className="text-xs text-slate-500">やった</span>
+        </span>
       </p>
 
       <ol className="mt-4">
