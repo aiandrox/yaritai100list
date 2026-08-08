@@ -13,7 +13,7 @@ import {
   filledCount,
   formatItemNumber,
   showsSignInBenefits,
-  SIGN_IN_BENEFITS,
+  signInBenefits,
   hasAnythingToImport,
   moveItem,
   pickCurrentListId,
@@ -534,7 +534,9 @@ describe('serializeList / parseStoredList', () => {
   })
 })
 
-describe('SIGN_IN_BENEFITS / showsSignInBenefits', () => {
+describe('signInBenefits / showsSignInBenefits', () => {
+  const NOW = new Date('2026-08-08T00:00:00.000Z')
+
   it('🔴 ログイン中には出さない', () => {
     // 出すと「もうできること」を勧めることになる
     expect(showsSignInBenefits({ status: 'authenticated' })).toBe(false)
@@ -553,25 +555,38 @@ describe('SIGN_IN_BENEFITS / showsSignInBenefits', () => {
   it('🔴 PRODUCT_SPEC.md §2 の動機を全部載せている', () => {
     // 導線が3箇所にあり、それぞれ1つの利点しか言っていなかった（#204）。
     // **1つでも欠けると、その利点はどこからも読めない**
-    const titles = SIGN_IN_BENEFITS.map((benefit) => benefit.title).join('\n')
+    const titles = signInBenefits(NOW)
+      .map((benefit) => benefit.title)
+      .join('\n')
 
     expect(titles).toContain('消えない')
     expect(titles).toContain('「やった」印')
     expect(titles).toContain('つまで持てる')
     expect(titles).toContain('人に見せられる')
     expect(titles).toContain('画像')
-    expect(SIGN_IN_BENEFITS).toHaveLength(5)
+    expect(signInBenefits(NOW)).toHaveLength(5)
   })
 
   it('いまの状態と、ログイン後の両方を書いている', () => {
     // 利点だけ並べても差が伝わらない。**失うかもしれないことを先に言う**
-    for (const benefit of SIGN_IN_BENEFITS) {
+    for (const benefit of signInBenefits(NOW)) {
       expect(benefit.without).not.toBe('')
       expect(benefit.with).not.toBe('')
     }
   })
 
   it('🔴 一番上は「消えない」（一番効くので先に言う）', () => {
-    expect(SIGN_IN_BENEFITS[0]?.title).toContain('消えない')
+    expect(signInBenefits(NOW)[0]?.title).toContain('消えない')
+  })
+
+  it('🔴 年は固定しない（翌年に古くならない）', () => {
+    // 「2026年に」と書き込むと、翌年もそのまま出続ける
+    const text = (now: Date) =>
+      signInBenefits(now)
+        .map((benefit) => benefit.with)
+        .join('\n')
+
+    expect(text(NOW)).toContain('2026年に')
+    expect(text(new Date('2031-01-01T00:00:00.000Z'))).toContain('2031年に')
   })
 })
