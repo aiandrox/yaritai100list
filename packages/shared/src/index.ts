@@ -5,40 +5,9 @@
  * 両方のランタイムで動くものだけを置く（`TECH_STACK.md` §12）。
  */
 
-/**
- * サービス名。ページタイトルと画像出力の右上で使う。
- *
- * 既定のリスト名（`DEFAULT_LIST_TITLE`）とは別物。画面上で紛れないようにする。
- */
-export const SERVICE_NAME = 'やりたいことリスト100'
-
-/** 英語名。リポジトリ名とホスト名に対応する。 */
-export const SERVICE_NAME_EN = 'yaritai100list'
-
-/**
- * リストの既定タイトル。
- *
- * サービス名「やりたいことリスト100」と紛れないよう、頭に「人生で」を付けている
- * （`PRODUCT_SPEC.md` §7 未決 #10 への対応）。
- *
- * 12文字あり `LIST_TITLE_MAX_LENGTH`（15）に収まっているが余裕は3文字。
- * 上限を下げるときはここが先に破れる（テストで固定してある）。
- */
-export const DEFAULT_LIST_TITLE = '人生でやりたいことリスト'
-
-/**
- * 一覧から**2つ目以降を作った**ときの既定タイトル（2026-08-07 決定、#110）。
- *
- * `DEFAULT_LIST_TITLE` と分けているのは、**使う場面が違う**ため。
- * あちらは「最初の1つ」（未ログインで書き始めたときと、その取り込み）に付く名前で、
- * 一生分のリストという意味を持たせている。こちらは用途別に増やす2つ目以降なので、
- * **中身が決まっていないことが分かる名前**にする。
- *
- * 12文字。`LIST_TITLE_MAX_LENGTH`（15）に収まることはテストで固定してある。
- */
-export const NEW_LIST_TITLE = '新しいやりたいことリスト'
-
 export * from './export'
 export * from './limits'
 export * from './og'
+export * from './og-template'
+export * from './service'
 export * from './validation'
