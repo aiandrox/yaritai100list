@@ -84,10 +84,25 @@ export async function signOgPayload(payload: OgPayload, secret: string): Promise
 }
 
 /**
+ * 期限が切れているか。
+ *
+ * ⚠️ **`verifyOgPayload` の外に出してあるのは、ログのため**（#184）。
+ * 「期限切れ」と「署名が合わない」は原因も対処も違うのに、
+ * どちらも 403 になって切り分けられなかった。
+ *
+ * 🔴 **判定はここ1箇所。** 呼び出し側で `exp` を見比べ直さない
+ * （2箇所に書くと、片方だけ直る）。
+ */
+export function isOgPayloadExpired(payload: OgPayload, now: Date): boolean {
+  return payload.exp * 1000 <= now.getTime()
+}
+
+/**
  * 署名を確かめる（Deno Deploy 側）。
  *
- * **合わない理由を返さない。** 「期限切れ」と「改竄」を出し分けても、
+ * **合わない理由を返さない。** 「期限切れ」も「改竄」も、
  * 呼び出し側にできることは変わらない（どちらも描かない）。
+ * 理由が要るのは**ログだけ**なので、`isOgPayloadExpired` を別に呼ぶ。
  *
  * `now` を引数で受け取るのはテストのため（`TECH_STACK.md` §10 と同じ理由で、
  * 関数の中で時計を読まない）。
@@ -98,7 +113,7 @@ export async function verifyOgPayload(
   secret: string,
   now: Date,
 ): Promise<boolean> {
-  if (payload.exp * 1000 <= now.getTime()) return false
+  if (isOgPayloadExpired(payload, now)) return false
 
   const key = await hmacKey(secret)
 
