@@ -1,6 +1,6 @@
 import { exports } from 'cloudflare:workers'
 import { OG_SIGNATURE_TTL_SECONDS } from '@yaritai100list/shared'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from '../src/og'
 import { lists } from '../src/db/schema'
@@ -165,6 +165,21 @@ describe('GET /og/:shareId', () => {
 
     expect(res.status).toBe(503)
     expect(await res.json()).toEqual({ error: 'Image Not Available' })
+  })
+
+  it('出せなかった理由がログに残る（応答には出さない）', async () => {
+    // ⚠️ 「繋がらない」も「鍵が違う」も同じ 503 なので、
+    // ログが無いと**どちらなのか分からない**（#174 で実際に詰まった）
+    const list = await createList({ visibility: 'unlisted' })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const res = await request(`/og/${list.shareId}`)
+
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('og:'))
+    // 🔴 理由は利用者に返さない（非公開かどうかの手がかりを増やさない）
+    expect(await res.json()).toEqual({ error: 'Image Not Available' })
+
+    logged.mockRestore()
   })
 
   it('🔴 鍵が未設定なら画像を出さない', async () => {

@@ -686,11 +686,25 @@ const app = new Hono<AppEnv>()
 
     const { RENDER_URL, RENDER_HMAC_SECRET } = c.env
 
+    /**
+     * 画像を出せないときの返し。**理由は利用者に見せず、ログに残す。**
+     *
+     * ⚠️ **見分けが付かないと直せない**（#174）。
+     * 「生成サービスが落ちている」も「両側の鍵が違う」も同じ 503 になるので、
+     * 実際に 403 を踏んだとき、**コードを読んでも原因に到達できなかった**。
+     *
+     * 🔴 **署名も鍵も書かない。** ログに残ると、そこから叩けるようになる
+     */
+    const unavailable = (reason: string) => {
+      console.error(`og: ${reason}`)
+      return c.json({ error: 'Image Not Available' } as const, 503)
+    }
+
     // 🔴 **鍵が無ければ画像を出さない。** 署名なしで叩ける状態を作らない
     // （`TECH_STACK.md` §9）。**落ちるのではなく「用意できていない」と返す**。
     // URL の方は wrangler.jsonc の vars にあるので必ずある（消せば型エラーになる）
     if (!RENDER_HMAC_SECRET) {
-      return c.json({ error: 'Image Not Available' } as const, 503)
+      return unavailable('RENDER_HMAC_SECRET が設定されていない')
     }
 
     const payload = buildOgPayload(list, await selectItems(db, list.id), new Date())
@@ -702,12 +716,13 @@ const app = new Hono<AppEnv>()
     try {
       rendered = await fetch(renderRequestUrl(RENDER_URL, payload, signature))
     } catch {
-      return c.json({ error: 'Image Not Available' } as const, 503)
+      return unavailable(`生成サービスに繋がらない（${RENDER_URL}）`)
     }
 
     if (!rendered.ok) {
-      // 生成に失敗したものをキャッシュさせない
-      return c.json({ error: 'Image Not Available' } as const, 503)
+      // 生成に失敗したものをキャッシュさせない。
+      // **403 なら両側の鍵が違う**（生成サービスは理由を返さない）
+      return unavailable(`生成サービスが ${String(rendered.status)} を返した`)
     }
 
     return new Response(rendered.body, {
