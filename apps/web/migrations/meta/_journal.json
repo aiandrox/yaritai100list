@@ -50,6 +50,13 @@
       "when": 1786086462686,
       "tag": "0006_limit_lists_per_user",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786152185647,
+      "tag": "0007_add_share_id",
+      "breakpoints": true
     }
   ]
 }
