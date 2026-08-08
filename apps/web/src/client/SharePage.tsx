@@ -4,6 +4,7 @@ import { Link } from 'wouter'
 
 import { api } from './api'
 import { Notice } from './Notice'
+import { SignInBenefits } from './SignInBenefits'
 import { shareUrl, type SessionState } from './model'
 
 /**
@@ -69,7 +70,7 @@ function SignInRequired({ session }: { session: SessionState }) {
       <a href="/api/login/google" className="font-bold text-brand-deep underline">
         Googleでログイン
       </a>
-      してください
+      してください。 <SignInBenefits />
     </Notice>
   )
 }

@@ -4,6 +4,7 @@ import { Link, useLocation } from 'wouter'
 
 import { api } from './api'
 import { Notice } from './Notice'
+import { SignInBenefits } from './SignInBenefits'
 import {
   hasAnythingToImport,
   LIST_STORAGE_KEY,
@@ -201,7 +202,7 @@ export function ListsPage({
           Googleでログイン
         </a>
         すると、リストを{LISTS_PER_USER_MAX}つまで持てます。
-        「2026年にやりたいこと」のような使い分けができます
+        「2026年にやりたいこと」のような使い分けができます。 <SignInBenefits />
       </Notice>
     )
   }
