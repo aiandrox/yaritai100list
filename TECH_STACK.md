@@ -704,7 +704,7 @@ jsdom で「クラスが付いている」ことを確認するより、起動�
 | # | 論点 | 備考 |
 |---|---|---|
 | 1 | OGP カードと画像出力の具体的なデザイン | 方向性は `PRODUCT_SPEC.md` §5.3 に記録。Satori の CSS 対応範囲（flexbox のサブセット、grid 不可）で成立する構成にする |
-| 2 | `packages/shared` を **Deno から**使えるか | **Workers 側は確認済み**（#16）。Deno 側は未確認 — 下記 |
+| ~~2~~ | ~~`packages/shared` を Deno から使えるか~~ | **解決済み**（2026-08-08、#172）。両方から使える — 下記 |
 | 3 | Better Auth 1.7 をいつ取り込むか | 下記 |
 | 4 | 取り入れの関係をどう持つか（#10） | **`items` の列にはしない**（2026-08-07 決定）。下記 |
 
@@ -747,21 +747,26 @@ jsdom で「クラスが付いている」ことを確認するより、起動�
 スキーマは Better Auth 1.6.26 の定義から機械的に写した（方法は `src/db/schema/auth.ts` のコメント）。
 `@better-auth/cli` は 1.4 系しか出ておらず本体とバージョンがずれているため使っていない。
 
-### #2 の現状（2026-08-06、#16 で判明した範囲）
+### #2 は解決した（2026-08-08、#172 で実測）
 
-**Workers 側は動く。** `packages/shared` は生の `.ts` を `exports` で公開しているが、
-`wrangler`（esbuild）も Vitest（Vite）も workspace のシンボリックリンク経由で解決できた。
-`zod@4` も `nodejs_compat` なしで Workers 上で動いた。
+**両方から使える。** 複製せずに済んだ。
 
-**Deno 側は未確認。** ローカルに Deno が入っていないため実測できていない。
-`apps/render` を作る #8 で確認する。判断材料:
+- **Workers 側**（2026-08-06、#16）: `wrangler`（esbuild）も Vitest（Vite）も
+  workspace のシンボリックリンク経由で生の `.ts` を解決できた。
+  `zod@4` も `nodejs_compat` なしで動いた
+- **Deno 側**（2026-08-08、#172）: `apps/render` から**相対パスで生の `.ts` を import** して動いた。
+  実際に PNG が出るところまで確認済み
 
-- 共有しているのは定数・型・Zod スキーマだけで、Node 固有の API は使っていない
-- そのため `apps/render` から**相対パスで生の `.ts` を import する**なら、
-  npm の解決を経由しないので通る見込みが高い（Deno は `.ts` をそのまま読める）
-- `zod` は `npm:zod` 指定で使える
-- **詰まったら複製する方が安い**という当初の判断は維持する。
-  共有しているのは数十行なので、2つのランタイムの解決方式を戦うより写す方が早い
+⚠️ **1つだけ条件がある。** `packages/shared` は `./limits` のように**拡張子を書かない**
+（Vite と workerd 向けの書き方）。Deno は本来これを解決しないので、
+`apps/render/deno.json` に **`"unstable": ["sloppy-imports"]`** を入れている。
+
+**これが外れたら**、`packages/shared` 側に `.ts` を書き足すことになる
+（TypeScript 側は `allowImportingTsExtensions` が要る）。
+そのときも**複製はしない**。書き足す方が安い。
+
+`zod` は `deno.json` の import map で `npm:zod` に向けている。
+**バージョンは `apps/web` と揃える**（ずれると検証の挙動が変わりうる）。
 
 ---
 

@@ -1,0 +1,31 @@
+{
+  // name / version は付けない。付けると `exports` を要求される
+  // （ライブラリとして公開しないので要らない）。
+
+  // 🔴 **`packages/shared` を拡張子なしの import で読むため。**
+  // shared は Vite と workerd 向けに書いてあり、`./limits` のように拡張子を書かない。
+  // Deno は本来これを解決しないので、この指定で許す。
+  //
+  // ⚠️ **unstable の機能。** 外れたら `packages/shared` 側に `.ts` を書き足すことになる
+  // （TypeScript 側は `allowImportingTsExtensions` が要る）。
+  // `TECH_STACK.md` §12 の「shared を Deno から使えるか」の答えがこれ。
+  "unstable": ["sloppy-imports"],
+
+  "imports": {
+    "satori": "npm:satori@^0.29.0",
+    "@resvg/resvg-wasm": "npm:@resvg/resvg-wasm@^2.6.2",
+    // shared が読む。**バージョンは apps/web と揃える**（ずれると検証の挙動が変わりうる）
+    "zod": "npm:zod@^4.4.3",
+    // テスト用。**インラインで `jsr:` と書かない**（deno lint に怒られる）
+    "@std/assert": "jsr:@std/assert@^1.0.0"
+  },
+
+  // ⚠️ **書式は `deno fmt` ではなく prettier。**
+  // リポジトリ全体で1つの書式にするため（`npm run format`）。
+  // ここに `fmt` の設定を置くと、2つの道具が別のことを言い始める。
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-env main.ts",
+    "check": "deno check main.ts main_test.ts",
+    "test": "deno test --allow-read --allow-env"
+  }
+}

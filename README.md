@@ -38,6 +38,7 @@ npm run typecheck && npm run lint && npm test        # PR を出す前に緑に�
 
 - `npm run dev` は **SPA と Worker の両方**が1プロセスで動く（Worker は workerd で実行される）
 - `npm test` は workerd の中で走り、D1 はインメモリ
+- **`apps/render` は Deno。** `cd apps/render && deno task test`（`deno` が要る）
 - 環境変数は `apps/web/.dev.vars.example` を `.dev.vars` にコピー。
   **通常は何も入れなくても動く**
 - 詰まったときは `docs/workflow.md` の「ローカルで詰まったとき」
@@ -47,7 +48,7 @@ npm run typecheck && npm run lint && npm test        # PR を出す前に緑に�
 ```
 apps/
   web/        Cloudflare Workers（Hono + React SPA + D1）
-  render/     Deno Deploy（Satori による画像生成）  ← 未作成
+  render/     Deno Deploy（Satori による画像生成）
 packages/
   shared/     型・Zod スキーマ・定数（サーバー・クライアント・画像生成の3箇所から使う）
 ```

@@ -13,6 +13,11 @@ export default tseslint.config(
       '**/node_modules/**',
       // wrangler types の生成物。lint する対象ではない
       '**/worker-configuration.d.ts',
+      // 🔴 **画像生成サービスは Deno。** npm の tsconfig の対象外なので、
+      // ここで見ようとすると「project service に無い」で落ちる。
+      // 型と lint は Deno 側の道具で見る（`deno check` / `deno lint`。CI にも入れてある）。
+      // **書式だけは prettier に任せる**（リポジトリで1つにする）
+      'apps/render/**',
     ],
   },
   js.configs.recommended,
