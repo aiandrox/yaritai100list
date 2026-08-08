@@ -15,14 +15,15 @@
 | ファイル | 内容 |
 |---|---|
 | [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) | プロダクト仕様。**何を作るか**と、決めた理由 |
-| [TECH_STACK.md](./TECH_STACK.md) | 技術構成。**なぜその選択をしたか**と、踏んだ落とし穴 |
+| [TECH_STACK.md](./TECH_STACK.md) | 技術構成。**いまの構成と守るべき方針**、踏んだ落とし穴 |
 | [docs/workflow.md](./docs/workflow.md) | **開発の進め方。** イシューの進め方、PR の流れ、完了の条件 |
 | [docs/console-settings.md](./docs/console-settings.md) | **コンソールでしか設定できない項目**と現在値 |
-| [MEMO.md](./MEMO.md) | 申し送り。実装順序を決めた理由、命名の検討過程 |
 | [CLAUDE.md](./CLAUDE.md) | AI 向けの入口。**不変条件**（破ってはいけない約束）はここ |
 
-読む順番は `PRODUCT_SPEC.md` → `TECH_STACK.md`。
-**手を動かす前に `docs/workflow.md`。**
+**手を動かす前に `docs/workflow.md`。** そのあと `PRODUCT_SPEC.md` → `TECH_STACK.md`。
+
+⚠️ **実装の判断はイシューに残している。** 「なぜそう決めたか」はドキュメントではなく
+`gh issue view <N> --comments` を見る。
 
 ## ローカル開発
 
