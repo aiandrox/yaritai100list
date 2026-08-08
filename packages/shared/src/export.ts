@@ -110,14 +110,18 @@ export function hasFutureCompletedAt(file: ExportFile, now: Date): boolean {
  * ファイル名に使えない文字（`/` や `\`、制御文字など）はリスト名に入りうるので落とす。
  * 落とした結果が空になることもある（記号だけのタイトル）ので、そのときは既定の名前にする。
  */
-export function exportFileName(title: string, exportedAt: Date): string {
+export function exportFileName(
+  title: string,
+  exportedAt: Date,
+  extension: 'json' | 'png' = 'json',
+): string {
   const date = exportedAt.toISOString().slice(0, 10)
 
   // 経路の区切りと、OS がファイル名に使えない文字だけを落とす。
   // 落としすぎると何のリストか分からなくなるので、日本語や記号は残す
   const safe = title.replace(/[/\\:*?"<>|]/g, '').trim()
 
-  return `${safe === '' ? 'list' : safe}-${date}.json`
+  return `${safe === '' ? 'list' : safe}-${date}.${extension}`
 }
 
 /**
