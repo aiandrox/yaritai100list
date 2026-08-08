@@ -41,7 +41,7 @@
   //
   // 予定しているサーバー側のルート（PRODUCT_SPEC.md §7 の URL 表）:
   // - /api/*            JSON API・認証のコールバック（このコミットで有効）
-  // - /share/:shareId   共有公開ページの SSR（#7）
+  // - /share/:shareId   共有公開ページの SSR（#137 で有効）
   // - /og/:shareId      OGP 画像（#8）
   // - /export/:listId   ダウンロード画像（#9）
   //
@@ -49,7 +49,7 @@
   // 静的ファイルの配信まで Worker の実行回数を消費するため、無料枠に効く。
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/api/*", "/share/*"],
   },
 
   // 作成系（リスト・項目・取り込み）のレート制限。**コンソールではなくここで設定する。**

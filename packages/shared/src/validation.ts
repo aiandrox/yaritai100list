@@ -20,6 +20,15 @@ export type Visibility = (typeof VISIBILITIES)[number]
 export const visibilitySchema = z.enum(VISIBILITIES)
 
 /**
+ * 共有ページで**見せてよい**公開範囲（#137）。
+ *
+ * 🔴 **「非公開以外」ではなく、許可するものを列挙する。**
+ * 除外で書くと、後から公開範囲を1つ足したときに**黙って公開される。**
+ * ここに足す判断を必ず通す形にしておく。
+ */
+export const SHARED_VISIBILITIES = ['unlisted', 'public'] as const
+
+/**
  * 文字数は **UTF-16 のコード単位**で数える（`String.prototype.length`）。
  *
  * 見た目の文字数（書記素）で数える方が利用者の直感には近いが、

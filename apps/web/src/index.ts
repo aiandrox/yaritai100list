@@ -7,12 +7,13 @@ import {
   hasFutureCompletedAt,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
+  SHARED_VISIBILITIES,
   itemTextSchema,
   listTitleSchema,
   visibilitySchema,
 } from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
-import { and, asc, eq, gt, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
@@ -23,6 +24,7 @@ import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { rateLimitCreates } from './rate-limit'
+import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions } from './sentry'
 
 /**
@@ -590,6 +592,52 @@ const app = new Hono<AppEnv>()
       return c.json({ items: await selectItems(db, listId) })
     },
   )
+
+  /**
+   * 共有公開ページ（#137）。**ログインは要らない。**
+   *
+   * 🔴 **`wrangler.jsonc` の `run_worker_first` に `/share/*` を入れてある。**
+   * 入れ忘れると Worker に届かず、SPA の index.html が返る
+   * （**404 にならないので気づきにくい**）。
+   *
+   * 🔴 **公開してよい範囲を列挙して絞る**（`SHARED_VISIBILITIES`）。
+   * 「非公開以外」で書くと、後から公開範囲を1つ足したときに黙って公開される。
+   *
+   * 🔴 **非公開のリストと、存在しない ID で同じものを返す。**
+   * 出し分けると「その ID は存在するが非公開」と分かってしまう。
+   *
+   * 渡すのは**タイトルと項目だけ。** 作者は渡さない（`PRODUCT_SPEC.md` §5.1）。
+   */
+  .get('/share/:shareId', async (c) => {
+    const db = createDb(c.env.DB)
+
+    const [list] = await db
+      .select()
+      .from(lists)
+      .where(
+        and(
+          eq(lists.shareId, c.req.param('shareId')),
+          inArray(lists.visibility, [...SHARED_VISIBILITIES]),
+        ),
+      )
+      .limit(1)
+
+    if (!list) {
+      return c.html(renderShareNotFound(), 404)
+    }
+
+    const rows = await selectItems(db, list.id)
+
+    return c.html(
+      renderSharePage({
+        title: list.title,
+        items: rows.map((item) => ({
+          text: item.text,
+          completedAt: item.completedAt === null ? null : item.completedAt.getTime(),
+        })),
+      }),
+    )
+  })
 
   /**
    * Better Auth の全エンドポイント（セッション取得、サインアウト、コールバック等）。
