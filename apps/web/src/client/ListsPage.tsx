@@ -5,7 +5,6 @@ import { Link, useLocation } from 'wouter'
 import { api } from './api'
 import { Notice } from './Notice'
 import {
-  formatItemNumber,
   hasAnythingToImport,
   LIST_STORAGE_KEY,
   parseStoredList,
@@ -247,13 +246,8 @@ export function ListsPage({
       )}
 
       <ul className="mt-4">
-        {state.lists.map((list, index) => (
-          <ListRow
-            key={list.id}
-            number={formatItemNumber(index + 1)}
-            list={list}
-            onDelete={deleteList}
-          />
+        {state.lists.map((list) => (
+          <ListRow key={list.id} list={list} onDelete={deleteList} />
         ))}
       </ul>
 
@@ -301,11 +295,9 @@ export function ListsPage({
 }
 
 function ListRow({
-  number,
   list,
   onDelete,
 }: {
-  number: string
   list: RemoteList
   onDelete: (listId: string) => Promise<void>
 }) {
@@ -316,37 +308,22 @@ function ListRow({
       <div className="flex items-center gap-2">
         {/* 🔴 **一覧では名前を編集できない**（#110）。名前を押すとそのリストへ行く。
             名前を直すのはリストの画面。編集の場所を2つ作ると、
-            どちらが効いているのか分からなくなる */}
-        <Link href={`/lists/${list.id}`} className="flex min-w-0 flex-1 items-center gap-2 py-3">
-          <span className="w-8 shrink-0 text-right text-xs text-slate-500 tabular-nums">
-            {number}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-slate-900">{list.title}</span>
+            どちらが効いているのか分からなくなる
+
+            🔴 **番号を出さない**（#202）。項目には 001〜100 という枠があるが、
+            **リストに番号は無い。** 並び順に意味を持たせて見せる理由がない */}
+        <Link href={`/lists/${list.id}`} className="min-w-0 flex-1 truncate py-3 text-slate-900">
+          {list.title}
         </Link>
 
         {/*
-          形式が2つある（JSON とマークダウン）ので、**選ぶのは別画面**（#131）。
-          行にボタンを並べただけでは、どちらが何のためのものか分からなかった
+          🔴 **共有と書き出しへの入口はここに置かない**（#202）。
+          置くと一覧が操作の集約場所になる。**ここは「どれを開くか」を選ぶ場所。**
+          入口はリストの画面に1つだけ置く（`ListPage.tsx`）
         */}
-        <Link
-          href={`/lists/${list.id}/share`}
-          aria-label={`${list.title} の共有設定`}
-          className="shrink-0 px-1 text-xs text-brand-deep underline"
-        >
-          共有
-        </Link>
-
-        <Link
-          href={`/lists/${list.id}/export`}
-          aria-label={`${list.title} を書き出す`}
-          className="shrink-0 px-1 text-xs text-brand-deep underline"
-        >
-          書き出す
-        </Link>
-
         <button
           type="button"
-          aria-label={`${number} 番目のリストを削除`}
+          aria-label={`「${list.title}」を削除`}
           onClick={() => {
             setConfirming(true)
           }}
@@ -358,7 +335,7 @@ function ListRow({
 
       {/* 🔴 **確認を挟む**（`PRODUCT_SPEC.md` §4.3）。項目ごと消えるため */}
       {confirming && (
-        <p className="mb-2 ml-10 rounded bg-white px-2 py-2 text-xs text-slate-700">
+        <p className="mb-2 rounded bg-white px-2 py-2 text-xs text-slate-700">
           「{list.title}」を消すと、<strong>中の項目も一緒に消えます。</strong>
           <span className="mt-2 flex gap-2">
             <button
