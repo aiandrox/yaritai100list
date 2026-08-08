@@ -256,7 +256,7 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 | ルートディレクトリ | **リポジトリの root（`.`）** | ⚠️ `apps/render` にすると **`packages/shared` が見えなくなる** |
 | エントリポイント | **`apps/render/main.ts`** | |
 | 環境変数 | `RENDER_HMAC_SECRET` | **Cloudflare 側と同じ値**（値はここに書かない） |
-| インストールコマンド | `npm install`（既定のまま） | ⚠️ root に `package.json` があるため Deno は node_modules を使う解決になる。**消すと壊れうる** |
+| インストールコマンド | **空にする** | 🔴 `apps/render/deno.json` に `"nodeModulesDir": "none"` を入れてあるので `npm install` は要らない。**入れたままにすると、ビルドのたびに monorepo 全部を落としてきて転送量を食う**（#182） |
 | ビルドコマンド | なし | Deno なのでビルド不要 |
 
 **デプロイは Deno Deploy の GitHub 連携に任せる**（`main` への push で出る）。

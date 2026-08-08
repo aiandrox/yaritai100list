@@ -11,6 +11,15 @@
   // `TECH_STACK.md` §12 の「shared を Deno から使えるか」の答えがこれ。
   "unstable": ["sloppy-imports"],
 
+  // 🔴 **node_modules を作らない。**
+  // リポジトリの root に `package.json` があるので、指定しないと Deno は
+  // node_modules を使う解決に切り替わり、**Deno Deploy のビルドで `npm install` が要る**。
+  // このアプリは `npm:` 指定子だけで動くので、Deno のキャッシュに任せる。
+  //
+  // ⚠️ これを外すなら、Deno Deploy の Install command も戻すこと
+  // （`docs/console-settings.md`）。ビルドの転送量が跳ね上がる（#182）
+  "nodeModulesDir": "none",
+
   "imports": {
     "satori": "npm:satori@^0.29.0",
     "@resvg/resvg-wasm": "npm:@resvg/resvg-wasm@^2.6.2",
