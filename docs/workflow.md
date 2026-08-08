@@ -121,6 +121,18 @@ npm run db:migrate:remote --workspace @yaritai100list/web   # スキーマを変
   値を持っていないため。必要になったら利用者に
   `wrangler secret put <名前>` の実行を依頼する
 
+### ローカルで詰まったとき
+
+**コードを読んでも分からない類**なので残しておく（README から移した）。
+
+- **`no such table` が出たら `db:migrate` を忘れている。**
+  ローカル D1 の保存先は `wrangler.jsonc` の `database_id` ごとに分かれるため、
+  **その値を変えると空のデータベースに切り替わる**（`.wrangler/state/` 配下）。
+  テストは別のインメモリ D1 を使うので、**テストが緑でもこの状態は起こりうる**
+- **Vite の dev サーバーは IPv6（`[::1]`）でだけ listen する。**
+  `curl http://127.0.0.1:5173` は接続できない。`localhost` を使う
+- **デプロイ直後の数秒は 404 や `error code: 1042` が返る。** 伝播待ち（上記）
+
 ### 依存関係を触るとき
 
 **`package-lock.json` を作り直さない。** 削除して `npm install` し直すと、
