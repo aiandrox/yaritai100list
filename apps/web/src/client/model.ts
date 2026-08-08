@@ -267,19 +267,6 @@ export function moveItem(list: LocalList, id: string, toIndex: number): ListResu
   return { ok: true, list: { ...list, items: [...rest.slice(0, to), moved, ...rest.slice(to)] } }
 }
 
-/**
- * 項目を1つ分ずらす（#142）。`offset` は `-1` で上、`+1` で下。
- *
- * **端では何も起きない**（`moveItem` が範囲外を端に丸める）。
- * 押しても動かないのは、そこが端だから。
- */
-export function moveItemBy(list: LocalList, id: string, offset: number): ListResult {
-  const from = list.items.findIndex((item) => item.id === id)
-  if (from === -1) return { ok: false, reason: 'not-found' }
-
-  return moveItem(list, id, from + offset)
-}
-
 /** リストのタイトルを変える。検証は `listTitleSchema`（空文字は通らない）。 */
 export function renameList(list: LocalList, title: string): ListResult {
   const parsed = listTitleSchema.safeParse(title)

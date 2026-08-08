@@ -6,7 +6,7 @@ import {
   createEmptyList,
   hasAnythingToImport,
   LIST_STORAGE_KEY,
-  moveItemBy,
+  moveItem,
   parseStoredList,
   pickCurrentListId,
   removeItem,
@@ -75,7 +75,7 @@ export interface ListController {
   toggleItem: (item: Item) => Promise<boolean>
   removeItem: (id: string) => Promise<boolean>
   /** 1つ分ずらす。`-1` で上、`+1` で下 */
-  moveItem: (id: string, offset: number) => Promise<boolean>
+  moveItem: (id: string, toIndex: number) => Promise<boolean>
 }
 
 /**
@@ -360,19 +360,22 @@ export function useList(
           false,
 
     /**
-     * 並べ替え（#142）。**押すたびに送る。**
+     * 並べ替え（#142 / #166）。**離したときに1回だけ送る。**
      *
-     * 「確定してからまとめて送る」形にすると、押した後に確定を忘れて消える。
+     * 引数は**移動先の位置**（ずらす量ではない）。ドラッグは何行でも飛ぶので、
+     * 1つずつずらす形だと途中の並びを何度も送ることになる。
+     *
+     * 「確定してからまとめて送る」形にはしない。それだと確定を忘れて消える。
      * 他の操作（本文・完了・削除）が全部その場で保存されるので、揃えた。
      * 送る量は**サーバー側で減らしてある**（位置が変わった項目だけ書き直す）。
      *
      * 🔴 **409（項目の集合が違う）なら手元を捨てて取り直す。**
      * 別のタブや端末で足した／消した後なので、こちらの並びを押し通してはいけない。
      */
-    moveItem: async (itemId, offset) => {
+    moveItem: async (itemId, toIndex) => {
       if (list === null) return false
 
-      const moved = moveItemBy(list, itemId, offset)
+      const moved = moveItem(list, itemId, toIndex)
       if (!moved.ok) {
         setRejection(moved.reason)
         return false

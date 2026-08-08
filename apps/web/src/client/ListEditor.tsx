@@ -3,6 +3,21 @@ import {
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
 } from '@yaritai100list/shared'
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { useEffect, useRef, useState } from 'react'
 
 import {
@@ -35,8 +50,8 @@ interface ListEditorProps {
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
   onRemoveItem: (id: string) => Promise<boolean>
-  /** 1つ分ずらす。`-1` で上、`+1` で下 */
-  onMoveItem: (id: string, offset: number) => Promise<boolean>
+  /** 移動先の位置（0 始まり）へ動かす。**ずらす量ではない**（#166） */
+  onMoveItem: (id: string, toIndex: number) => Promise<boolean>
 }
 
 export function ListEditor({
@@ -99,6 +114,40 @@ export function ListEditor({
   // どこにでも書けると、書いた行と入る行がずれて驚く（項目は末尾に足されるため）
   const nextIndex = filled
 
+  /** 並べ替えの対象は**書いた項目だけ。** 空欄の枠は動かさない */
+  const sortableIds = list.items.map((item) => item.id)
+
+  /**
+   * 掴み方。
+   *
+   * ⚠️ **すぐには始めない**（`distance: 8`）。スマホで縦スクロールと取り合いになり、
+   * 一覧をなぞろうとしただけで項目が持ち上がる。
+   *
+   * 🔴 **キーボードでも動かせるようにする。** ▲▼ を消した（#166）ので、
+   * これが無いとキーボードだけの人が並べ替えられなくなる。
+   * 掴む場所にフォーカスして Space、矢印で移動、Space で置く。
+   */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  /**
+   * 離したときに1回だけ送る（`useList` の `moveItem`）。
+   *
+   * **動いていなければ何もしない。** 掴んで同じ場所に置いただけで送ると、
+   * 並びは変わらないのに `updated_at` が動く。
+   */
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (over === null || active.id === over.id) return
+
+    const toIndex = sortableIds.indexOf(String(over.id))
+    if (toIndex === -1) return
+
+    void onMoveItem(String(active.id), toIndex)
+  }
+
   return (
     <div>
       <ListTitleField title={list.title} onRename={onRenameList} />
@@ -125,42 +174,55 @@ export function ListEditor({
         </span>
       </p>
 
-      <ol className="mt-4">
-        {toSlots(list).map((slot, index) =>
-          slot.item ? (
-            <ItemRow
-              key={slot.item.id}
-              number={slot.number}
-              item={slot.item}
-              completion={completion}
-              prompted={promptedId === slot.item.id}
-              onCommit={onUpdateItemText}
-              onToggle={(item) => {
-                if (completion.allowed) {
-                  setPromptedId(null)
-                  void onToggleItem(item)
-                  return
-                }
+      {/*
+        ドラッグでの並べ替え（#166）。**掴む場所を分けてある**（行全体ではない）。
+        行全体にすると、項目の本文を選ぼうとしただけでドラッグが始まる。
 
-                // **できないことを黙って無効化しない。** 無効化だけだと、
-                // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）。
-                // もう一度押すと閉じる（案内を消す手段がこれしかない）
-                setPromptedId((current) => (current === item.id ? null : item.id))
-              }}
-              onRemove={(id) => void onRemoveItem(id)}
-              onMove={(id, offset) => void onMoveItem(id, offset)}
-              first={index === 0}
-              last={index === filled - 1}
-            />
-          ) : index === nextIndex ? (
-            // key を固定して**同じ入力欄を使い回す**。項目を足すと1つ下へ移るが、
-            // React が DOM を作り直さないのでフォーカスが外れず、続けて書ける
-            <NextRow key="next" number={slot.number} onAdd={onAddItem} />
-          ) : (
-            <EmptyRow key={slot.number} number={slot.number} />
-          ),
-        )}
-      </ol>
+        ⚠️ **これはテストで担保できない**（jsdom に座標が無い。`TECH_STACK.md` §10）。
+        壊れても気づけるのは目視だけ。
+      */}
+      <DndContext
+        sensors={sensors}
+        // 上下にしか動かない一覧なので、横のずれと枠外へのはみ出しを止める
+        modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+          <ol className="mt-4">
+            {toSlots(list).map((slot, index) =>
+              slot.item ? (
+                <ItemRow
+                  key={slot.item.id}
+                  number={slot.number}
+                  item={slot.item}
+                  completion={completion}
+                  prompted={promptedId === slot.item.id}
+                  onCommit={onUpdateItemText}
+                  onToggle={(item) => {
+                    if (completion.allowed) {
+                      setPromptedId(null)
+                      void onToggleItem(item)
+                      return
+                    }
+
+                    // **できないことを黙って無効化しない。** 無効化だけだと、
+                    // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）。
+                    // もう一度押すと閉じる（案内を消す手段がこれしかない）
+                    setPromptedId((current) => (current === item.id ? null : item.id))
+                  }}
+                  onRemove={(id) => void onRemoveItem(id)}
+                />
+              ) : index === nextIndex ? (
+                // key を固定して**同じ入力欄を使い回す**。項目を足すと1つ下へ移るが、
+                // React が DOM を作り直さないのでフォーカスが外れず、続けて書ける
+                <NextRow key="next" number={slot.number} onAdd={onAddItem} />
+              ) : (
+                <EmptyRow key={slot.number} number={slot.number} />
+              ),
+            )}
+          </ol>
+        </SortableContext>
+      </DndContext>
     </div>
   )
 }
@@ -309,9 +371,6 @@ function ItemRow({
   onCommit,
   onToggle,
   onRemove,
-  onMove,
-  first,
-  last,
 }: {
   number: string
   item: Item
@@ -320,12 +379,13 @@ function ItemRow({
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onRemove: (id: string) => void
-  onMove: (id: string, offset: number) => void
-  first: boolean
-  last: boolean
 }) {
   const [draft, setDraft] = useState(item.text)
   const done = item.completedAt !== null
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+  })
 
   const commit = async () => {
     if (draft === item.text) return
@@ -334,7 +394,18 @@ function ItemRow({
 
   return (
     // 案内を重ねる基準にする（下の CompletionPrompt が absolute で浮く）
-    <li className={`relative ${ROW_BORDER}`}>
+    <li
+      ref={setNodeRef}
+      style={{
+        // 横には動かさないので y だけ見る（`restrictToVerticalAxis`）
+        transform: transform === null ? undefined : `translate3d(0, ${String(transform.y)}px, 0)`,
+        transition: transition ?? undefined,
+        // 掴んでいる行を前に出す。出さないと下の行の後ろに潜る
+        zIndex: isDragging ? 1 : undefined,
+        position: 'relative',
+      }}
+      className={`${ROW_BORDER} ${isDragging ? 'bg-white shadow-md' : ''}`}
+    >
       <div className={ROW}>
         <span className={`${NUMBER} ${done ? 'text-brand-deep' : ''}`}>{number}</span>
 
@@ -389,37 +460,24 @@ function ItemRow({
         )}
 
         {/*
-          並べ替え（#142）。**キーボードだけで操作できる形にしてある。**
-          ドラッグ&ドロップは座標が要るのでテストでも担保できず（TECH_STACK.md §10）、
-          それしか無いと触れない人が出る。
+          掴む場所（#166）。**行全体を掴めるようにしない。**
+          本文を選ぼうとしただけでドラッグが始まってしまう。
 
-          端では押せない。**理由は見れば分かる**（そこが端）ので、
-          押させて説明する必要は無い（#107 の作成ボタンと同じ判断）
+          🔴 **`button` にする。** キーボードでフォーカスでき、
+          Space で持ち上げて矢印で動かせる（dnd-kit の KeyboardSensor）。
+          ▲▼ を消したので、**ここがキーボードからの唯一の入口。**
+
+          `touch-action: none` はここだけに付ける。一覧全体に付けると縦スクロールが死ぬ
         */}
-        <span className="flex shrink-0 flex-col leading-none">
-          <button
-            type="button"
-            disabled={first}
-            aria-label={`${number} 番目を上へ`}
-            onClick={() => {
-              onMove(item.id, -1)
-            }}
-            className="px-1 text-[10px] text-slate-400 disabled:text-slate-200"
-          >
-            ▲
-          </button>
-          <button
-            type="button"
-            disabled={last}
-            aria-label={`${number} 番目を下へ`}
-            onClick={() => {
-              onMove(item.id, 1)
-            }}
-            className="px-1 text-[10px] text-slate-400 disabled:text-slate-200"
-          >
-            ▼
-          </button>
-        </span>
+        <button
+          type="button"
+          aria-label={`${number} 番目を並べ替える`}
+          {...attributes}
+          {...listeners}
+          className="shrink-0 touch-none px-1 text-sm text-slate-400"
+        >
+          ⠿
+        </button>
 
         <button
           type="button"
