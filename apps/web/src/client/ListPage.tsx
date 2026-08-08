@@ -33,6 +33,8 @@ const REJECTION_MESSAGES: Record<Rejection, string> = {
   'list-full': `${String(ITEMS_PER_LIST_MAX)}件まで書けます。減らすと続けて書けます`,
   'not-found': '対象の項目が見つかりませんでした',
   'server-error': '保存できませんでした。通信を確かめて、もう一度試してください',
+  // 別のタブや端末で項目が増減していた。手元の並びを押し通さず、取り直している（#142）
+  'order-stale': '他のところで項目が変わっていたので、最新の状態を読み直しました',
 }
 
 export function ListPage({ session, listId }: { session: SessionState; listId?: string }) {
@@ -143,6 +145,7 @@ function ListPageBody({
             onUpdateItemText={controller.updateItemText}
             onToggleItem={controller.toggleItem}
             onRemoveItem={controller.removeItem}
+            onMoveItem={controller.moveItem}
           />
         </>
       )}

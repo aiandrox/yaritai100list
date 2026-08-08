@@ -353,6 +353,27 @@ describe('並び替え', () => {
   })
 })
 
+describe('書き込みを減らす（#142）', () => {
+  it('位置が変わっていない項目は書き直さない', async () => {
+    // 隣と入れ替えるだけで100行書くと、D1 の 10万行/日 をすぐ使う（TECH_STACK.md §13）
+    const { me } = await twoUsers()
+    const a = await addItem(me.headers, 'my-list', '1つ目')
+    const b = await addItem(me.headers, 'my-list', '2つ目')
+    const c = await addItem(me.headers, 'my-list', '3つ目')
+
+    const before = await testDb().select().from(items).where(eq(items.id, c))
+
+    // 先頭2つだけ入れ替える。3つ目は位置が変わらない
+    await request('/api/lists/my-list/items/order', json(me.headers, 'PUT', { itemIds: [b, a, c] }))
+
+    const [after] = await testDb().select().from(items).where(eq(items.id, c))
+
+    expect(await positionsOf('my-list')).toEqual(['0:2つ目', '1:1つ目', '2:3つ目'])
+    // 触っていない項目は updated_at も動かない
+    expect(after?.updatedAt.getTime()).toBe(before[0]?.updatedAt.getTime())
+  })
+})
+
 describe('リストの取得', () => {
   it('リストと項目を並び順で返す', async () => {
     const { me } = await twoUsers()
