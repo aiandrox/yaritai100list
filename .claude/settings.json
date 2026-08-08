@@ -9,5 +9,8 @@
       "Bash(npm run lint)",
       "Bash(npm test)"
     ]
+  },
+  "enabledPlugins": {
+    "code-review@claude-plugins-official": true
   }
 }

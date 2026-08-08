@@ -448,6 +448,17 @@ export function toLocalList(list: { title: string }, items: RemoteItem[]): Local
 }
 
 /**
+ * 共有ページの URL。**組み立てはここ1箇所**（#138）。
+ *
+ * 画面の複数箇所で組み立てると、`/share/` を書き間違えたときに片方だけ直る。
+ * オリジンを引数で受け取るのは、`window` を `model.ts` に持ち込まないため
+ * （ここは workerd でテストする層。`TECH_STACK.md` §10）。
+ */
+export function shareUrl(origin: string, shareId: string): string {
+  return `${origin}/share/${shareId}`
+}
+
+/**
  * 取り込み（`POST /api/lists/import`）に送る内容。
  *
  * **完了の状態は送らない。** 未ログインでは印を付けられないので（#77）

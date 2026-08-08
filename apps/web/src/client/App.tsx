@@ -5,6 +5,7 @@ import { Link, Route, Switch, useLocation } from 'wouter'
 import { ExportPage } from './ExportPage'
 import { ListPage } from './ListPage'
 import { ListsPage } from './ListsPage'
+import { SharePage } from './SharePage'
 import { Notice } from './Notice'
 import { signOutRequestInit, toSessionState, type SessionState } from './model'
 
@@ -102,6 +103,10 @@ export function App() {
               関係のある経路を近くに並べておく */}
           <Route path="/lists/:listId/export">
             {(params) => <ExportPage session={session} listId={params.listId} />}
+          </Route>
+
+          <Route path="/lists/:listId/share">
+            {(params) => <SharePage session={session} listId={params.listId} />}
           </Route>
 
           <Route path="/lists/:listId">

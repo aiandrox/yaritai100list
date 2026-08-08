@@ -18,6 +18,7 @@ import {
   removeItem,
   renameList,
   serializeList,
+  shareUrl,
   sortListsByCreated,
   setItemCompletedAt,
   toCompletionPermission,
@@ -354,6 +355,17 @@ describe('pickCurrentListId', () => {
 
   it('1つも無ければ null（呼び出し側が作る）', () => {
     expect(pickCurrentListId([])).toBeNull()
+  })
+})
+
+describe('shareUrl', () => {
+  it('共有ページの URL を組み立てる', () => {
+    expect(shareUrl('https://example.com', 'abc123')).toBe('https://example.com/share/abc123')
+  })
+
+  it('組み立ては1箇所（画面で書き分けない）', () => {
+    // 複数箇所で組み立てると、/share/ を書き間違えたときに片方だけ直る
+    expect(shareUrl('http://localhost:5173', 'x')).toContain('/share/')
   })
 })
 
