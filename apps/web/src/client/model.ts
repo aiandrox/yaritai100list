@@ -14,7 +14,6 @@ import {
   DEFAULT_LIST_TITLE,
   ITEMS_PER_LIST_MAX,
   itemTextSchema,
-  LISTS_PER_USER_MAX,
   listTitleSchema,
 } from '@yaritai100list/shared'
 import { z } from 'zod'
@@ -496,7 +495,7 @@ export function hasAnythingToImport(stored: StoredListResult): boolean {
 }
 
 /**
- * ログインすると何ができるか（#204）。
+ * ログインすると何ができるか（#204 / #211）。
  *
  * 🔴 **`PRODUCT_SPEC.md` §2 の「ログインの動機」と同じ数だけ並べる。**
  * 導線が3箇所にあり、それぞれ**1つの利点しか言っていなかった。**
@@ -504,44 +503,23 @@ export function hasAnythingToImport(stored: StoredListResult): boolean {
  *
  * ⚠️ **画面ごとに書き分けない。** 同じ内容を3箇所に書くと必ずずれる。
  * ここが唯一の定義で、`SignInBenefits.tsx` が描く。
+ *
+ * 🔴 **文面は利用者が書いたもの。手を入れない**（2026-08-08）。
+ * 見出しも「いま／ログイン後」の対比も置かない。**そのまま読ませる。**
+ *
+ * 🔴 **関数にしてある。** 年を含む文言があり、**書いた時点の年で固定すると古くなる**
+ * （「2026年に」が翌年も出続ける）。`now` を受け取るのはテストのため（`TECH_STACK.md` §10）。
  */
-export interface SignInBenefit {
-  /** 見出し。**利点そのもの**を書く（「ログインすると〜」は書かない） */
-  title: string
-  /** いまの状態。**失うかもしれないこと**を先に言う */
-  without: string
-  /** ログインした後 */
-  with: string
-}
-
-export const SIGN_IN_BENEFITS: SignInBenefit[] = [
-  {
+export function signInBenefits(now: Date): string[] {
+  return [
     // **一番効くのはこれ。** 100個書いても失う可能性があることに気付けない
-    title: 'リストが消えない',
-    without: 'いま書いているものは、このブラウザにしかありません。履歴を消すと無くなります',
-    with: 'サーバーに保存されます。別の端末でも同じリストを開けます',
-  },
-  {
-    title: '「やった」印を付けられる',
-    without: '付けられません',
-    with: '叶えた日付が残ります',
-  },
-  {
-    title: `リストを${String(LISTS_PER_USER_MAX)}つまで持てる`,
-    without: '1つだけです',
-    with: '「2026年に」「一生のうちに」のように使い分けられます',
-  },
-  {
-    title: '人に見せられる',
-    without: '見せられません',
-    with: 'リンクを渡すと、その人がリストを見られます',
-  },
-  {
-    title: '画像で保存できる',
-    without: '保存できません',
-    with: `やりたいこと${String(ITEMS_PER_LIST_MAX)}個が1枚の画像になります。SNS に貼れます`,
-  },
-]
+    '現在書いているリストは、このブラウザにしか存在しないため、ブラウザの履歴を消すとデータがなくなります。ログイン後はサーバーに保存されます。別の端末でもリストを編集できるようになります。',
+    '実現した項目にチェックを付けられるようになります。',
+    `現在は1つしかリストを編集できませんが、ログインをすれば「${String(now.getFullYear())}年に」「一生のうちに」のように使い分けられます。`,
+    '共有リンクを発行して、他の人にやりたいことリストを見せることができます。',
+    'やりたいことリストの画像をダウンロードしたり、マークダウンで出力できます。SNSなどで公開できます。',
+  ]
+}
 
 /**
  * ログインの利点を見せるか。

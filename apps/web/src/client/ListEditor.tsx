@@ -20,7 +20,6 @@ import {
 } from '@dnd-kit/sortable'
 import { useEffect, useRef, useState } from 'react'
 
-import { SignInBenefits } from './SignInBenefits'
 import {
   completedCount,
   filledCount,
@@ -526,9 +525,12 @@ function CompletionPrompt({
       <a href="/api/login/google" className="font-bold text-brand-deep underline">
         Googleでログイン
       </a>
-      すると、「やった」印を付けられます。
-      {/* **文脈に合った1つを先に言い、残りはここから読ませる**（#204） */}
-      <SignInBenefits />
+      すると、やった項目にチェックを入れられます
+      {/*
+        🔴 **ここに「ほかにできること」を置かない**（#211）。
+        押した行に貼り付いた小さな案内で、**いま押した1つのことだけ**を答える場所。
+        まとめて読ませる入口は保存の案内の側にある（`ListPage.tsx` の `StorageNotice`）
+      */}
     </PromptBox>
   )
 }
