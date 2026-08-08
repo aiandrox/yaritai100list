@@ -2,6 +2,7 @@ import { SERVICE_NAME } from '@yaritai100list/shared'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Route, Switch, useLocation } from 'wouter'
 
+import { ExportPage } from './ExportPage'
 import { ListPage } from './ListPage'
 import { ListsPage } from './ListsPage'
 import { Notice } from './Notice'
@@ -95,6 +96,12 @@ export function App() {
               signOutFailed={signOutFailed}
               onSignOut={() => void signOut()}
             />
+          </Route>
+
+          {/* :listId より先に置かなくても段数が違うので当たらないが、
+              関係のある経路を近くに並べておく */}
+          <Route path="/lists/:listId/export">
+            {(params) => <ExportPage session={session} listId={params.listId} />}
           </Route>
 
           <Route path="/lists/:listId">
