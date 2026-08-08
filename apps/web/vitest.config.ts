@@ -31,6 +31,29 @@ export default defineConfig(async () => ({
           GOOGLE_CLIENT_ID: 'dummy-client-id.apps.googleusercontent.com',
           GOOGLE_CLIENT_SECRET: 'dummy-client-secret',
         },
+
+        /**
+         * 🔴 **テストのときだけ枠を小さくする**（#215）。
+         *
+         * 制限に当たることを確かめるには**枠の数だけ往復するしかない。**
+         * 本番の値（作成系60・画像10）のままだと1テストで約61往復し、
+         * 3つで約183回。**5秒のタイムアウトを CI で超えて落ちていた。**
+         *
+         * ⚠️ **枠の値がここと `wrangler.jsonc` の2箇所になる。**
+         * そのぶん**テスト側は数を書かない。**
+         * 「429 が返るまで叩く」形にしてあるので（`test/rate-limit.test.ts`）、
+         * どちらの値を変えてもテストは追随する。
+         *
+         * 🔴 **作成系を `LISTS_PER_USER_MAX`（5）より十分大きくしておく。**
+         * リスト数の上限のテストは1人で6回 POST するので、
+         * ここを 6 以下にすると**別のテストが 429 で落ちる。**
+         *
+         * `namespace_id` は `wrangler.jsonc` と揃える（別の名前空間にしない）。
+         */
+        ratelimits: {
+          CREATE_RATE_LIMIT: { namespace_id: '1001', simple: { limit: 10, period: 60 } },
+          IMAGE_RATE_LIMIT: { namespace_id: '1002', simple: { limit: 3, period: 60 } },
+        },
       },
     }),
   ],

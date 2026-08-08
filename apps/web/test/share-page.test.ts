@@ -210,6 +210,35 @@ describe('公開されているリスト', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toContain('0 / 0 達成')
   })
+
+  describe('自分のリストを作る導線（#225）', () => {
+    it('下にトップへのリンクが出る', async () => {
+      const list = await createList({ visibility: 'unlisted' })
+      await addItems(list.id, [{ text: '南極に行く' }])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('自分のリストを作る')
+      // リストの後に出す。**人のリストの続きに見せない**
+      expect(body.indexOf('自分のリストを作る')).toBeGreaterThan(body.indexOf('南極に行く'))
+    })
+
+    it('🔴 ログインの導線にしない（未ログインでもその場で書けるのが売り）', async () => {
+      // 入口でログインを要求したら PRODUCT_SPEC.md §1 が台無しになる
+      const list = await createList({ visibility: 'public' })
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).not.toContain('/api/login')
+      expect(body).not.toContain('ログイン')
+    })
+
+    it('🔴 「見つかりません」には出さない（外した理由を伝える場面で宣伝しない）', async () => {
+      const body = await (await request('/share/no-such-share-id')).text()
+
+      expect(body).not.toContain('自分のリストを作る')
+    })
+  })
 })
 
 describe('見えてはいけないもの', () => {
