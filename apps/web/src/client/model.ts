@@ -240,6 +240,58 @@ export function setItemCompletedAt(
   return { ok: true, list: mapItem(list, id, (item) => ({ ...item, completedAt })) }
 }
 
+// ---------------------------------------------------------------------------
+// 完了日の直し（#207）
+// ---------------------------------------------------------------------------
+
+/**
+ * `<input type="date">` に入れる値（`YYYY-MM-DD`）。
+ *
+ * **その端末の時間帯での日付**にする。画面に出している日付
+ * （`toLocaleDateString`）と同じものが入力欄に出ないと、
+ * **開いた瞬間に「1日ずれている」ように見える。**
+ *
+ * ⚠️ **`toISOString().slice(0, 10)` を使わない。** あれは UTC の日付なので、
+ * 日本時間の朝9時より前に完了した項目が前日として出る。
+ */
+export function toDateInputValue(completedAt: number): string {
+  const date = new Date(completedAt)
+  const pad = (value: number) => String(value).padStart(2, '0')
+
+  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/**
+ * 完了日時の**日付だけ**を差し替える。時刻は元のまま。
+ *
+ * 🔴 **その日の 00:00 にしない**（2026-08-08 の判断、#207）。
+ * 00:00 にすると、端末の時間帯によっては共有ページ（`Asia/Tokyo` 固定）で前日に見える。
+ * 元の時刻（＝✓ を押した瞬間の時刻。たいてい日中）を保てば、
+ * 時間帯が多少ずれても日付が動かない。
+ *
+ * 差し替えは**端末の時間帯**で行う（`setFullYear`）ので、
+ * 入力欄に入れた日付がそのまま画面に出ることは保証される。
+ *
+ * 読めない値なら `null`。`<input type="date">` は空にできるし、
+ * 手で打てるブラウザもあるので、**画面から来る値を信用しない。**
+ */
+export function withDatePart(completedAt: number, dateInput: string): number | null {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput)
+  if (parts === null) return null
+
+  const [year, month, day] = parts.slice(1).map(Number) as [number, number, number]
+
+  const next = new Date(completedAt)
+  next.setFullYear(year, month - 1, day)
+
+  // 存在しない日（2026-02-30 など）は別の日に繰り上がる。**黙って別の日にしない**
+  if (next.getFullYear() !== year || next.getMonth() !== month - 1 || next.getDate() !== day) {
+    return null
+  }
+
+  return next.getTime()
+}
+
 export function removeItem(list: LocalList, id: string): ListResult {
   if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 

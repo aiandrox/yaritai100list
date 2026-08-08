@@ -73,6 +73,8 @@ export interface ListController {
   addItem: (text: string) => Promise<boolean>
   updateItemText: (id: string, text: string) => Promise<boolean>
   toggleItem: (item: Item) => Promise<boolean>
+  /** 完了日を直す（#207）。**完了済みの項目にしか使えない** */
+  changeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
   removeItem: (id: string) => Promise<boolean>
   /** 1つ分ずらす。`-1` で上、`+1` で下 */
   moveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -358,6 +360,24 @@ export function useList(
           )
         : // 未ログインでは完了にできない（#77）。ここへは来ない
           false,
+
+    /**
+     * 完了日の直し（#207）。
+     *
+     * **未ログインでは呼ばれない。** 未ログインでは完了にできないので（#77）、
+     * ブラウザ側に完了済みの項目が存在せず、直す対象が無い。
+     *
+     * 送るのは ISO の日時。**サーバーが未来を弾く**ので、
+     * ここで弾けたつもりにならない（画面側の `max` は親切のためだけ）。
+     */
+    changeCompletedAt: async (itemId, completedAt) =>
+      onServer &&
+      applyServer((id) =>
+        api.api.lists[':listId'].items[':itemId'].$patch({
+          param: { listId: id, itemId },
+          json: { completedAt: new Date(completedAt).toISOString() },
+        }),
+      ),
 
     /**
      * 並べ替え（#142 / #166）。**離したときに1回だけ送る。**

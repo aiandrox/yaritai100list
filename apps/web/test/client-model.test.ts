@@ -25,11 +25,13 @@ import {
   sortListsByCreated,
   setItemCompletedAt,
   toCompletionPermission,
+  toDateInputValue,
   toImportBody,
   toLocalList,
   toSessionState,
   toSlots,
   updateItemText,
+  withDatePart,
   type ListResult,
   type LocalList,
 } from '../src/client/model'
@@ -249,6 +251,71 @@ describe('setItemCompletedAt', () => {
     expect(setItemCompletedAt(listOf('南極に行く'), 'nope', 1)).toEqual({
       ok: false,
       reason: 'not-found',
+    })
+  })
+})
+
+/**
+ * 完了日の直し（#207）。
+ *
+ * 🔴 どちらも**端末の時間帯で**動く。UTC で計算すると、
+ * 日本時間の朝9時より前に完了した項目が1日ずれる。
+ * テストの実行環境の時間帯に依存しないよう、**入れた値と出た値の関係**だけを見る。
+ */
+describe('toDateInputValue / withDatePart', () => {
+  /** その端末の時間帯での 2026-05-03 12:34。 */
+  const noon = new Date(2026, 4, 3, 12, 34, 56, 789).getTime()
+
+  describe('toDateInputValue', () => {
+    it('YYYY-MM-DD にする', () => {
+      expect(toDateInputValue(noon)).toBe('2026-05-03')
+    })
+
+    it('1桁の月日を0で埋める', () => {
+      expect(toDateInputValue(new Date(2026, 0, 9, 12).getTime())).toBe('2026-01-09')
+    })
+
+    it('🔴 端末の時間帯で見た日付になる（UTC の日付ではない）', () => {
+      // toISOString().slice(0, 10) だと、時間帯によっては前日／翌日になる
+      const midnight = new Date(2026, 4, 3, 0, 30).getTime()
+      const lateNight = new Date(2026, 4, 3, 23, 30).getTime()
+
+      expect(toDateInputValue(midnight)).toBe('2026-05-03')
+      expect(toDateInputValue(lateNight)).toBe('2026-05-03')
+    })
+  })
+
+  describe('withDatePart', () => {
+    it('日付だけ変わる', () => {
+      const next = withDatePart(noon, '2020-01-15')
+
+      expect(next).not.toBeNull()
+      expect(toDateInputValue(next ?? 0)).toBe('2020-01-15')
+    })
+
+    it('🔴 時刻は元のまま（その日の 00:00 にしない）', () => {
+      // 00:00 にすると、共有ページ（Asia/Tokyo 固定）で前日に見えることがある
+      const changed = new Date(withDatePart(noon, '2020-01-15') ?? 0)
+
+      expect([changed.getHours(), changed.getMinutes(), changed.getSeconds()]).toEqual([12, 34, 56])
+    })
+
+    it('入れた日付がそのまま読み戻せる（往復して動かない）', () => {
+      for (const date of ['2026-01-01', '2026-02-28', '2026-12-31', '2024-02-29']) {
+        expect(toDateInputValue(withDatePart(noon, date) ?? 0)).toBe(date)
+      }
+    })
+
+    it('🔴 存在しない日は null（黙って別の日にしない）', () => {
+      // setFullYear は 2026-02-30 を 3月2日に繰り上げる
+      expect(withDatePart(noon, '2026-02-30')).toBeNull()
+      expect(withDatePart(noon, '2026-13-01')).toBeNull()
+    })
+
+    it('🔴 読めない値は null（画面から来る値を信用しない）', () => {
+      for (const bad of ['', '2026-5-3', '2026/05/03', 'あした', '2026-05-03T00:00:00Z']) {
+        expect(withDatePart(noon, bad)).toBeNull()
+      }
     })
   })
 })

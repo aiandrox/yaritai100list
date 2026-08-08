@@ -5,6 +5,7 @@ import {
   EXPORT_VERSION,
   exportFileSchema,
   hasFutureCompletedAt,
+  isFutureCompletedAt,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   SHARED_VISIBILITIES,
@@ -57,9 +58,20 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
 /**
  * 項目の変更。
  *
- * 🔴 **完了「日時」を受け取らない。** `completed` の真偽値だけを受け取り、
- * **日時はサーバーが決める。** 端末の時計は狂っていることがあり、
+ * 🔴 **完了にする瞬間の日時はサーバーが決める。** `completed: true` で受けるのは
+ * 真偽値だけで、日時は入れさせない。端末の時計は狂っていることがあり、
  * 送られた値をそのまま入れると「未来に叶えたこと」になる。
+ *
+ * 🔴 **後から日付を直すのは持ち主が決める**（#207）。`completedAt` を受け取る。
+ * 境目は「**初回か、直しか**」。こう置くと
+ * 「未完了の項目に好きな過去日を入れて完了にする」という抜け道ができない
+ * （完了していない項目への `completedAt` は、下のハンドラが 409 で断る）。
+ *
+ * ⚠️ **`completed` と `completedAt` は同時に送れない。**
+ * 「取り消しつつ日付を直す」は意味を持たないし、どちらを勝たせるかを決めたくない。
+ *
+ * 未来かどうかはここでは見ない。**`now` を渡して判定する**必要があるので
+ * ハンドラ側（`isFutureCompletedAt`）。スキーマの中で現在時刻を読まない。
  *
  * 空の本文（`{}`）は拒否する。黙って何もしない応答を返すと、
  * 送り側の間違いに気づけない。
@@ -68,9 +80,13 @@ const updateItemSchema = z
   .object({
     text: itemTextSchema.optional(),
     completed: z.boolean().optional(),
+    completedAt: z.iso.datetime().optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
+  .refine((patch) => patch.completed === undefined || patch.completedAt === undefined, {
+    message: 'completed と completedAt は同時に送れない',
+  })
 
 /**
  * 並び替え。**そのリストの項目 ID を全部、新しい順で受け取る。**
@@ -553,7 +569,8 @@ const app = new Hono<AppEnv>()
   /**
    * 項目の本文と完了を変える。
    *
-   * **完了日時はサーバーが決める**（`updateItemSchema` の注意書き）。
+   * **完了にする瞬間の日時はサーバーが決める。後からの直しは受け取る**
+   * （`updateItemSchema` の注意書き。#207）。
    * 完了しても並び順は動かさない（`PRODUCT_SPEC.md` §4.5）。
    */
   .patch(
@@ -567,6 +584,27 @@ const app = new Hono<AppEnv>()
       const item = c.get('item')
       const patch = c.req.valid('json')
 
+      /**
+       * 完了日の直し（#207）。**受け取る前に2つ断る。**
+       *
+       * 🔴 **完了していない項目には入れさせない。** 入れられると
+       * 「好きな過去日を指定して完了にする」ことができ、
+       * 「完了にする瞬間はサーバーが決める」が要求の組み立てだけで迂回できる。
+       *
+       * 🔴 **未来を弾く**（`isFutureCompletedAt`）。取り込みと同じ判定を使う。
+       */
+      let completedAt: Date | undefined
+      if (patch.completedAt !== undefined) {
+        if (item.completedAt === null) {
+          return c.json({ error: 'Not Completed' } as const, 409)
+        }
+
+        completedAt = new Date(patch.completedAt)
+        if (isFutureCompletedAt(completedAt, new Date())) {
+          return c.json({ error: 'Future Completed At' } as const, 400)
+        }
+      }
+
       const [updated] = await db
         .update(items)
         .set({
@@ -574,6 +612,7 @@ const app = new Hono<AppEnv>()
           ...(patch.completed === undefined
             ? {}
             : { completedAt: patch.completed ? new Date() : null }),
+          ...(completedAt === undefined ? {} : { completedAt }),
           updatedAt: new Date(),
         })
         .where(eq(items.id, item.id))
