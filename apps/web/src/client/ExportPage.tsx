@@ -171,12 +171,19 @@ function ExportPageBody({ listId }: { listId: string }) {
 
   return (
     <div>
-      <Link href="/lists" className="text-xs text-brand-deep underline">
-        ← すべてのリスト
+      {/*
+        🔴 **戻り先はそのリスト**（#202）。ここは「リストの下の画面」なので、
+        1つ上はリストの画面。「すべてのリスト」まで飛ばすと、
+        **さっきまで編集していたリストへ戻るのに選び直しが要る。**
+
+        リスト名を出すのは、**どのリストの下にいるかを戻り先で示すため**
+        （階層は2段しかないので、パンくずまでは要らない）
+      */}
+      <Link href={`/lists/${listId}`} className="text-xs text-brand-deep underline">
+        ← {file.list.title}
       </Link>
 
       <h1 className="mt-2 text-xl font-bold text-slate-900">書き出す</h1>
-      <p className="mt-1 text-sm text-slate-600">{file.list.title}</p>
 
       <section className="mt-6 rounded bg-white px-3 py-3">
         <h2 className="font-bold text-slate-900">このアプリに読み込み直す（JSON）</h2>

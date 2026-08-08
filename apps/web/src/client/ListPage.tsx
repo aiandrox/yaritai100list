@@ -115,12 +115,20 @@ function ListPageBody({
             未ログイン（`source === 'local'`）では出さない。共有はログインが要る
           */}
           {screen.source === 'server' && (
-            <p className="mb-2 text-right">
+            <p className="mb-2 flex justify-end gap-3">
               <Link
                 href={`/lists/${screen.key}/share`}
                 className="text-xs text-brand-deep underline"
               >
                 共有の設定
+              </Link>
+              {/* 🔴 **入口をここに揃える**（#202）。共有だけここ、書き出しは一覧、
+                  という状態になっていた。同じ階層のものは同じ場所から行けるようにする */}
+              <Link
+                href={`/lists/${screen.key}/export`}
+                className="text-xs text-brand-deep underline"
+              >
+                書き出す
               </Link>
             </p>
           )}
