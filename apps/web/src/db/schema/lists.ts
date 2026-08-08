@@ -2,13 +2,11 @@ import { VISIBILITIES } from '@yaritai100list/shared'
 import { sql } from 'drizzle-orm'
 import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
+import { newShareId } from '../../id'
 import { users } from './auth'
 
 /**
  * リスト。
- *
- * ここで持たない列と、それを足すイシュー:
- * - `share_id`: 公開用の ID。#7（リストの共有）で足す
  *
  * 決めた仕様はできる限り DB の制約にする。人間がレビューしない開発では
  * 「間違っても DB が止めてくれる」ことが安全側の資産になる（TECH_STACK.md §7）。
@@ -36,6 +34,22 @@ export const lists = sqliteTable(
       .references(() => users.id, { onDelete: 'cascade' }),
 
     title: text('title').notNull(),
+
+    /**
+     * 公開用の ID。**編集用の `id` とは別の値**（`TECH_STACK.md` §7）。
+     *
+     * 🔴 **値があること = 公開されていること、ではない。**
+     * 公開しているかは `visibility` だけで決まる。
+     * 「公開したときだけ入れる」形にすると**公開の判定が2箇所になる**ので、
+     * **常に持たせる**（2026-08-08 決定、#135）。
+     *
+     * 作り直すと古い共有リンクが無効になる（`PRODUCT_SPEC.md` §5.1）。
+     *
+     * `$defaultFn` を付けてあるので、**insert で渡し忘れても必ず値が入る。**
+     * 「呼び忘れたら動かない」ではなく「忘れても正しい」に寄せている
+     * （条件付き insert を生 SQL で書いている経路だけは自分で渡す）。
+     */
+    shareId: text('share_id').notNull().unique().$defaultFn(newShareId),
 
     /**
      * 公開範囲。**既定は非公開**。公開は明示的な操作でのみ起きる（PRODUCT_SPEC.md §5.1）。

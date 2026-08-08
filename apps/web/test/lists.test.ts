@@ -37,7 +37,7 @@ describe('lists テーブル', () => {
     // Drizzle の enum は型の上だけの話なので、型を迂回する経路（生 SQL）で
     // CHECK 制約が実際に効いていることを確認する
     const insert = env.DB.prepare(
-      "insert into lists (id, user_id, title, visibility) values ('list-1', ?, 'x', 'everyone')",
+      "insert into lists (id, user_id, title, share_id, visibility) values ('list-1', ?, 'x', 's1', 'everyone')",
     )
       .bind(userId)
       .run()
@@ -48,14 +48,16 @@ describe('lists テーブル', () => {
   describe('所有者（user_id）', () => {
     it('所有者のいないリストは作れない', async () => {
       // 型では防いでいるが、DB でも止まることを確認する
-      const insert = env.DB.prepare("insert into lists (id, title) values ('list-1', 'x')").run()
+      const insert = env.DB.prepare(
+        "insert into lists (id, title, share_id) values ('list-1', 'x', 's1')",
+      ).run()
 
       await expect(insert).rejects.toThrow(/NOT NULL constraint failed/)
     })
 
     it('存在しない利用者を所有者にできない', async () => {
       const insert = env.DB.prepare(
-        "insert into lists (id, user_id, title) values ('list-1', 'no-such-user', 'x')",
+        "insert into lists (id, user_id, title, share_id) values ('list-1', 'no-such-user', 'x', 's1')",
       ).run()
 
       await expect(insert).rejects.toThrow(/FOREIGN KEY constraint failed/)
@@ -69,6 +71,73 @@ describe('lists テーブル', () => {
       await db.delete(users).where(eq(users.id, userId))
 
       expect(await db.select().from(lists)).toEqual([])
+    })
+  })
+
+  describe('公開用の ID（share_id）', () => {
+    it('渡さなくても入る。連番ではない', async () => {
+      const db = testDb()
+      const userId = await createTestUser()
+
+      await db.insert(lists).values([
+        { id: 'list-1', userId, title: 'x' },
+        { id: 'list-2', userId, title: 'y' },
+      ])
+
+      const rows = await db.select().from(lists)
+      const shareIds = rows.map((row) => row.shareId)
+
+      expect(shareIds.every((id) => id.length >= 32)).toBe(true)
+      expect(new Set(shareIds).size).toBe(2)
+      expect(shareIds[0]).not.toMatch(/^\d+$/)
+    })
+
+    it('🔴 編集用の ID とは別の値', async () => {
+      // 同じにすると、公開 URL から編集 URL が分かってしまう（TECH_STACK.md §7）
+      const db = testDb()
+      const userId = await createTestUser()
+      await db.insert(lists).values({ id: 'list-1', userId, title: 'x' })
+
+      const [row] = await db.select().from(lists)
+
+      expect(row?.shareId).not.toBe(row?.id)
+    })
+
+    it('🔴 重複した値は DB が拒否する', async () => {
+      // 生 SQL で叩く。Drizzle 経由だと元の理由がラップされて読めない
+      const userId = await createTestUser()
+      const insert = (id: string) =>
+        env.DB.prepare('insert into lists (id, user_id, title, share_id) values (?, ?, ?, ?)')
+          .bind(id, userId, 'x', 'same')
+          .run()
+
+      await insert('list-1')
+
+      await expect(insert('list-2')).rejects.toThrow(/UNIQUE constraint failed/)
+    })
+
+    it('🔴 空（NULL）では入れられない', async () => {
+      // 列の宣言は NULL 可のままなので、DB 側の縛りはトリガーで作っている
+      // （既存の行があるためテーブルを作り直せなかった。マイグレーション 0007）
+      const userId = await createTestUser()
+
+      const insert = env.DB.prepare('insert into lists (id, user_id, title) values (?, ?, ?)')
+        .bind('list-1', userId, 'x')
+        .run()
+
+      await expect(insert).rejects.toThrow(/share_id is required/)
+    })
+
+    it('🔴 後から NULL にもできない', async () => {
+      const db = testDb()
+      const userId = await createTestUser()
+      await db.insert(lists).values({ id: 'list-1', userId, title: 'x' })
+
+      const update = env.DB.prepare('update lists set share_id = null where id = ?')
+        .bind('list-1')
+        .run()
+
+      await expect(update).rejects.toThrow(/share_id is required/)
     })
   })
 
@@ -87,8 +156,10 @@ describe('lists テーブル', () => {
       const userId = await createTestUser()
       await fill(userId, LISTS_PER_USER_MAX)
 
-      const insert = env.DB.prepare('insert into lists (id, user_id, title) values (?, ?, ?)')
-        .bind('over', userId, 'x')
+      const insert = env.DB.prepare(
+        'insert into lists (id, user_id, title, share_id) values (?, ?, ?, ?)',
+      )
+        .bind('over', userId, 'x', 'over-share')
         .run()
 
       await expect(insert).rejects.toThrow(/lists per user limit reached/)
@@ -106,8 +177,10 @@ describe('lists テーブル', () => {
       await testDb().insert(lists).values({ id: 'last', userId, title: 'x' })
       expect(await testDb().select({ n: count() }).from(lists)).toEqual([{ n: LISTS_PER_USER_MAX }])
 
-      const insert = env.DB.prepare('insert into lists (id, user_id, title) values (?, ?, ?)')
-        .bind('over', userId, 'x')
+      const insert = env.DB.prepare(
+        'insert into lists (id, user_id, title, share_id) values (?, ?, ?, ?)',
+      )
+        .bind('over', userId, 'x', 'over-share')
         .run()
 
       await expect(insert).rejects.toThrow(/lists per user limit reached/)

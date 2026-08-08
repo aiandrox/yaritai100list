@@ -21,7 +21,7 @@ import { requireOwnedItem, requireOwnedList, requireUser } from './authorization
 import { createDb, type Db } from './db'
 import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
-import { newId } from './id'
+import { newId, newShareId } from './id'
 import { rateLimitCreates } from './rate-limit'
 import { sentryOptions } from './sentry'
 
@@ -201,8 +201,8 @@ const app = new Hono<AppEnv>()
       const title = c.req.valid('json').title ?? DEFAULT_LIST_TITLE
 
       const inserted = await db.all<{ id: string }>(sql`
-      insert into ${lists} (id, user_id, title)
-      select ${id}, ${userId}, ${title}
+      insert into ${lists} (id, user_id, title, share_id)
+      select ${id}, ${userId}, ${title}, ${newShareId()}
       where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
       returning id
     `)
@@ -246,8 +246,8 @@ const app = new Hono<AppEnv>()
 
       // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
       const inserted = await db.all<{ id: string }>(sql`
-      insert into ${lists} (id, user_id, title)
-      select ${listId}, ${userId}, ${title ?? DEFAULT_LIST_TITLE}
+      insert into ${lists} (id, user_id, title, share_id)
+      select ${listId}, ${userId}, ${title ?? DEFAULT_LIST_TITLE}, ${newShareId()}
       where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
       returning id
     `)
@@ -325,8 +325,8 @@ const app = new Hono<AppEnv>()
 
     // 上限の判定と挿入を1文で（POST /api/lists と同じ理由）
     const inserted = await db.all<{ id: string }>(sql`
-      insert into ${lists} (id, user_id, title)
-      select ${listId}, ${userId}, ${incoming.title}
+      insert into ${lists} (id, user_id, title, share_id)
+      select ${listId}, ${userId}, ${incoming.title}, ${newShareId()}
       where (select count(*) from ${lists} where ${lists.userId} = ${userId}) < ${LISTS_PER_USER_MAX}
       returning id
     `)
