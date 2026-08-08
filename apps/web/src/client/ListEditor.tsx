@@ -183,7 +183,17 @@ function isCommitKey(event: React.KeyboardEvent): boolean {
   return event.key === 'Enter' && !event.nativeEvent.isComposing
 }
 
-const ROW = 'flex items-center gap-2 py-1.5'
+/**
+ * 行の骨格。🔴 **高さをここで決める**（#147）。
+ *
+ * 中身に決めさせると、**入力欄のある行（32px）と、無い行（丸だけで 24px）で
+ * 段差ができる。** 100行並ぶ画面なので、書けた枠と空の枠の境目で目立つ。
+ *
+ * `min-h-11`（44px）は、いまの入力欄（`text-base` + `py-1` = 32px）に
+ * 上下の余白（`py-1.5` = 12px）を足した高さ。**中身が変わっても行は動かない。**
+ * `h-11` にしないのは、将来この中に背の高いものを置いたときに切れないため。
+ */
+const ROW = 'flex min-h-11 items-center gap-2 py-1.5'
 const ROW_BORDER = 'border-b border-brand/40'
 
 /**
