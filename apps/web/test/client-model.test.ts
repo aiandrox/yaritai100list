@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addItem,
   createEmptyList,
+  completedCount,
   filledCount,
   formatItemNumber,
   hasAnythingToImport,
@@ -332,6 +333,27 @@ describe('toSlots / formatItemNumber / filledCount', () => {
     expect(formatItemNumber(1)).toBe('001')
     expect(formatItemNumber(23)).toBe('023')
     expect(formatItemNumber(100)).toBe('100')
+  })
+
+  it('🔴 達成済みの数を数える', () => {
+    const one = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
+    const two = expectOk(setItemCompletedAt(one, 'i3', 1))
+
+    expect(completedCount(createEmptyList())).toBe(0)
+    expect(completedCount(listOf('1つ目', '2つ目'))).toBe(0)
+    expect(completedCount(one)).toBe(1)
+    expect(completedCount(two)).toBe(2)
+  })
+
+  it('🔴 全部やっても、埋まり具合とは別の数字のまま', () => {
+    // 置き換えると「100 という枠がまだ埋まっていない」が見えなくなる（#145）
+    const all = ['1つ目', '2つ目'].reduce(
+      (list, _, index) => expectOk(setItemCompletedAt(list, `i${String(index + 1)}`, 1)),
+      listOf('1つ目', '2つ目'),
+    )
+
+    expect(completedCount(all)).toBe(2)
+    expect(filledCount(all)).toBe(2)
   })
 
   it('🔴 「23 / 100」の左は埋まり具合。完了した数ではない', () => {
