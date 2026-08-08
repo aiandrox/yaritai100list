@@ -12,12 +12,38 @@ concurrency:
 
 permissions:
   contents: read
+  # 変更されたファイルの一覧を API から取るため（下記）
+  pull-requests: read
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # ドキュメントだけの PR で、型検査もテストも走らせない（#222）。
+      #
+      # ⚠️ **ジョブは分けない。** 分けるとチェックの名前が変わり、
+      # 「必須のチェック」が永遠に来ない PR ができる。
+      # **1つのジョブの中で、重い手順を飛ばす。**
+      #
+      # 一覧を API から取るのは、`git diff` に全履歴（fetch-depth: 0）が要るため。
+      # 履歴の取得はドキュメントだけの PR でも毎回かかる
+      - name: 変更の中身を見る
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate -q '.[].filename')
+          echo "$files"
+          # .md 以外が1つでもあればコードの変更として扱う
+          if printf '%s\n' "$files" | grep -qvE '\.md$'; then
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'code=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::ドキュメントだけの変更。型検査・テスト・Deno は飛ばす'
+          fi
 
       - uses: actions/setup-node@v7
         with:
@@ -28,6 +54,7 @@ jobs:
       # 画像生成サービス（apps/render）は Deno。npm の道具では見られないので、
       # **Deno の道具で型と動きを見る**（#172）
       - uses: denoland/setup-deno@v2
+        if: ${{ steps.changed.outputs.code == 'true' }}
         with:
           deno-version: v2.x
 
@@ -41,24 +68,25 @@ jobs:
       # ただし install が失敗した実行では skip する。依存が入っていない状態の結果は
       # 信号として無意味で、読む側を混乱させる（#26）。
       - name: typecheck
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.changed.outputs.code == 'true' }}
         run: npm run typecheck
 
       - name: lint
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.changed.outputs.code == 'true' }}
         run: npm run lint
 
+      # 🔴 **書式だけは常に見る。** prettier は `.md` も整形する（#222）
       - name: format
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run format:check
 
       - name: test
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.changed.outputs.code == 'true' }}
         run: npm test
 
       # apps/render は Deno。型・lint・テストをここで見る
       - name: render (deno)
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.changed.outputs.code == 'true' }}
         working-directory: apps/render
         # ⚠️ **deno.json のタスクを呼ぶ。** ここに同じコマンドを書くと、
         # 見るファイルが手元と CI でずれる（preview.ts が実際にずれていた）
