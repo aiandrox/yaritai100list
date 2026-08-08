@@ -194,17 +194,95 @@ describe('項目の変更', () => {
     expect(undone?.completedAt).toBeNull()
   })
 
-  it('🔴 完了日時を送り込めない（時刻はサーバーが決める）', async () => {
-    const { me } = await twoUsers()
-    const id = await addItem(me.headers, 'my-list', '南極に行く')
+  /**
+   * 完了日の直し（#207）。
+   *
+   * 🔴 境目は「**初回か、直しか**」。
+   * 完了にする瞬間の日時はサーバーが決めるが、後からの直しは持ち主が決める。
+   * この区別が崩れると「好きな過去日を指定して完了にする」ができてしまう。
+   */
+  describe('完了日の直し', () => {
+    /** 完了済みの項目を1つ作って ID を返す。 */
+    async function completedItem(headers: Headers): Promise<string> {
+      const id = await addItem(headers, 'my-list', '南極に行く')
+      await request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completed: true }))
 
-    // 端末の時計は狂っていることがある。「未来に叶えたこと」にさせない
-    const res = await request(
-      `/api/lists/my-list/items/${id}`,
-      json(me.headers, 'PATCH', { completedAt: 4_102_444_800_000 }),
-    )
+      return id
+    }
 
-    expect(res.status).toBe(400)
+    const patchCompletedAt = (headers: Headers, id: string, completedAt: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completedAt }))
+
+    it('完了済みなら日時を直せる', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+
+      expect(res.status).toBe(200)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.completedAt?.toISOString()).toBe('2020-05-03T04:05:06.000Z')
+    })
+
+    it('🔴 未来の日時は拒否される', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      // 端末の時計は狂っていることがある。「まだ来ていない日に叶えた」にさせない
+      const res = await patchCompletedAt(me.headers, id, '2100-01-01T00:00:00.000Z')
+
+      expect(res.status).toBe(400)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.completedAt?.getFullYear()).not.toBe(2100)
+    })
+
+    it('🔴 完了していない項目には入れられない（初回はサーバーが決める）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '南極に行く')
+
+      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+
+      expect(res.status).toBe(409)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.completedAt).toBeNull()
+    })
+
+    it('🔴 completed と同時には送れない', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      const res = await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { completed: false, completedAt: '2020-05-03T04:05:06.000Z' }),
+      )
+
+      expect(res.status).toBe(400)
+    })
+
+    it('🔴 日時として読めない値は拒否される', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      // 旧実装は epoch ms を受け取る形だった。数値のまま通さない
+      expect((await patchCompletedAt(me.headers, id, 4_102_444_800_000)).status).toBe(400)
+      expect((await patchCompletedAt(me.headers, id, '2020-05-03')).status).toBe(400)
+      expect((await patchCompletedAt(me.headers, id, null)).status).toBe(400)
+    })
+
+    it('🔴 他人の項目の完了日は直せない', async () => {
+      const { me, other } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      const res = await patchCompletedAt(other.headers, id, '2020-05-03T04:05:06.000Z')
+
+      expect(res.status).toBe(404)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.completedAt?.getFullYear()).not.toBe(2020)
+    })
   })
 
   it('🔴 完了しても並び順が変わらない', async () => {

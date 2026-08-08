@@ -23,7 +23,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   completedCount,
   filledCount,
+  toDateInputValue,
   toSlots,
+  withDatePart,
   type CompletionPermission,
   type Item,
   type LocalList,
@@ -49,6 +51,8 @@ interface ListEditorProps {
   onAddItem: (text: string) => Promise<boolean>
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
+  /** 完了日を直す（#207）。**完了済みの項目にしか使わない** */
+  onChangeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
   onRemoveItem: (id: string) => Promise<boolean>
   /** 移動先の位置（0 始まり）へ動かす。**ずらす量ではない**（#166） */
   onMoveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -61,6 +65,7 @@ export function ListEditor({
   onAddItem,
   onUpdateItemText,
   onToggleItem,
+  onChangeCompletedAt,
   onRemoveItem,
   onMoveItem,
 }: ListEditorProps) {
@@ -68,9 +73,19 @@ export function ListEditor({
   const completed = completedCount(list)
 
   /**
-   * 完了を押せないときに、その行の下へ理由を出すための状態。
+   * ✓ を押したときに、**その行の下へ何かを浮かせる**ための状態。
    *
    * **画面の上の方にまとめて出さない。** 押した行から離れた場所に出ても目に入らない。
+   *
+   * 浮かぶものは2つあるが、**状態は1つしか持たない**（#207）。
+   * 「その行に浮いているものが1つある」以上のことを覚える必要がない。
+   *
+   * - 押せないとき（未ログインなど）→ 理由の案内（`CompletionPrompt`）
+   * - 押せて、かつ**完了済み**のとき → 完了の設定（`CompletionMenu`）
+   *
+   * 🔴 **条件が排他なので、2つが同時に出ることが構造上ない。**
+   * 未ログインでは完了にできない（#77）ので、
+   * 「押せない」と「完了済み」が両方成り立つ項目は存在しない。
    */
   const [promptedId, setPromptedId] = useState<string | null>(null)
 
@@ -199,16 +214,47 @@ export function ListEditor({
                   prompted={promptedId === slot.item.id}
                   onCommit={onUpdateItemText}
                   onToggle={(item) => {
-                    if (completion.allowed) {
-                      setPromptedId(null)
-                      void onToggleItem(item)
-                      return
-                    }
-
                     // **できないことを黙って無効化しない。** 無効化だけだと、
                     // 機能が無いのか壊れているのか区別が付かない（PRODUCT_SPEC.md §2）。
                     // もう一度押すと閉じる（案内を消す手段がこれしかない）
-                    setPromptedId((current) => (current === item.id ? null : item.id))
+                    if (!completion.allowed) {
+                      setPromptedId((current) => (current === item.id ? null : item.id))
+                      return
+                    }
+
+                    /**
+                     * 🔴 **完了済みなら、その場では取り消さない**（#207）。
+                     *
+                     * 取り消すと `completedAt` が消える。**いつ叶えたかは
+                     * 押し直しても戻らない**（サーバーが押した瞬間の時刻を入れるため）。
+                     * 思い出として持っている値が、指が当たっただけで消えるのは重い。
+                     *
+                     * 増やす手数は**戻す側だけ。** 未完了の ✓ は今まで通り1回で付く。
+                     */
+                    if (item.completedAt !== null) {
+                      setPromptedId((current) => (current === item.id ? null : item.id))
+                      return
+                    }
+
+                    setPromptedId(null)
+                    void onToggleItem(item)
+                  }}
+                  onUncomplete={(item) => {
+                    setPromptedId(null)
+                    void onToggleItem(item)
+                  }}
+                  /**
+                   * 🔴 **日付を直しても閉じない**（#207）。
+                   *
+                   * `<input type="date">` は**打っている途中でも `change` を出す。**
+                   * 年の欄で「2」「20」「202」「2026」と打つと4回出る。
+                   * ここで閉じると、**最初の1文字で画面から消えて続きが打てない。**
+                   *
+                   * 開けたままにすれば、途中の値は最後の値で上書きされ、
+                   * 直った日付がその行に出るのを見て自分で閉じられる。
+                   */
+                  onChangeCompletedAt={(id, completedAt) => {
+                    void onChangeCompletedAt(id, completedAt)
                   }}
                   onRemove={(id) => void onRemoveItem(id)}
                 />
@@ -370,6 +416,8 @@ function ItemRow({
   prompted,
   onCommit,
   onToggle,
+  onUncomplete,
+  onChangeCompletedAt,
   onRemove,
 }: {
   number: string
@@ -378,6 +426,8 @@ function ItemRow({
   prompted: boolean
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
+  onUncomplete: (item: Item) => void
+  onChangeCompletedAt: (id: string, completedAt: number) => void
   onRemove: (id: string) => void
 }) {
   const [draft, setDraft] = useState(item.text)
@@ -416,13 +466,17 @@ function ItemRow({
           // 🔴 `disabled` にしない。押せないと押しても何も起きず、理由を出せない。
           // 支援技術には aria-disabled で「いまは効かない」と伝える
           aria-disabled={!completion.allowed}
+          // 🔴 押しても取り消さなくなった（#207）ので「完了を取り消す」とは言えない。
+          // 何が起きるか（設定が開く）を言う
           aria-label={
             completion.allowed
               ? done
-                ? '完了を取り消す'
+                ? '完了の設定を開く'
                 : '完了にする'
               : '完了にする（ログインが要る）'
           }
+          // 押すと下に何か出る、と伝える。出ないときは付けない
+          {...(completion.allowed && !done ? {} : { 'aria-expanded': prompted })}
           onClick={() => {
             onToggle(item)
           }}
@@ -503,10 +557,102 @@ function ItemRow({
         </button>
       </div>
 
-      {prompted && !completion.allowed && <CompletionPrompt reason={completion.reason} />}
+      {/*
+        浮かぶものは2つあるが**同時には出ない**（ListEditor の promptedId の注意書き）。
+        未ログインでは完了にできないので、`!allowed` と `done` は両立しない
+      */}
+      {prompted &&
+        (completion.allowed ? (
+          item.completedAt !== null && (
+            <CompletionMenu
+              completedAt={item.completedAt}
+              onUncomplete={() => {
+                onUncomplete(item)
+              }}
+              onChangeCompletedAt={(completedAt) => {
+                onChangeCompletedAt(item.id, completedAt)
+              }}
+            />
+          )
+        ) : (
+          <CompletionPrompt reason={completion.reason} />
+        ))}
     </li>
   )
 }
+
+/**
+ * 完了済みの ✓ を押したときに出る設定（#207）。
+ *
+ * 🔴 **2段にしない。** イシューの図は「未完了に戻す / 完了日時を変更する」の
+ * 2択だったが、**日付の入力欄をその場に置く。** 押す回数が減る。
+ *
+ * 🔴 **「未完了に戻す」に確認を重ねない。** これを開いたこと自体が1段の確認。
+ * 二重にすると、本当に戻したいときに邪魔になるだけ。
+ */
+function CompletionMenu({
+  completedAt,
+  onUncomplete,
+  onChangeCompletedAt,
+}: {
+  completedAt: number
+  onUncomplete: () => void
+  onChangeCompletedAt: (completedAt: number) => void
+}) {
+  return (
+    <PromptBox>
+      {/* 横に並べる。入らない幅では折り返す（狭い端末で切れないように） */}
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="flex items-center gap-2">
+          <span className="shrink-0">完了日</span>
+
+          <input
+            type="date"
+            defaultValue={toDateInputValue(completedAt)}
+            aria-label="完了日"
+            /**
+             * 打っている途中の値を弾くための箍（`validity` で見る）。
+             *
+             * **未来**: 未来に叶えたことにはできない。
+             * **1900年より前**: 年の欄を打ち直すと `0002-05-03` のような値が一度出る。
+             *
+             * ⚠️ **どちらも親切のためだけ。** 手で組み立てた要求は通るので、
+             * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
+             */
+            min={COMPLETED_AT_MIN}
+            max={toDateInputValue(Date.now())}
+            onChange={(event) => {
+              // 空にした・範囲外・読めない値は**何もしない。**
+              // 消す操作は「未完了に戻す」の方
+              if (!event.target.validity.valid) return
+
+              const next = withDatePart(completedAt, event.target.value)
+              if (next !== null) onChangeCompletedAt(next)
+            }}
+            className="min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900 tabular-nums"
+          />
+        </span>
+
+        <button
+          type="button"
+          onClick={onUncomplete}
+          className="font-bold text-brand-deep underline"
+        >
+          未完了に戻す
+        </button>
+      </span>
+    </PromptBox>
+  )
+}
+
+/**
+ * 完了日として画面から入れられる下限。**規則ではなく、打ち間違いの箍**（#207）。
+ *
+ * サーバーには下限を置いていない（`isFutureCompletedAt` の注意書き）。
+ * ここで切るのは、`<input type="date">` の年の欄を打ち直したときに
+ * 通り過ぎる `0002-05-03` のような値を保存しないため。
+ */
+const COMPLETED_AT_MIN = '1900-01-01'
 
 /**
  * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に重ねて出す。**

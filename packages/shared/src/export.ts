@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { ITEMS_PER_LIST_MAX } from './limits'
-import { itemTextSchema, listTitleSchema } from './validation'
+import { isFutureCompletedAt, itemTextSchema, listTitleSchema } from './validation'
 
 /**
  * リストを持ち出すときの形式（#115）。
@@ -95,11 +95,12 @@ export function buildExportFile(
  * **最低限ここだけは見る。** ファイルは手で編集できるし、書き出した端末の時計が
  * 狂っていることもある。未来の日時が入ると「まだ来ていない日に叶えた」ことになる。
  *
- * 過去は見ない。**いつ叶えたかは持ち主のもの**で、こちらが妥当性を決める話ではない。
+ * 判定そのものは `isFutureCompletedAt`。**完了日時の直し（#207）と同じものを使う。**
+ * 「どこまで許すか」を2箇所に書くと必ずずれる。
  */
 export function hasFutureCompletedAt(file: ExportFile, now: Date): boolean {
   return file.list.items.some(
-    (item) => item.completedAt !== null && Date.parse(item.completedAt) > now.getTime(),
+    (item) => item.completedAt !== null && isFutureCompletedAt(new Date(item.completedAt), now),
   )
 }
 

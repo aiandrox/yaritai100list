@@ -62,6 +62,16 @@ const PAGE_STYLE = `
   li.done .text { text-decoration: line-through; color: #94a3b8; }
   li.done .number { color: var(--brand-deep); }
   .date { color: var(--brand-deep); font-size: .65rem; font-variant-numeric: tabular-nums; }
+
+  /* 下の導線（#225）。**人のリストの続きに見えないよう、はっきり離す** */
+  .invite { margin-top: 2.5rem; padding: 1.25rem 1rem; background: #fff; border-radius: .25rem; text-align: center; }
+  .invite h2 { font-size: 1rem; margin: 0; }
+  .invite p { font-size: .75rem; color: #475569; margin: .5rem 0 0; }
+  .invite a {
+    display: inline-block; margin-top: 1rem; padding: .625rem 1.5rem;
+    background: var(--brand-deep); color: #fff; border-radius: .25rem;
+    font-weight: 700; text-decoration: none;
+  }
 `
 
 export interface SharedItem {
@@ -186,8 +196,35 @@ export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<H
           `,
         )}
       </ol>
+
+      ${invite()}
     `,
   })
+}
+
+/**
+ * 下に置く導線（#225）。**共有ページはこのサービスの入口。**
+ *
+ * URL を渡されて開く人は、たいてい**ここで初めてこのサービスを見る。**
+ * それなのに読み終わったら行き止まりで、自分も書けることがどこにも書いていなかった。
+ *
+ * 🔴 **リンク先は `/`。ログインの導線にしない。**
+ * 未ログインでもその場で書けること（`PRODUCT_SPEC.md` §1）が一番の売りで、
+ * **入口でログインを要求したら台無しになる。**
+ * 共有ページにログインの導線を出さないという方針（`src/client/Layout.tsx`）とも揃う。
+ *
+ * 🔴 **`<button>` を使わない。** 「読み取り専用。編集の入口を出さない」の
+ * テストが `<form>` / `<input>` / `<button>` を見張っている（`test/share-page.test.ts`）。
+ * 実際これはリンクなので、`<a>` が正しい。
+ */
+function invite(): HtmlEscapedString {
+  return html`
+    <aside class="invite">
+      <h2>やりたいこと、書いてみませんか</h2>
+      <p>登録は要りません。開いたその場で書き始められます。</p>
+      <a href="/">自分のリストを作る</a>
+    </aside>
+  ` as HtmlEscapedString
 }
 
 /**
