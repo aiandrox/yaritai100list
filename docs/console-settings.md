@@ -234,7 +234,7 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 
 ## Deno Deploy（画像生成）
 
-**organization まで作成済み**（#1、2026-08-06）。アプリの作成は #8 で行う。
+**organization まで作成済み**（#1、2026-08-06）。**アプリの作成はまだ**（#172）。
 
 | 項目 | 現在値 | 備考 |
 |---|---|---|
@@ -244,6 +244,22 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 | アプリ名 | **`yaritai100list-render`**（未作成） | #172 で作る。**この名前で作る**（`RENDER_URL` がこの名前を前提にしている） |
 | 想定ホスト名 | `yaritai100list-render.aiandrox.deno.net` | |
 | HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない。**Cloudflare 側は設定済み**（2026-08-08） |
+
+### アプリを作るときの設定（#172）
+
+コードは `apps/render` に用意してある。**コンソールで作るときに指定するもの:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| アプリ名 | **`yaritai100list-render`** | `RENDER_URL` がこの名前を前提にしている |
+| リポジトリ | `aiandrox/yaritai100list` | |
+| ルートディレクトリ | **リポジトリの root（`.`）** | ⚠️ `apps/render` にすると **`packages/shared` が見えなくなる** |
+| エントリポイント | **`apps/render/main.ts`** | |
+| 環境変数 | `RENDER_HMAC_SECRET` | **Cloudflare 側と同じ値**（値はここに書かない） |
+
+**デプロイは Deno Deploy の GitHub 連携に任せる**（`main` への push で出る）。
+Cloudflare 側（`.github/workflows/deploy.yml`）とは別系統になるが、
+**画像生成は状態を持たない単一エンドポイント**なので、順序を揃える必要がない。
 
 ### コンソールでしか触れないもの
 

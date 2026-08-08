@@ -49,3 +49,12 @@ jobs:
       - name: test
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm test
+
+      # apps/render は Deno。型・lint・テストをここで見る
+      - name: render (deno)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: apps/render
+        run: |
+          deno check main.ts main_test.ts
+          deno lint
+          deno test --allow-read --allow-env
