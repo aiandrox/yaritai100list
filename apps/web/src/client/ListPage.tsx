@@ -8,6 +8,7 @@ import { Link } from 'wouter'
 
 import { ListEditor } from './ListEditor'
 import { Notice } from './Notice'
+import { SignInBenefits } from './SignInBenefits'
 import { toCompletionPermission, type SessionState } from './model'
 import { useList, type ImportOutcome, type ListController, type Rejection } from './useList'
 
@@ -223,7 +224,7 @@ function StorageNotice({
           Googleでログイン
         </a>
         すると、保存したリストを見られます。端末を変えても見られるので、
-        ずっと残したい方はログインしてください
+        ずっと残したい方はログインしてください。 <SignInBenefits />
       </Notice>
     )
   }
