@@ -40,3 +40,22 @@ export const SHARED_VISIBILITIES = ['unlisted', 'public'] as const
 export const listTitleSchema = z.string().trim().min(1).max(LIST_TITLE_MAX_LENGTH)
 
 export const itemTextSchema = z.string().trim().min(1).max(ITEM_TEXT_MAX_LENGTH)
+
+/**
+ * 完了日時として受け取ってはいけない値か。**未来だけを弾く**（#207 / #89）。
+ *
+ * 🔴 **上限だけを見る。下限は決めない。**
+ * 「去年やったことを後から書いた」は普通に起きる。**いつ叶えたかは持ち主のもの**で、
+ * こちらが妥当性を決める話ではない。弾くのは
+ * 「**まだ来ていない日に叶えた**」という、明らかに成り立たないものだけ。
+ *
+ * ⚠️ **`now` を引数で受け取る。** 中で現在時刻を読むと、
+ * 「境目の1ミリ秒」をテストから固定できなくなる。
+ *
+ * 呼ぶのは2箇所。**どちらも「サーバーが完了日時を決める」の例外にあたる経路**:
+ * - 完了日の直し（`PATCH /api/lists/:listId/items/:itemId`）
+ * - 書き出したファイルの読み込み（`hasFutureCompletedAt`）
+ */
+export function isFutureCompletedAt(completedAt: Date, now: Date): boolean {
+  return completedAt.getTime() > now.getTime()
+}

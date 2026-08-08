@@ -5,6 +5,7 @@ import {
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   hasFutureCompletedAt,
+  isFutureCompletedAt,
 } from '@yaritai100list/shared'
 import { asc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
@@ -43,6 +44,28 @@ function restore(headers: Headers, body: unknown) {
 async function itemsOf(listId: string) {
   return testDb().select().from(items).where(eq(items.listId, listId)).orderBy(asc(items.position))
 }
+
+/**
+ * 「どこまでを完了日時として受け取るか」の判定（#207）。
+ *
+ * 🔴 **読み込み（`hasFutureCompletedAt`）と完了日の直しが同じものを使う。**
+ * ここが2箇所に分かれると、片方だけ緩んだときに気づけない。
+ */
+describe('isFutureCompletedAt', () => {
+  const now = new Date('2026-08-07T12:00:00.000Z')
+
+  it('未来は弾く', () => {
+    expect(isFutureCompletedAt(new Date('2026-08-07T12:00:00.001Z'), now)).toBe(true)
+  })
+
+  it('🔴 ちょうど今は通す（境目を弾かない）', () => {
+    expect(isFutureCompletedAt(now, now)).toBe(false)
+  })
+
+  it('🔴 下限は無い（去年やったことを後から書ける）', () => {
+    expect(isFutureCompletedAt(new Date('1970-01-01T00:00:00.000Z'), now)).toBe(false)
+  })
+})
 
 describe('hasFutureCompletedAt', () => {
   const now = new Date('2026-08-07T12:00:00.000Z')
