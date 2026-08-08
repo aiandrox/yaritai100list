@@ -1,4 +1,4 @@
-import { assertEquals } from '@std/assert'
+import { assertEquals, assertStringIncludes } from '@std/assert'
 
 import { signOgPayload, type OgPayload } from '../../packages/shared/src/index.ts'
 
@@ -84,6 +84,51 @@ Deno.test('形が違えば描かない（数でない値）', async () => {
   )
 
   assertEquals(res.status, 403)
+})
+
+Deno.test('描かなかった理由がログに残る（応答には出さない）', async () => {
+  // ⚠️ 「期限切れ」と「署名が合わない」は原因も対処も違う。
+  // 区別が付かず、**両側の鍵が違うのを見つけるのに時間がかかった**（#184）
+  const written: string[] = []
+  const original = console.error
+  console.error = (message: unknown) => written.push(String(message))
+
+  try {
+    const expired = await requestFor(payload({ exp: Math.floor(Date.now() / 1000) - 1 }))
+    const wrongKey = await requestFor(payload(), {
+      signature: await signOgPayload(payload(), 'another-secret'),
+    })
+
+    assertStringIncludes(written[0] ?? '', '期限')
+    assertStringIncludes(written[1] ?? '', '署名')
+
+    // 🔴 応答は変えない。理由を返すと、叩く側に手がかりを与える
+    assertEquals(await expired.text(), 'Forbidden')
+    assertEquals(await wrongKey.text(), 'Forbidden')
+  } finally {
+    console.error = original
+  }
+})
+
+Deno.test('🔴 ログに署名を書かない', async () => {
+  // 残っていると、そこから叩けるようになる
+  const data = payload()
+  const signature = await signOgPayload(data, SECRET)
+
+  const written: string[] = []
+  const original = console.error
+  console.error = (message: unknown) => written.push(String(message))
+
+  try {
+    await requestFor({ ...data, title: '書き換えたタイトル' }, { signature })
+  } finally {
+    console.error = original
+  }
+
+  for (const line of written) {
+    assertEquals(line.includes(signature), false)
+    assertEquals(line.includes(SECRET), false)
+  }
 })
 
 Deno.test('知らない経路は 404', async () => {
