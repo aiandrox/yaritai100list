@@ -18,9 +18,9 @@ import { describe, expect, it } from 'vitest'
  * Deno で動くことの保証にはならない**（`TECH_STACK.md` §12）。
  */
 describe('文字数の上限', () => {
-  it('上限値は 22 文字 / 15 文字（変えるときは PRODUCT_SPEC.md §7 も直す）', () => {
+  it('上限値は 22 文字 / 30 文字（変えるときは PRODUCT_SPEC.md §7 も直す）', () => {
     expect(ITEM_TEXT_MAX_LENGTH).toBe(22)
-    expect(LIST_TITLE_MAX_LENGTH).toBe(15)
+    expect(LIST_TITLE_MAX_LENGTH).toBe(30)
   })
 
   it('上限ちょうどは通り、1文字超えると弾かれる', () => {
