@@ -193,13 +193,12 @@ function SharePageBody({ listId }: { listId: string }) {
 
       {/*
         🔴 **非公開のときは URL を出さない**（#138）。
-        出すと「このリンクを渡せば見える」と誤解する。実際は開けない
+        出すと「このリンクを渡せば見える」と誤解する。実際は開けない。
+
+        **代わりの案内も出さない**（#151）。選択肢の説明
+        （「自分だけが見られます。リンクを渡しても開けません」）で足りている
       */}
-      {list.visibility === 'private' ? (
-        <Notice tone="info">
-          非公開なので、共有できる URL はありません。上で公開範囲を変えると出ます
-        </Notice>
-      ) : (
+      {list.visibility !== 'private' && (
         <section className="mt-4 rounded bg-white px-3 py-3">
           <h2 className="font-bold text-slate-900">共有する URL</h2>
 
