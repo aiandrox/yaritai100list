@@ -386,6 +386,19 @@ export function useList(
       const id = listId.current
       if (id === null) return false
 
+      /**
+       * 🔴 **送る前に画面を新しい並びにする**（#204）。
+       *
+       * 待ってから反映すると、**離した瞬間に一度だけ元の並びに戻って見える。**
+       * ドラッグ中の見た目は dnd-kit が作っているもので、離すと消えるため、
+       * サーバーの応答が返るまでの間だけ古い並びが出る。
+       *
+       * 他の操作（本文・完了・削除）は待ってから反映しているが、
+       * **並べ替えだけは「動かした」という手応えが要る。**
+       * 失敗したときは下で取り直すので、ずれたままにはならない。
+       */
+      setScreen({ status: 'ready', key: id, list: moved.list, source: 'server' })
+
       try {
         const res = await api.api.lists[':listId'].items.order.$put({
           param: { listId: id },
@@ -400,15 +413,20 @@ export function useList(
 
         if (!res.ok) {
           setRejection('server-error')
+          // 先に画面を動かしてあるので、**戻さないとサーバーとずれたままになる**
+          await loadFromServer()
           return false
         }
 
         setRejection(null)
-        await loadFromServer()
 
+        // 🔴 **取り直さない。** 先に反映した並びと同じものが返るだけで、
+        // 往復のぶん画面がもう一度描き直される（そこでまた一瞬ちらつく）。
+        // 並べ替えは**項目の集合が変わらない**ので、削除のように詰め直しも要らない
         return true
       } catch {
         setRejection('server-error')
+        await loadFromServer()
         return false
       }
     },
