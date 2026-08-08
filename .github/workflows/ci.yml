@@ -60,7 +60,9 @@ jobs:
       - name: render (deno)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: apps/render
+        # ⚠️ **deno.json のタスクを呼ぶ。** ここに同じコマンドを書くと、
+        # 見るファイルが手元と CI でずれる（preview.ts が実際にずれていた）
         run: |
-          deno check main.ts main_test.ts
+          deno task check
           deno lint
-          deno test --allow-read --allow-env
+          deno task test
