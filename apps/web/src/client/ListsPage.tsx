@@ -1,10 +1,4 @@
-import {
-  buildMarkdown,
-  exportFileName,
-  exportFileSchema,
-  LISTS_PER_USER_MAX,
-  NEW_LIST_TITLE,
-} from '@yaritai100list/shared'
+import { LISTS_PER_USER_MAX, NEW_LIST_TITLE } from '@yaritai100list/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'wouter'
 
@@ -124,51 +118,6 @@ export function ListsPage({
 
     const body = await res.json()
     if ('list' in body) navigate(`/lists/${body.list.id}`)
-  }
-
-  /**
-   * リストをファイルに書き出す（#121 / #124）。
-   *
-   * 取得は API、保存はブラウザの仕事なので**ここで DOM を触る。**
-   * 中身とファイル名の組み立ては `packages/shared` の純関数（テストしてある）。
-   *
-   * 🔴 **マークダウンはサーバーで作らない。** 達成日を**画面と同じ時間帯**で
-   * 出したいが、サーバーは閲覧者の時間帯を知らない。UTC のまま日付にすると1日ずれる。
-   * JSON（時刻をそのまま持つ）を受け取って、**ここで整形する。**
-   */
-  const exportList = async (list: RemoteList, format: 'json' | 'md') => {
-    setMessage(null)
-
-    const res = await api.api.lists[':listId'].export.$get({ param: { listId: list.id } })
-
-    if (!res.ok) {
-      setMessage({ tone: 'warn', text: '書き出せませんでした。通信を確かめてください' })
-      return
-    }
-
-    const body: unknown = await res.json()
-    const parsed = exportFileSchema.safeParse(body)
-
-    if (!parsed.success) {
-      setMessage({ tone: 'warn', text: '書き出せませんでした（応答の形が想定と違います）' })
-      return
-    }
-
-    const content =
-      format === 'json'
-        ? JSON.stringify(parsed.data, null, 2)
-        : buildMarkdown(parsed.data, (iso) => new Date(iso).toLocaleDateString('ja-JP'))
-
-    const type = format === 'json' ? 'application/json' : 'text/markdown'
-    const url = URL.createObjectURL(new Blob([content], { type }))
-    const anchor = document.createElement('a')
-
-    anchor.href = url
-    anchor.download = exportFileName(list.title, new Date(), format)
-    anchor.click()
-
-    // 解放しないとページを閉じるまでメモリに残る
-    URL.revokeObjectURL(url)
   }
 
   /** 書き出したファイルを読み込む（#122）。**新しいリストとして増える。** */
@@ -303,7 +252,6 @@ export function ListsPage({
             key={list.id}
             number={formatItemNumber(index + 1)}
             list={list}
-            onExport={exportList}
             onDelete={deleteList}
           />
         ))}
@@ -355,12 +303,10 @@ export function ListsPage({
 function ListRow({
   number,
   list,
-  onExport,
   onDelete,
 }: {
   number: string
   list: RemoteList
-  onExport: (list: RemoteList, format: 'json' | 'md') => Promise<void>
   onDelete: (listId: string) => Promise<void>
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -379,28 +325,16 @@ function ListRow({
         </Link>
 
         {/*
-          書き出しは2つの形式（#124）。**JSON は読み込める、MD は人が読むもの。**
-          用途が違うので、選ばせずにどちらか一方にはしない
+          形式が2つある（JSON とマークダウン）ので、**選ぶのは別画面**（#131）。
+          行にボタンを並べただけでは、どちらが何のためのものか分からなかった
         */}
-        <button
-          type="button"
-          aria-label={`${list.title} を JSON で書き出す（読み込める形式）`}
-          title="読み込める形式で書き出す"
-          onClick={() => void onExport(list, 'json')}
-          className="shrink-0 px-1 text-[10px] text-slate-400"
+        <Link
+          href={`/lists/${list.id}/export`}
+          aria-label={`${list.title} を書き出す`}
+          className="shrink-0 px-1 text-xs text-brand-deep underline"
         >
-          JSON
-        </button>
-
-        <button
-          type="button"
-          aria-label={`${list.title} をマークダウンで書き出す（転載用）`}
-          title="ブログなどへの転載用"
-          onClick={() => void onExport(list, 'md')}
-          className="shrink-0 px-1 text-[10px] text-slate-400"
-        >
-          MD
-        </button>
+          書き出す
+        </Link>
 
         <button
           type="button"
