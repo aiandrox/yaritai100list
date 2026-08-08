@@ -555,7 +555,9 @@ describe('signInBenefits / showsSignInBenefits', () => {
   it('🔴 PRODUCT_SPEC.md §2 の動機を全部載せている', () => {
     // 導線が3箇所にあり、それぞれ1つの利点しか言っていなかった（#204）。
     // **1つでも欠けると、その利点はどこからも読めない**
-    const text = signInBenefits(NOW).join('\n')
+    const text = signInBenefits(NOW)
+      .map((benefit) => benefit.text)
+      .join('\n')
 
     expect(text).toContain('データがなくなります')
     expect(text).toContain('チェックを付けられる')
@@ -565,19 +567,31 @@ describe('signInBenefits / showsSignInBenefits', () => {
     expect(signInBenefits(NOW)).toHaveLength(5)
   })
 
+  it('🔴 目印がすべての項目に付いている（文章だけにしない）', () => {
+    // 文だけを縦に並べると、どこからどこまでが1つの話か分からない（#213）
+    for (const benefit of signInBenefits(NOW)) {
+      expect(benefit.icon).not.toBe('')
+    }
+  })
+
   it('書き出しは画像とマークダウンの両方に触れている', () => {
-    const text = signInBenefits(NOW).join('\n')
+    const text = signInBenefits(NOW)
+      .map((benefit) => benefit.text)
+      .join('\n')
 
     expect(text).toContain('マークダウン')
   })
 
   it('🔴 一番上は「消える」話（一番効くので先に言う）', () => {
-    expect(signInBenefits(NOW)[0]).toContain('データがなくなります')
+    expect(signInBenefits(NOW)[0]?.text).toContain('データがなくなります')
   })
 
   it('🔴 年は固定しない（翌年に古くならない）', () => {
     // 「2026年に」と書き込むと、翌年もそのまま出続ける
-    const text = (now: Date) => signInBenefits(now).join('\n')
+    const text = (now: Date) =>
+      signInBenefits(now)
+        .map((benefit) => benefit.text)
+        .join('\n')
 
     expect(text(NOW)).toContain('2026年に')
     expect(text(new Date('2031-01-01T00:00:00.000Z'))).toContain('2031年に')

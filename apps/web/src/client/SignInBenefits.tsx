@@ -53,7 +53,7 @@ export function SignInBenefits({ label = 'ほかにできること' }: { label?:
  * 白地・グレーの枠・濃いグレーの文字は Google のボタンの作法に合わせたもの。
  */
 const GOOGLE_BUTTON =
-  'mt-4 flex items-center justify-center gap-2 rounded border border-slate-300 bg-white px-3 py-2.5 text-center font-bold text-slate-700 shadow-sm'
+  'mt-5 flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-3 text-center font-bold text-slate-700 shadow-sm'
 
 /** Google の「G」。**4色は Google のもの**なので勝手に変えない。 */
 function GoogleLogo() {
@@ -100,18 +100,41 @@ function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
       onToggle={(event) => {
         document.body.style.overflow = event.currentTarget.open ? 'hidden' : ''
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-(--page-max-width) rounded bg-white p-0 text-slate-900 backdrop:bg-slate-900/40"
+      className="m-auto w-[calc(100%-2rem)] max-w-(--page-max-width) rounded-xl bg-white p-0 text-slate-900 backdrop:bg-slate-900/50"
     >
-      <div className="max-h-[80dvh] overflow-auto px-4 py-4">
-        <h2 id="sign-in-benefits-title" className="text-lg font-bold">
+      <div className="max-h-[85dvh] overflow-auto px-5 pt-5 pb-6">
+        {/* 閉じるを右上に置く。**読み終わる前でも抜けられる場所が要る** */}
+        <button
+          type="button"
+          aria-label="閉じる"
+          onClick={() => {
+            ref.current?.close()
+          }}
+          className="float-right -mt-1 -mr-1 px-2 py-1 text-lg text-slate-400"
+        >
+          ×
+        </button>
+
+        <h2 id="sign-in-benefits-title" className="text-center text-lg font-bold">
           ログインすると、できること
         </h2>
 
-        <ul className="mt-3">
+        {/*
+          🔴 **1つずつ札に分ける**（#213）。
+          文だけを縦に並べると、**どこからどこまでが1つの話か分からず読む気にならない。**
+          目印（絵文字）・余白・背景の3つで区切りを作る。文面そのものは変えない
+        */}
+        <ul className="mt-4 flex flex-col gap-2">
           {/* 年を含む文言があるので、**開くたびに今の年で作る**（`signInBenefits`） */}
           {signInBenefits(new Date()).map((benefit) => (
-            <li key={benefit} className="border-b border-brand/40 py-3 text-sm last:border-b-0">
-              {benefit}
+            <li
+              key={benefit.text}
+              className="flex items-start gap-3 rounded-lg bg-brand-soft px-3 py-3"
+            >
+              <span aria-hidden="true" className="text-xl leading-6">
+                {benefit.icon}
+              </span>
+              <span className="flex-1 text-sm leading-6">{benefit.text}</span>
             </li>
           ))}
         </ul>
@@ -125,16 +148,6 @@ function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
           <GoogleLogo />
           Googleでログイン
         </a>
-
-        <button
-          type="button"
-          onClick={() => {
-            ref.current?.close()
-          }}
-          className="mt-2 w-full px-3 py-2 text-center text-sm text-slate-500"
-        >
-          閉じる
-        </button>
       </div>
     </dialog>
   )
