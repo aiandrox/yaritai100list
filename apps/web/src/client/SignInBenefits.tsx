@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { signInBenefits } from './model'
+import { signInBenefits, type SignInBenefit } from './model'
 
 /**
  * ログインすると何ができるかを、まとめて見せる（#204）。
@@ -42,6 +42,65 @@ export function SignInBenefits({ label = 'ほかにできること' }: { label?:
 
       <Dialog ref={dialog} />
     </>
+  )
+}
+
+/**
+ * 目印の線画（#213）。
+ *
+ * 🔴 **絵文字をやめた。** 環境ごとに形が変わるうえ、賑やかすぎて中身より目立つ。
+ *
+ * ⚠️ **画像ファイルにしない。** この画面は未ログインの人が最初に見るので、
+ * 取りに行く回数を増やしたくない。**線画なら文字色に乗せられる**ので、
+ * 配色を変えたときに追従する（`currentColor`）。
+ */
+const ICON_PATHS: Record<SignInBenefit['icon'], React.ReactNode> = {
+  // 雲。**サーバーに置かれる**ことを表す
+  save: <path d="M7 18h10a4 4 0 0 0 .4-8A6 6 0 0 0 6 10.5 3.75 3.75 0 0 0 7 18Z" />,
+  check: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="m8.5 12.2 2.4 2.4 4.6-5" />
+    </>
+  ),
+  // 重なった紙。**リストが複数ある**ことを表す
+  lists: (
+    <>
+      <rect x="4" y="7" width="12" height="13" rx="2" />
+      <path d="M8 4h10a2 2 0 0 1 2 2v11" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M10.5 13.5a4 4 0 0 0 5.66 0l2.5-2.5a4 4 0 0 0-5.66-5.66l-1.2 1.2" />
+      <path d="M13.5 10.5a4 4 0 0 0-5.66 0l-2.5 2.5a4 4 0 0 0 5.66 5.66l1.2-1.2" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+      <circle cx="8.5" cy="10" r="1.4" />
+      <path d="m4.5 17 4.2-4.2a1.5 1.5 0 0 1 2.1 0l3 3 1.7-1.7a1.5 1.5 0 0 1 2.1 0l2.9 2.9" />
+    </>
+  ),
+}
+
+function BenefitIcon({ name }: { name: SignInBenefit['icon'] }) {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="mt-0.5 shrink-0 text-brand-deep"
+    >
+      {ICON_PATHS[name]}
+    </svg>
   )
 }
 
@@ -131,9 +190,7 @@ function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
               key={benefit.text}
               className="flex items-start gap-3 rounded-lg bg-brand-soft px-3 py-3"
             >
-              <span aria-hidden="true" className="text-xl leading-6">
-                {benefit.icon}
-              </span>
+              <BenefitIcon name={benefit.icon} />
               <span className="flex-1 text-sm leading-6">{benefit.text}</span>
             </li>
           ))}

@@ -559,7 +559,7 @@ describe('signInBenefits / showsSignInBenefits', () => {
       .map((benefit) => benefit.text)
       .join('\n')
 
-    expect(text).toContain('データがなくなります')
+    expect(text).toContain('履歴を消すと消えます')
     expect(text).toContain('チェックを付けられる')
     expect(text).toContain('一生のうちに')
     expect(text).toContain('共有リンク')
@@ -567,11 +567,17 @@ describe('signInBenefits / showsSignInBenefits', () => {
     expect(signInBenefits(NOW)).toHaveLength(5)
   })
 
-  it('🔴 目印がすべての項目に付いている（文章だけにしない）', () => {
-    // 文だけを縦に並べると、どこからどこまでが1つの話か分からない（#213）
-    for (const benefit of signInBenefits(NOW)) {
-      expect(benefit.icon).not.toBe('')
-    }
+  it('🔴 目印がすべての項目に付いていて、重なっていない', () => {
+    // 文だけを縦に並べると、どこからどこまでが1つの話か分からない（#213）。
+    // 同じ目印が2つあると、区切りとして働かない
+    const icons = signInBenefits(NOW).map((benefit) => benefit.icon)
+
+    expect(new Set(icons).size).toBe(icons.length)
+  })
+
+  it('🔴 一番上の文が長すぎない（読み始めの負担を集めない）', () => {
+    // ここだけ他の倍以上あって「文字ばっかり」に見えていた（#213）
+    expect(signInBenefits(NOW)[0]?.text.length).toBeLessThan(80)
   })
 
   it('書き出しは画像とマークダウンの両方に触れている', () => {
@@ -583,7 +589,7 @@ describe('signInBenefits / showsSignInBenefits', () => {
   })
 
   it('🔴 一番上は「消える」話（一番効くので先に言う）', () => {
-    expect(signInBenefits(NOW)[0]?.text).toContain('データがなくなります')
+    expect(signInBenefits(NOW)[0]?.text).toContain('履歴を消すと消えます')
   })
 
   it('🔴 年は固定しない（翌年に古くならない）', () => {
