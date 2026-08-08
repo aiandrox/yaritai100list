@@ -197,12 +197,6 @@ describe('exportFileName', () => {
   it('落とした結果が空なら既定の名前になる', () => {
     expect(exportFileName('///', new Date('2026-08-07T00:00:00.000Z'))).toBe('list-2026-08-07.json')
   })
-
-  it('マークダウンなら拡張子が変わる', () => {
-    expect(exportFileName('目標', new Date('2026-08-07T00:00:00.000Z'), 'md')).toBe(
-      '目標-2026-08-07.md',
-    )
-  })
 })
 
 describe('GET /api/lists/:listId/export', () => {

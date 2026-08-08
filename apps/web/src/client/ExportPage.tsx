@@ -107,12 +107,13 @@ function ExportPageBody({ listId }: { listId: string }) {
 
   const { file, markdown } = state
 
-  const download = (content: string, type: string, extension: 'json' | 'md') => {
-    const url = URL.createObjectURL(new Blob([content], { type }))
+  const downloadJson = () => {
+    const content = JSON.stringify(file, null, 2)
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }))
     const anchor = document.createElement('a')
 
     anchor.href = url
-    anchor.download = exportFileName(file.list.title, new Date(), extension)
+    anchor.download = exportFileName(file.list.title, new Date())
     anchor.click()
 
     // 解放しないとページを閉じるまでメモリに残る
@@ -151,9 +152,7 @@ function ExportPageBody({ listId }: { listId: string }) {
 
         <button
           type="button"
-          onClick={() => {
-            download(JSON.stringify(file, null, 2), 'application/json', 'json')
-          }}
+          onClick={downloadJson}
           className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
         >
           JSON をダウンロード
@@ -174,25 +173,17 @@ function ExportPageBody({ listId }: { listId: string }) {
           {markdown}
         </pre>
 
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            onClick={() => void copyMarkdown()}
-            className="flex-1 rounded bg-brand-deep px-3 py-2 text-white"
-          >
-            {copied ? 'コピーしました' : 'コピー'}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              download(markdown, 'text/markdown', 'md')
-            }}
-            className="flex-1 rounded border border-brand px-3 py-2 text-brand-deep"
-          >
-            ダウンロード
-          </button>
-        </div>
+        {/*
+          ダウンロードは置かない（#133）。**貼るためのものなので、
+          ファイルとして持っておく理由が薄い**（取っておきたいなら JSON がある）
+        */}
+        <button
+          type="button"
+          onClick={() => void copyMarkdown()}
+          className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
+        >
+          {copied ? 'コピーしました' : 'コピー'}
+        </button>
       </section>
     </div>
   )
