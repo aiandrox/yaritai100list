@@ -64,9 +64,17 @@ export function App() {
 
   return (
     <div className="min-h-dvh bg-brand-soft">
-      {/* モバイル縦1カラムを主対象にする（PRODUCT_SPEC.md §4.5）。
-          広い画面では中央に寄せるだけで、列は増やさない */}
-      <div className="mx-auto max-w-md px-4 pb-24">
+      {/*
+        モバイル縦1カラムを主対象にする（PRODUCT_SPEC.md §4.5）。
+        広い画面では中央に寄せるだけで、**列は増やさない。**
+
+        🔴 **幅を決めるのはここ1箇所。** 画面ごとに別の幅を書かない（#143）。
+
+        `max-w-xl`（36rem）。`max-w-md`（28rem）では項目の入力欄が窮屈だった。
+        ⚠️ **効くのは広い画面だけ。** よくある電話の横幅（約 24rem）は
+        どちらの上限より狭いので、モバイルの見え方は変わらない
+      */}
+      <div className="mx-auto max-w-xl px-4 pb-24">
         <header className="-mx-4 mb-4 flex items-baseline justify-between bg-brand px-4 py-3">
           <Link href="/" className="text-xs font-bold text-slate-900">
             {SERVICE_NAME}
