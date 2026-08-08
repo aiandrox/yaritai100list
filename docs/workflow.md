@@ -74,16 +74,23 @@ git switch -c 12-vitest-miniflare              # <イシュー番号>-<英小文
 npm run typecheck && npm run lint && npm test  # ローカルで緑にしてから出す
 
 git commit -m "..."
-gh pr create --fill --body "Closes #12"
-gh pr checks --watch                            # CI が緑になるまで待つ
+gh pr create --fill --body "Closes #12"         # 🔴 日本語にしない。閉じなくなる
+
+# CI を待つ。**待っている間に手を止めない**（2026-08-08 の利用者の指示）
+until gh pr checks 2>/dev/null | grep -qE '^check\s+(pass|fail)'; do sleep 10; done
+
 gh pr update-branch                             # main が進んでいたら追随させる
 gh pr merge --squash --delete-branch
 ```
 
-`gh pr checks --watch` は**直前の実行結果を拾って即座に返ることがある。**
-push 直後に叩いたときは、`gh run list --branch <branch> --limit 1` で
+⚠️ **`gh pr checks --watch` で待ち続けない。** 出しっぱなしにして別の作業に移り、
+上のような形で様子を見る。`--watch` は**直前の実行結果を拾って即座に返ることもある**ので、
+push 直後に叩いたときは `gh run list --branch <branch> --limit 1` で
 新しい実行が始まっているか確かめる。
 
+- 🔴 **`Closes #12` は英語のまま書く。** 「閉じる: #12」ではイシューが閉じない。
+  GitHub が見るのは `close` / `fix` / `resolve` 系の英単語だけ。
+  2026-08-08 に #180 / #182 / #185 を閉じ忘れた（マージ後に手で閉じた）
 - **`main` に直接コミットしない。** 人間のレビューはないが、**PR は CI のゲート**として使う
 - **CI が赤のままマージしない。** 落ちたテストを skip して通すのも同じこと
 - **テストを書かずに機能を入れない。** 特に認可（§6）
