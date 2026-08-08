@@ -1,7 +1,9 @@
 import { exports } from 'cloudflare:workers'
 import {
   EXPORT_VERSION,
+  ITEMS_PER_LIST_MAX,
   buildExportFile,
+  buildMarkdown,
   exportFileName,
   exportFileSchema,
 } from '@yaritai100list/shared'
@@ -93,6 +95,75 @@ describe('buildExportFile', () => {
   })
 })
 
+describe('buildMarkdown', () => {
+  /** 時間帯に左右されないよう、テストでは日付部分をそのまま使う */
+  const formatDate = (iso: string) => iso.slice(0, 10)
+
+  const file = (items: { text: string; completedAt: string | null }[]) =>
+    buildExportFile(
+      {
+        title: '2026年の目標',
+        items: items.map((item) => ({
+          text: item.text,
+          completedAt: item.completedAt === null ? null : new Date(item.completedAt),
+        })),
+      },
+      new Date(0),
+    )
+
+  it('見出し・埋まり具合・チェックリストで出る', () => {
+    const markdown = buildMarkdown(
+      file([
+        { text: '南極に行く', completedAt: '2026-05-01T00:00:00.000Z' },
+        { text: 'オーロラを見る', completedAt: null },
+      ]),
+      formatDate,
+    )
+
+    expect(markdown).toBe(
+      [
+        '## 2026年の目標',
+        '',
+        `2 / ${String(ITEMS_PER_LIST_MAX)}`,
+        '',
+        '- [x] 南極に行く（2026-05-01 達成）',
+        '- [ ] オーロラを見る',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('🔴 見出しは `##`（転載先の記事にはすでに `#` がある）', () => {
+    expect(buildMarkdown(file([]), formatDate).startsWith('## ')).toBe(true)
+  })
+
+  it('🔴 番号を振らない', () => {
+    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]), formatDate)
+
+    expect(markdown).not.toContain('001')
+    expect(markdown).not.toMatch(/^1\./m)
+  })
+
+  it('🔴 未入力の枠を出さない（100行の空行は転載に向かない）', () => {
+    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]), formatDate)
+
+    expect(markdown.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(1)
+  })
+
+  it('末尾が改行で終わる（貼った先で次の行とくっつかない）', () => {
+    expect(buildMarkdown(file([]), formatDate).endsWith('\n')).toBe(true)
+  })
+
+  it('日付の整形を外から受け取る（時間帯を画面と揃えるため）', () => {
+    const markdown = buildMarkdown(
+      file([{ text: 'x', completedAt: '2026-05-01T15:00:00.000Z' }]),
+      () => '2026年5月2日',
+    )
+
+    expect(markdown).toContain('（2026年5月2日 達成）')
+  })
+})
+
 describe('exportFileName', () => {
   it('リスト名と日付が入る', () => {
     expect(exportFileName('2026年の目標', new Date('2026-08-07T12:00:00.000Z'))).toBe(
@@ -108,6 +179,12 @@ describe('exportFileName', () => {
 
   it('落とした結果が空なら既定の名前になる', () => {
     expect(exportFileName('///', new Date('2026-08-07T00:00:00.000Z'))).toBe('list-2026-08-07.json')
+  })
+
+  it('マークダウンなら拡張子が変わる', () => {
+    expect(exportFileName('目標', new Date('2026-08-07T00:00:00.000Z'), 'md')).toBe(
+      '目標-2026-08-07.md',
+    )
   })
 })
 

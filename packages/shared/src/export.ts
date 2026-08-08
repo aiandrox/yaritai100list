@@ -110,12 +110,60 @@ export function hasFutureCompletedAt(file: ExportFile, now: Date): boolean {
  * ファイル名に使えない文字（`/` や `\`、制御文字など）はリスト名に入りうるので落とす。
  * 落とした結果が空になることもある（記号だけのタイトル）ので、そのときは既定の名前にする。
  */
-export function exportFileName(title: string, exportedAt: Date): string {
+export function exportFileName(
+  title: string,
+  exportedAt: Date,
+  extension: 'json' | 'md' = 'json',
+): string {
   const date = exportedAt.toISOString().slice(0, 10)
 
   // 経路の区切りと、OS がファイル名に使えない文字だけを落とす。
   // 落としすぎると何のリストか分からなくなるので、日本語や記号は残す
   const safe = title.replace(/[/\\:*?"<>|]/g, '').trim()
 
-  return `${safe === '' ? 'list' : safe}-${date}.json`
+  return `${safe === '' ? 'list' : safe}-${date}.${extension}`
+}
+
+/**
+ * マークダウンで書き出す（#124）。**ブログなどへの転載用。**
+ *
+ * 🔴 **これは読み込まない。人が読むためのもの。**
+ * 往復させたいなら JSON（`buildExportFile`）を使う。
+ *
+ * 決めたこと（2026-08-08、#124）:
+ *
+ * - **見出しは `##`。** 転載先の記事にはすでに記事タイトル（`#`）があることが多い。
+ *   独立した文書として見ると `#` が正しいが、**貼る側が下げるより、貼られる側に合わせる**
+ * - **チェックリスト（`- [x]`）で完了を表す。** GitHub / Zenn / Qiita では
+ *   チェックボックスとして描かれ、対応していない場所でも文字として意味が通る
+ * - **番号は振らない。** 未入力の枠を出さないので「001〜100」の連番という意味が薄れるし、
+ *   転載先で番号がずれると直すのが面倒になる
+ * - **未入力の枠は出さない。** 100行の空行は転載に向かない
+ * - **達成日は出す。** 消すのは簡単だが、**出さなかったものは後から足せない。**
+ *   「いつ叶えたか」はこのアプリが真偽値にしなかった理由そのもの（`PRODUCT_SPEC.md` §3）
+ * - **埋まり具合（23 / 100）を出す。** 100という枠がコンセプトの核なので、
+ *   一覧だけ貼られると意味が半分になる
+ *
+ * `formatDate` を外から受け取るのは**時間帯のため。**
+ * 完了日時は UTC で持っているので、そのまま日付にすると閲覧者の日付と1日ずれうる。
+ * **画面と同じ見え方にするため、ブラウザの時間帯で整形したものを渡す。**
+ */
+export function buildMarkdown(file: ExportFile, formatDate: (isoDate: string) => string): string {
+  const lines = [
+    `## ${file.list.title}`,
+    '',
+    // 上限は packages/shared の定数。ここに数字を書かない
+    `${String(file.list.items.length)} / ${String(ITEMS_PER_LIST_MAX)}`,
+    '',
+  ]
+
+  for (const item of file.list.items) {
+    const mark = item.completedAt === null ? '- [ ]' : '- [x]'
+    const done = item.completedAt === null ? '' : `（${formatDate(item.completedAt)} 達成）`
+
+    lines.push(`${mark} ${item.text}${done}`)
+  }
+
+  // 末尾を改行で終える。貼り付けた先で次の行とくっつかない
+  return `${lines.join('\n')}\n`
 }
