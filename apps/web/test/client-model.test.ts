@@ -3,6 +3,7 @@ import {
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
+  LISTS_PER_USER_MAX,
 } from '@yaritai100list/shared'
 import { describe, expect, it } from 'vitest'
 
@@ -567,12 +568,28 @@ describe('signInBenefits / showsSignInBenefits', () => {
     expect(signInBenefits(NOW)).toHaveLength(5)
   })
 
-  it('いまの状態と、ログイン後の両方を書いている', () => {
-    // 利点だけ並べても差が伝わらない。**失うかもしれないことを先に言う**
+  it('ログイン後にできることは全部書いてある', () => {
     for (const benefit of signInBenefits(NOW)) {
-      expect(benefit.without).not.toBe('')
       expect(benefit.with).not.toBe('')
     }
+  })
+
+  it('🔴 いまの状態は、読み手が知らないことがある項目にだけ書く', () => {
+    // 「見せられません」のような**見出しの裏返し**を全項目に付けると、
+    // 読む量が倍になるのに増える情報はゼロになる
+    const withCurrent = signInBenefits(NOW).filter((benefit) => benefit.without !== undefined)
+
+    expect(withCurrent.map((benefit) => benefit.title)).toEqual([
+      'リストが消えない',
+      `リストを${String(LISTS_PER_USER_MAX)}つまで持てる`,
+    ])
+  })
+
+  it('書き出しは画像とマークダウンの両方に触れている', () => {
+    const exportable = signInBenefits(NOW).find((benefit) => benefit.title.includes('書き出せる'))
+
+    expect(exportable?.with).toContain('画像')
+    expect(exportable?.with).toContain('マークダウン')
   })
 
   it('🔴 一番上は「消えない」（一番効くので先に言う）', () => {
