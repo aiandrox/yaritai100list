@@ -8,15 +8,14 @@ import { OG_SIGNATURE_TTL_SECONDS, type OgPayload } from '@yaritai100list/shared
  * 描くデータだけを署名して渡す。
  */
 
+/**
+ * ⚠️ **`RENDER_URL` はここに無い。** 秘密ではないので `wrangler.jsonc` の `vars` にあり、
+ * 型は `wrangler types` が `Env` に生成する（`BETTER_AUTH_URL` と同じ扱い）。
+ * 設定をコードに乗せておく、という方針（`TECH_STACK.md` §1）。
+ *
+ * **消すと型エラーになる**ので、消したことに気づける。
+ */
 export interface RenderEnv {
-  /**
-   * 画像生成サービス（Deno Deploy）の URL。
-   *
-   * **未設定なら画像を出さない**（503）。#172 でサービスを作るまではこの状態。
-   * 落ちるのではなく「まだ無い」と返す。
-   */
-  readonly RENDER_URL?: string
-
   /**
    * 生成サービスと共有する鍵。**両側で同じ値**（`docs/console-settings.md`）。
    *

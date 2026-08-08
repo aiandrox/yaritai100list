@@ -684,15 +684,24 @@ const app = new Hono<AppEnv>()
 
     const { RENDER_URL, RENDER_HMAC_SECRET } = c.env
 
-    // まだ生成サービスが無い（#172）。**落ちるのではなく「用意できていない」と返す**
-    if (!RENDER_URL || !RENDER_HMAC_SECRET) {
+    // 🔴 **鍵が無ければ画像を出さない。** 署名なしで叩ける状態を作らない
+    // （`TECH_STACK.md` §9）。**落ちるのではなく「用意できていない」と返す**。
+    // URL の方は wrangler.jsonc の vars にあるので必ずある（消せば型エラーになる）
+    if (!RENDER_HMAC_SECRET) {
       return c.json({ error: 'Image Not Available' } as const, 503)
     }
 
     const payload = buildOgPayload(list, await selectItems(db, list.id), new Date())
     const signature = await signOgPayload(payload, RENDER_HMAC_SECRET)
 
-    const rendered = await fetch(renderRequestUrl(RENDER_URL, payload, signature))
+    // ⚠️ **繋がらないときは fetch が投げる**（サービスがまだ無い、落ちている）。
+    // 捕まえないと 500 になり、**失敗を「壊れた」として扱ってしまう**
+    let rendered: Response
+    try {
+      rendered = await fetch(renderRequestUrl(RENDER_URL, payload, signature))
+    } catch {
+      return c.json({ error: 'Image Not Available' } as const, 503)
+    }
 
     if (!rendered.ok) {
       // 生成に失敗したものをキャッシュさせない

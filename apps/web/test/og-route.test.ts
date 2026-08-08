@@ -140,9 +140,9 @@ describe('GET /og/:shareId', () => {
     expect(await res.json()).toEqual({ error: 'Image Not Available' })
   })
 
-  it('🔴 鍵や URL が未設定なら画像を出さない', async () => {
+  it('🔴 鍵が未設定なら画像を出さない', async () => {
     // **署名なしで叩ける状態を作らない**（TECH_STACK.md §9）。
-    // テスト環境には RENDER_URL も RENDER_HMAC_SECRET も無い
+    // テスト環境に RENDER_HMAC_SECRET は無い（.dev.vars も CI も入れていない）
     const list = await createList({ visibility: 'public' })
 
     expect((await request(`/og/${list.shareId}`)).status).toBe(503)

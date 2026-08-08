@@ -241,9 +241,9 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 | コンソール | https://console.deno.com | Classic（`dash.deno.com`）は 2026-07-20 廃止 |
 | organization slug | **`aiandrox`** | |
 | プラン | **Free** | **クレジットカード登録は不要**（2026-08-06 にサインアップ画面で確認） |
-| アプリ名 | **`yaritai100list-render`**（未作成） | #8 で作る |
+| アプリ名 | **`yaritai100list-render`**（未作成） | #172 で作る。**この名前で作る**（`RENDER_URL` がこの名前を前提にしている） |
 | 想定ホスト名 | `yaritai100list-render.aiandrox.deno.net` | |
-| HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない |
+| HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない。**Cloudflare 側は設定済み**（2026-08-08） |
 
 ### コンソールでしか触れないもの
 
@@ -398,7 +398,7 @@ SDK 側は何も送っていない。消したい場合は
 | `GOOGLE_CLIENT_SECRET` | Google OAuth | `.dev.vars` | `wrangler secret put` | — |
 | `BETTER_AUTH_SECRET` | セッション署名 | `.dev.vars` | `wrangler secret put` | — |
 | `RENDER_HMAC_SECRET` | 画像生成の署名（**両側で同じ値**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
-| `RENDER_URL` | 画像生成サービスの URL（秘密ではないが、環境ごとに違うのでここ） | `.dev.vars` | `wrangler secret put` | — |
+| `RENDER_URL` | 画像生成サービスの URL。**秘密ではないので `wrangler.jsonc` の `vars`**（#172） | `.dev.vars` で上書き可 | `wrangler.jsonc` の `vars` | — |
 | `SENTRY_DSN` | エラー通知（**シークレット扱い。理由は Sentry の節**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
 
 変数名は #3 / #8 / #18 での想定。**確定したらこの表を更新する。**
