@@ -111,7 +111,7 @@ describe('buildMarkdown', () => {
       new Date(0),
     )
 
-  it('見出し・埋まり具合・チェックリストで出る', () => {
+  it('見出し・達成の数・チェックリストで出る', () => {
     const markdown = buildMarkdown(
       file([
         { text: '南極に行く', completedAt: '2026-05-01T00:00:00.000Z' },
@@ -124,13 +124,30 @@ describe('buildMarkdown', () => {
       [
         '## 2026年の目標',
         '',
-        `2 / ${String(ITEMS_PER_LIST_MAX)}`,
+        '1 / 2 達成済み',
         '',
         '- [x] 南極に行く（2026-05-01 達成）',
         '- [ ] オーロラを見る',
         '',
       ].join('\n'),
     )
+  })
+
+  it('🔴 数字は「達成済み / 入力済み」。画面の埋まり具合とは意図が違う', () => {
+    // 画面は「まだ埋まっていない」という動機を出すために 入力済み / 100 を出すが、
+    // 転載を読む人が知りたいのは**どれだけ叶えたか**（#129）
+    const markdown = buildMarkdown(
+      file([
+        { text: 'a', completedAt: '2026-05-01T00:00:00.000Z' },
+        { text: 'b', completedAt: '2026-05-02T00:00:00.000Z' },
+        { text: 'c', completedAt: null },
+      ]),
+      formatDate,
+    )
+
+    expect(markdown).toContain('2 / 3 達成済み')
+    // 分母は 100 ではなく、実際に書いた数
+    expect(markdown).not.toContain(String(ITEMS_PER_LIST_MAX))
   })
 
   it('🔴 見出しは `##`（転載先の記事にはすでに `#` がある）', () => {

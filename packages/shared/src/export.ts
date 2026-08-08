@@ -141,19 +141,23 @@ export function exportFileName(
  * - **未入力の枠は出さない。** 100行の空行は転載に向かない
  * - **達成日は出す。** 消すのは簡単だが、**出さなかったものは後から足せない。**
  *   「いつ叶えたか」はこのアプリが真偽値にしなかった理由そのもの（`PRODUCT_SPEC.md` §3）
- * - **埋まり具合（23 / 100）を出す。** 100という枠がコンセプトの核なので、
- *   一覧だけ貼られると意味が半分になる
+ * - 🔴 **数字は「達成済み / 入力済み」**（2026-08-08、#129）。
+ *   **画面の「23 / 100」（埋まり具合）とは意図が違う。揃えない。**
+ *   画面は「まだ埋まっていない」という動機を出すためのものだが、
+ *   転載を読む人が知りたいのは**どれだけ叶えたか**。分母も 100 ではなく
+ *   **実際に書いた数**にする（書いていない枠を数に入れても意味がない）
  *
  * `formatDate` を外から受け取るのは**時間帯のため。**
  * 完了日時は UTC で持っているので、そのまま日付にすると閲覧者の日付と1日ずれうる。
  * **画面と同じ見え方にするため、ブラウザの時間帯で整形したものを渡す。**
  */
 export function buildMarkdown(file: ExportFile, formatDate: (isoDate: string) => string): string {
+  const completed = file.list.items.filter((item) => item.completedAt !== null).length
+
   const lines = [
     `## ${file.list.title}`,
     '',
-    // 上限は packages/shared の定数。ここに数字を書かない
-    `${String(file.list.items.length)} / ${String(ITEMS_PER_LIST_MAX)}`,
+    `${String(completed)} / ${String(file.list.items.length)} 達成済み`,
     '',
   ]
 
