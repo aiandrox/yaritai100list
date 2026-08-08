@@ -46,6 +46,8 @@ export const exportedItemSchema = z
   })
   .strict()
 
+export type ExportedItem = z.infer<typeof exportedItemSchema>
+
 export const exportedListSchema = z
   .object({
     title: listTitleSchema,
@@ -125,6 +127,31 @@ export function exportFileName(
 }
 
 /**
+ * マークダウンの行の形（#209）。
+ *
+ * - `checklist`: `- [x] グランピング`。GitHub / Zenn / Qiita ではチェックボックスになる
+ * - `numbered`: `1. グランピング`。番号を振りたい転載先向け
+ */
+export type MarkdownStyle = 'checklist' | 'numbered'
+
+export interface MarkdownOptions {
+  style: MarkdownStyle
+  /** 達成日を行に出すか。**出さなくても「完了かどうか」は消さない**（`buildMarkdown`） */
+  showCompletedDate: boolean
+}
+
+/**
+ * 既定は **#124 で決めた出力そのまま**（チェックリスト・達成日あり）。
+ *
+ * #209 で選べるようにしたが、**決定を覆したわけではない。**
+ * 何も選ばなかった人には、これまでと1文字も変わらないものが出る。
+ */
+export const DEFAULT_MARKDOWN_OPTIONS: MarkdownOptions = {
+  style: 'checklist',
+  showCompletedDate: true,
+}
+
+/**
  * マークダウンで書き出す（#124）。**ブログなどへの転載用。**
  *
  * 🔴 **これは読み込まない。人が読むためのもの。**
@@ -134,12 +161,13 @@ export function exportFileName(
  *
  * - **見出しは `##`。** 転載先の記事にはすでに記事タイトル（`#`）があることが多い。
  *   独立した文書として見ると `#` が正しいが、**貼る側が下げるより、貼られる側に合わせる**
- * - **チェックリスト（`- [x]`）で完了を表す。** GitHub / Zenn / Qiita では
+ * - **既定はチェックリスト（`- [x]`）で完了を表す。** GitHub / Zenn / Qiita では
  *   チェックボックスとして描かれ、対応していない場所でも文字として意味が通る
- * - **番号は振らない。** 未入力の枠を出さないので「001〜100」の連番という意味が薄れるし、
- *   転載先で番号がずれると直すのが面倒になる
+ * - **既定では番号を振らない**（#209 で選べるようにした）。未入力の枠を出さないので
+ *   「001〜100」の連番という意味が薄れるし、転載先で番号がずれると直すのが面倒になる
  * - **未入力の枠は出さない。** 100行の空行は転載に向かない
- * - **達成日は出す。** 消すのは簡単だが、**出さなかったものは後から足せない。**
+ * - **既定では達成日を出す**（#209 で消せるようにした）。消すのは簡単だが、
+ *   **出さなかったものは後から足せない。**
  *   「いつ叶えたか」はこのアプリが真偽値にしなかった理由そのもの（`PRODUCT_SPEC.md` §3）
  * - 🔴 **数字は「達成済み / 入力済み」**（2026-08-08、#129）。
  *   **画面の「23 / 100」（埋まり具合）とは意図が違う。揃えない。**
@@ -151,9 +179,14 @@ export function exportFileName(
  * 完了日時は UTC で持っているので、そのまま日付にすると閲覧者の日付と1日ずれうる。
  * **画面と同じ見え方にするため、ブラウザの時間帯で整形したものを渡す。**
  */
-export function buildMarkdown(file: ExportFile, formatDate: (isoDate: string) => string): string {
+export function buildMarkdown(
+  file: ExportFile,
+  formatDate: (isoDate: string) => string,
+  options: MarkdownOptions = DEFAULT_MARKDOWN_OPTIONS,
+): string {
   const completed = file.list.items.filter((item) => item.completedAt !== null).length
 
+  // 数の行は形式で変えない。**どの形式でも「どれだけ叶えたか」は同じ情報**（#129）
   const lines = [
     `## ${file.list.title}`,
     '',
@@ -161,13 +194,32 @@ export function buildMarkdown(file: ExportFile, formatDate: (isoDate: string) =>
     '',
   ]
 
-  for (const item of file.list.items) {
-    const mark = item.completedAt === null ? '- [ ]' : '- [x]'
-    const done = item.completedAt === null ? '' : `（${formatDate(item.completedAt)} 達成）`
-
-    lines.push(`${mark} ${item.text}${done}`)
-  }
+  file.list.items.forEach((item, index) => {
+    lines.push(`${mark(item, index)} ${item.text}${suffix(item)}`)
+  })
 
   // 末尾を改行で終える。貼り付けた先で次の行とくっつかない
   return `${lines.join('\n')}\n`
+
+  /**
+   * 行の頭。
+   *
+   * 連番は**1から通しで振る**（未完了も数える）。画面の `001` とはずれるが、
+   * あちらは100枠の中の位置で、こちらは**書いたものの中の位置**。揃える意味が無い。
+   */
+  function mark(item: ExportedItem, index: number): string {
+    if (options.style === 'numbered') return `${String(index + 1)}.`
+
+    return item.completedAt === null ? '- [ ]' : '- [x]'
+  }
+
+  function suffix(item: ExportedItem): string {
+    if (item.completedAt === null) return ''
+    if (options.showCompletedDate) return `（${formatDate(item.completedAt)} 達成）`
+
+    // 🔴 **連番のときだけ、日付を消しても完了の印を残す。**
+    // 連番には `- [x]` にあたるものが無いので、日付まで消すと
+    // **完了かどうかを表す手段が行から全部無くなる**（#209）
+    return options.style === 'numbered' ? '（達成済）' : ''
+  }
 }
