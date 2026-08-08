@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { signCanonical, verifyCanonical } from './hmac'
 import { LIST_TITLE_MAX_LENGTH } from './limits'
 
 /**
@@ -13,9 +14,8 @@ import { LIST_TITLE_MAX_LENGTH } from './limits'
  * ここに来る時点で認可は済んでいる、という前提を**署名で担保する。**
  * 生成側は「署名が合っていれば描く」だけでよくなる。
  *
- * ⚠️ **Deno でも動くものだけを使う**（`TECH_STACK.md` §12-2）。
- * HMAC は Node の `crypto` ではなく **Web Crypto**（`crypto.subtle`）で書く。
- * どちらのランタイムにもある。
+ * HMAC の下回りは `hmac.ts`。**署名の対象の作り方だけがここにある**
+ * （用途ごとに違うため。画像出力は #189）。
  */
 
 /**
@@ -57,30 +57,9 @@ function canonical(payload: OgPayload): string {
     .join('\n')
 }
 
-async function hmacKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign', 'verify'],
-  )
-}
-
-function toHex(buffer: ArrayBuffer): string {
-  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
-
 /** 署名を作る（Cloudflare Workers 側）。 */
 export async function signOgPayload(payload: OgPayload, secret: string): Promise<string> {
-  const key = await hmacKey(secret)
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(canonical(payload)),
-  )
-
-  return toHex(signature)
+  return signCanonical(canonical(payload), secret)
 }
 
 /**
@@ -115,32 +94,5 @@ export async function verifyOgPayload(
 ): Promise<boolean> {
   if (isOgPayloadExpired(payload, now)) return false
 
-  const key = await hmacKey(secret)
-
-  // 🔴 **自分で文字列比較しない。** `crypto.subtle.verify` は時間差で漏れない
-  return crypto.subtle.verify(
-    'HMAC',
-    key,
-    hexToBytes(signature),
-    new TextEncoder().encode(canonical(payload)),
-  )
-}
-
-/**
- * 16進の文字列をバイト列に戻す。**不正な文字が来たら空を返す**（検証は必ず落ちる）。
- *
- * 戻り値を `ArrayBuffer` にしているのは、`crypto.subtle.verify` が
- * `BufferSource` を要求するため（`Uint8Array<ArrayBufferLike>` は代入できない）。
- */
-function hexToBytes(hex: string): ArrayBuffer {
-  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/.test(hex)) return new ArrayBuffer(0)
-
-  const buffer = new ArrayBuffer(hex.length / 2)
-  const bytes = new Uint8Array(buffer)
-
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  }
-
-  return buffer
+  return verifyCanonical(canonical(payload), signature, secret)
 }
