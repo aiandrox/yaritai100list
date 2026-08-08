@@ -1,5 +1,6 @@
 import { exports } from 'cloudflare:workers'
 import {
+  DEFAULT_MARKDOWN_OPTIONS,
   EXPORT_VERSION,
   ITEMS_PER_LIST_MAX,
   buildExportFile,
@@ -154,7 +155,7 @@ describe('buildMarkdown', () => {
     expect(buildMarkdown(file([]), formatDate).startsWith('## ')).toBe(true)
   })
 
-  it('🔴 番号を振らない', () => {
+  it('🔴 既定では番号を振らない（#209 で選べるようにしたが、既定は変えていない）', () => {
     const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]), formatDate)
 
     expect(markdown).not.toContain('001')
@@ -178,6 +179,78 @@ describe('buildMarkdown', () => {
     )
 
     expect(markdown).toContain('（2026年5月2日 達成）')
+  })
+
+  describe('形式を選ぶ（#209）', () => {
+    /** 完了と未完了を1つずつ。**完了だけ見ると「未完了と区別が付くか」が分からない** */
+    const both = () =>
+      file([
+        { text: 'グランピング', completedAt: '2026-08-08T00:00:00.000Z' },
+        { text: 'オーロラを見る', completedAt: null },
+      ])
+
+    /** 見出し・空行・数の行を落として、項目の行だけ見る */
+    const rows = (markdown: string) =>
+      markdown
+        .split('\n')
+        .filter((line) => line !== '' && !line.startsWith('## ') && !line.endsWith('達成済み'))
+
+    it('既定は #124 の出力そのまま（チェックリスト・達成日あり）', () => {
+      expect(buildMarkdown(both(), formatDate, DEFAULT_MARKDOWN_OPTIONS)).toBe(
+        buildMarkdown(both(), formatDate),
+      )
+    })
+
+    it('チェックリスト × 達成日あり', () => {
+      const markdown = buildMarkdown(both(), formatDate, {
+        style: 'checklist',
+        showCompletedDate: true,
+      })
+
+      expect(rows(markdown)).toEqual([
+        '- [x] グランピング（2026-08-08 達成）',
+        '- [ ] オーロラを見る',
+      ])
+    })
+
+    it('チェックリスト × 達成日なし（`- [x]` が残るので、何も足さない）', () => {
+      const markdown = buildMarkdown(both(), formatDate, {
+        style: 'checklist',
+        showCompletedDate: false,
+      })
+
+      expect(rows(markdown)).toEqual(['- [x] グランピング', '- [ ] オーロラを見る'])
+    })
+
+    it('連番 × 達成日あり。番号は1から通しで振る（未完了も数える）', () => {
+      const markdown = buildMarkdown(both(), formatDate, {
+        style: 'numbered',
+        showCompletedDate: true,
+      })
+
+      expect(rows(markdown)).toEqual(['1. グランピング（2026-08-08 達成）', '2. オーロラを見る'])
+    })
+
+    it('🔴 連番 × 達成日なしのとき、完了した項目に `（達成済）` が付く', () => {
+      // 連番には `- [x]` にあたるものが無い。**日付まで消すと、
+      // 完了かどうかを表す手段が行から全部無くなる**
+      const markdown = buildMarkdown(both(), formatDate, {
+        style: 'numbered',
+        showCompletedDate: false,
+      })
+
+      expect(rows(markdown)).toEqual(['1. グランピング（達成済）', '2. オーロラを見る'])
+    })
+
+    it('数の行は形式で変えない', () => {
+      for (const style of ['checklist', 'numbered'] as const) {
+        for (const showCompletedDate of [true, false]) {
+          expect(buildMarkdown(both(), formatDate, { style, showCompletedDate })).toContain(
+            '1 / 2 達成済み',
+          )
+        }
+      }
+    })
   })
 })
 

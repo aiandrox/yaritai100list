@@ -1,10 +1,12 @@
 import {
   buildMarkdown,
+  DEFAULT_MARKDOWN_OPTIONS,
   exportFileName,
   exportFileSchema,
   type ExportFile,
+  type MarkdownStyle,
 } from '@yaritai100list/shared'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'wouter'
 
 import { api } from './api'
@@ -27,12 +29,12 @@ import { type SessionState } from './model'
  *
  * 画像（#193）は3つ目の形式。**貼るのでも読み込むのでもなく、そのまま見せるもの。**
  * こちらだけサーバーで作る（`/api/lists/:listId/image`。#192）。
+ *
+ * 節の並びは **見せるもの（画像 → マークダウン）が先、取っておくもの（JSON）が後**（#209）。
+ * JSON を使うのはアカウントを移すときだけで、**一番出番が少ないものを一番上に置かない。**
  */
 
-type State =
-  | { status: 'loading' }
-  | { status: 'failed' }
-  | { status: 'ready'; file: ExportFile; markdown: string }
+type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; file: ExportFile }
 
 /** 画像の作成は数秒かかる。**押した後に何も起きないように見せない。** */
 type ImageState = 'idle' | 'working' | 'failed'
@@ -73,6 +75,18 @@ function ExportPageBody({ listId }: { listId: string }) {
   const [copied, setCopied] = useState(false)
   const [image, setImage] = useState<ImageState>('idle')
 
+  /**
+   * マークダウンの形式（#209）。
+   *
+   * **覚えない。** 開き直せば #124 で決めた既定に戻る。
+   * 前回の選択が黙って残ると、**プレビューを見ずにコピーしたときに
+   * 意図しない形が貼られる**（この画面での作業は毎回1回で終わる）。
+   */
+  const [style, setStyle] = useState<MarkdownStyle>(DEFAULT_MARKDOWN_OPTIONS.style)
+  const [showCompletedDate, setShowCompletedDate] = useState(
+    DEFAULT_MARKDOWN_OPTIONS.showCompletedDate,
+  )
+
   const load = useCallback(async () => {
     try {
       const res = await api.api.lists[':listId'].export.$get({ param: { listId } })
@@ -87,12 +101,7 @@ function ExportPageBody({ listId }: { listId: string }) {
         return
       }
 
-      setState({
-        status: 'ready',
-        file: parsed.data,
-        // 日付の整形だけを渡す。中身の組み立ては shared の純関数（テストしてある）
-        markdown: buildMarkdown(parsed.data, (iso) => new Date(iso).toLocaleDateString('ja-JP')),
-      })
+      setState({ status: 'ready', file: parsed.data })
     } catch {
       setState({ status: 'failed' })
     }
@@ -101,6 +110,28 @@ function ExportPageBody({ listId }: { listId: string }) {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * 貼るための文字列。**形式を変えたらその場で作り直す。**
+   *
+   * 組み立ては shared の純関数（テストしてある）。ここから渡すのは
+   * **日付の整形だけ**で、これは時間帯のため（`buildMarkdown`）。
+   */
+  const markdown = useMemo(
+    () =>
+      state.status === 'ready'
+        ? buildMarkdown(state.file, (iso) => new Date(iso).toLocaleDateString('ja-JP'), {
+            style,
+            showCompletedDate,
+          })
+        : '',
+    [state, style, showCompletedDate],
+  )
+
+  // 中身が変われば「コピーしました」は嘘になる。**貼るのはいま見えているもの**
+  useEffect(() => {
+    setCopied(false)
+  }, [markdown])
 
   if (state.status === 'loading') return <p className="py-8 text-slate-500">読み込み中</p>
 
@@ -112,7 +143,7 @@ function ExportPageBody({ listId }: { listId: string }) {
     )
   }
 
-  const { file, markdown } = state
+  const { file } = state
 
   const downloadJson = () => {
     const content = JSON.stringify(file, null, 2)
@@ -186,25 +217,6 @@ function ExportPageBody({ listId }: { listId: string }) {
       <h1 className="mt-2 text-xl font-bold text-slate-900">書き出す</h1>
 
       <section className="mt-6 rounded bg-white px-3 py-3">
-        <h2 className="font-bold text-slate-900">このアプリに読み込み直す（JSON）</h2>
-        <p className="mt-1 text-xs text-slate-600">
-          <strong>このアプリで読み込むための</strong>ファイルです。
-          別のアカウントへ移したいときや、手元に取っておきたいときに使います。
-          <br />
-          読み込みは「すべてのリスト」の
-          <strong>「ファイルからリストを読み込む」</strong>から。
-        </p>
-
-        <button
-          type="button"
-          onClick={downloadJson}
-          className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
-        >
-          JSON をダウンロード
-        </button>
-      </section>
-
-      <section className="mt-4 rounded bg-white px-3 py-3">
         <h2 className="font-bold text-slate-900">画像で見せる（PNG）</h2>
         <p className="mt-1 text-xs text-slate-600">
           <strong>やりたいこと100個を1枚に並べた画像</strong>です。SNS に貼ったり、
@@ -233,11 +245,18 @@ function ExportPageBody({ listId }: { listId: string }) {
       <section className="mt-4 rounded bg-white px-3 py-3">
         <h2 className="font-bold text-slate-900">ブログなどに貼る（マークダウン）</h2>
         <p className="mt-1 text-xs text-slate-600">
-          下の内容を<strong>そのまま貼れます</strong>。
+          下の内容を<strong>そのまま貼れます</strong>。貼る先に合わせて形を選べます。
           <br />
           <strong>このアプリに読み込むことはできません。</strong>
           戻せる形で持ち出したいときは JSON を使ってください。
         </p>
+
+        <MarkdownOptionsForm
+          style={style}
+          showCompletedDate={showCompletedDate}
+          onStyleChange={setStyle}
+          onShowCompletedDateChange={setShowCompletedDate}
+        />
 
         {/* 貼る前に中身を確かめられるようにする。「そのまま貼れる」を言葉で言うより早い */}
         <pre className="mt-3 max-h-64 overflow-auto rounded bg-brand-soft px-2 py-2 text-[11px] whitespace-pre-wrap text-slate-700">
@@ -256,6 +275,86 @@ function ExportPageBody({ listId }: { listId: string }) {
           {copied ? 'コピーしました' : 'コピー'}
         </button>
       </section>
+
+      <section className="mt-4 rounded bg-white px-3 py-3">
+        <h2 className="font-bold text-slate-900">このアプリに読み込み直す（JSON）</h2>
+        <p className="mt-1 text-xs text-slate-600">
+          <strong>このアプリで読み込むための</strong>ファイルです。
+          別のアカウントへ移したいときや、手元に取っておきたいときに使います。
+          <br />
+          読み込みは「すべてのリスト」の
+          <strong>「ファイルからリストを読み込む」</strong>から。
+        </p>
+
+        <button
+          type="button"
+          onClick={downloadJson}
+          className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
+        >
+          JSON をダウンロード
+        </button>
+      </section>
+    </div>
+  )
+}
+
+/** 行の形の選択肢。**見本を添える。** 名前だけでは何が出るのか分からない */
+const STYLES: { value: MarkdownStyle; label: string; sample: string }[] = [
+  { value: 'checklist', label: 'チェックリスト', sample: '- [x] グランピング' },
+  { value: 'numbered', label: '連番', sample: '1. グランピング' },
+]
+
+/**
+ * マークダウンの形の選択（#209）。
+ *
+ * 下にプレビューがあるので、**ここでは結果を文章で説明しない。**
+ * 押せば下が変わる、で足りる。
+ */
+function MarkdownOptionsForm({
+  style,
+  showCompletedDate,
+  onStyleChange,
+  onShowCompletedDateChange,
+}: {
+  style: MarkdownStyle
+  showCompletedDate: boolean
+  onStyleChange: (style: MarkdownStyle) => void
+  onShowCompletedDateChange: (show: boolean) => void
+}) {
+  return (
+    <div className="mt-3 rounded bg-brand-soft px-2 py-2">
+      {/* 排他の選択なので radio。fieldset にしないと、何の選択なのかが読み上げに乗らない */}
+      <fieldset>
+        <legend className="text-xs font-bold text-slate-700">行の形</legend>
+
+        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+          {STYLES.map((option) => (
+            <label key={option.value} className="flex items-center gap-1 text-xs text-slate-700">
+              <input
+                type="radio"
+                name="markdown-style"
+                checked={style === option.value}
+                onChange={() => {
+                  onStyleChange(option.value)
+                }}
+              />
+              {option.label}
+              <code className="text-[11px] text-slate-500">{option.sample}</code>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <label className="mt-2 flex items-center gap-1 text-xs text-slate-700">
+        <input
+          type="checkbox"
+          checked={showCompletedDate}
+          onChange={(e) => {
+            onShowCompletedDateChange(e.target.checked)
+          }}
+        />
+        達成日を出す
+      </label>
     </div>
   )
 }
