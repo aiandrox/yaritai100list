@@ -3,6 +3,7 @@ import satori from 'satori'
 
 import {
   buildOgTemplate,
+  isOgPayloadExpired,
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
   ogPayloadSchema,
@@ -59,8 +60,13 @@ const FONTS = [
 /**
  * 問い合わせから、描く内容を取り出す。
  *
- * **合わない理由を返さない。** 「期限切れ」も「改竄」も、
+ * 🔴 **合わない理由を応答に載せない。** 「期限切れ」も「改竄」も、
  * 呼び出し側にできることは変わらない（どちらも描かない）。
+ * 出し分けると、叩く側に手がかりを与える。
+ *
+ * ⚠️ **ただしログには残す**（#184）。原因も対処も違うのに区別できず、
+ * 実際に「両側の鍵が違う」のを見つけるのに時間がかかった。
+ * **署名も鍵も書かない**（ログから叩けるようになる）。
  */
 async function readPayload(url: URL, now: Date) {
   const params = url.searchParams
@@ -72,10 +78,26 @@ async function readPayload(url: URL, now: Date) {
     exp: Number(params.get('exp')),
   })
 
-  if (!parsed.success) return null
+  if (!parsed.success) {
+    // どの項目が形として通らなかったか。**値は書かない**
+    console.error(
+      `og: 形が違う（${parsed.error.issues.map((issue) => issue.path.join('.')).join(', ')}）`,
+    )
+    return null
+  }
+
+  // 🔴 期限は `verifyOgPayload` も見る。ここで見るのは**ログのためだけ**。
+  // 判定そのものは `isOgPayloadExpired` の1箇所にある
+  if (isOgPayloadExpired(parsed.data, now)) {
+    console.error('og: 期限が切れている（呼び出し側の時計がずれている可能性）')
+    return null
+  }
 
   const signature = params.get('sig') ?? ''
-  if (!(await verifyOgPayload(parsed.data, signature, SECRET!, now))) return null
+  if (!(await verifyOgPayload(parsed.data, signature, SECRET!, now))) {
+    console.error('og: 署名が合わない（両側の RENDER_HMAC_SECRET が違う可能性）')
+    return null
+  }
 
   return parsed.data
 }
