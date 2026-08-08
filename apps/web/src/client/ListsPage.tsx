@@ -329,6 +329,14 @@ function ListRow({
           行にボタンを並べただけでは、どちらが何のためのものか分からなかった
         */}
         <Link
+          href={`/lists/${list.id}/share`}
+          aria-label={`${list.title} の共有設定`}
+          className="shrink-0 px-1 text-xs text-brand-deep underline"
+        >
+          共有
+        </Link>
+
+        <Link
           href={`/lists/${list.id}/export`}
           aria-label={`${list.title} を書き出す`}
           className="shrink-0 px-1 text-xs text-brand-deep underline"
