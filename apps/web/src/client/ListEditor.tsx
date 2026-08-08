@@ -3,7 +3,7 @@ import {
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
 } from '@yaritai100list/shared'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { filledCount, toSlots, type CompletionPermission, type Item, type LocalList } from './model'
 
@@ -136,6 +136,17 @@ export function ListEditor({
   )
 }
 
+/**
+ * リストのタイトル。**普段は見出しで、押したときだけ入力欄になる**（#144）。
+ *
+ * ずっと入力欄にしていると2つ困る:
+ *
+ * - **編集できることが分からない。** 枠線が無いと見出しにしか見えない
+ * - **読むつもりで触っただけで書き換えられる状態になる**
+ *
+ * Esc で取り消して元の値に戻す。**確定と取り消しの両方を用意する**
+ * （入力欄しか無いと、間違えて消したときに戻す手段が無い）。
+ */
 function ListTitleField({
   title,
   onRename,
@@ -143,15 +154,51 @@ function ListTitleField({
   title: string
   onRename: (t: string) => Promise<boolean>
 }) {
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(title)
+  const input = useRef<HTMLInputElement>(null)
+
+  // 押した後にもう一度押させない
+  useEffect(() => {
+    if (editing) input.current?.focus()
+  }, [editing])
 
   const commit = async () => {
+    setEditing(false)
+
     if (draft === title) return
-    if (!(await onRename(draft))) setDraft(title) // 拒否されたら見えている値を実際の値に戻す
+    if (!(await onRename(draft))) setDraft(title) // 拒否されたら実際の値に戻す
+  }
+
+  const cancel = () => {
+    setDraft(title)
+    setEditing(false)
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-baseline gap-2">
+        <h1 className="min-w-0 flex-1 text-xl font-bold break-words text-slate-900">{title}</h1>
+
+        <button
+          type="button"
+          aria-label="リストのタイトルを変える"
+          onClick={() => {
+            // 直前に拒否された下書きが残っていることがあるので、開くときに揃える
+            setDraft(title)
+            setEditing(true)
+          }}
+          className="shrink-0 text-xs text-brand-deep underline"
+        >
+          変える
+        </button>
+      </div>
+    )
   }
 
   return (
     <input
+      ref={input}
       type="text"
       value={draft}
       aria-label="リストのタイトル"
@@ -163,8 +210,10 @@ function ListTitleField({
       onBlur={() => void commit()}
       onKeyDown={(e) => {
         if (isCommitKey(e)) e.currentTarget.blur()
+        // 取り消し。下書きを戻してから閉じるので、続けて起きる blur では何も起きない
+        if (e.key === 'Escape') cancel()
       }}
-      className="w-full rounded-md bg-transparent text-xl font-bold text-slate-900 focus:bg-white focus:outline-2 focus:outline-brand-deep"
+      className="w-full rounded-md bg-white text-xl font-bold text-slate-900 outline-2 outline-brand-deep"
     />
   )
 }
