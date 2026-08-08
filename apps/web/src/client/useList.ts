@@ -6,6 +6,7 @@ import {
   createEmptyList,
   hasAnythingToImport,
   LIST_STORAGE_KEY,
+  moveItemBy,
   parseStoredList,
   pickCurrentListId,
   removeItem,
@@ -73,13 +74,19 @@ export interface ListController {
   updateItemText: (id: string, text: string) => Promise<boolean>
   toggleItem: (item: Item) => Promise<boolean>
   removeItem: (id: string) => Promise<boolean>
+  /** 1つ分ずらす。`-1` で上、`+1` で下 */
+  moveItem: (id: string, offset: number) => Promise<boolean>
 }
 
 /**
  * 断られた理由。**ローカルの検証結果とサーバーの応答を同じ形にまとめる。**
  * 画面はどちらに保存しているかを気にせず文言を出せる。
  */
-export type Rejection = Extract<ListResult, { ok: false }>['reason'] | 'server-error'
+export type Rejection =
+  | Extract<ListResult, { ok: false }>['reason']
+  | 'server-error'
+  /** 並べ替えを送ったら、サーバー側の項目と食い違っていた（#142） */
+  | 'order-stale'
 
 /**
  * @param requestedListId `/lists/:listId` で開いたときのリスト。
@@ -351,6 +358,57 @@ export function useList(
           )
         : // 未ログインでは完了にできない（#77）。ここへは来ない
           false,
+
+    /**
+     * 並べ替え（#142）。**押すたびに送る。**
+     *
+     * 「確定してからまとめて送る」形にすると、押した後に確定を忘れて消える。
+     * 他の操作（本文・完了・削除）が全部その場で保存されるので、揃えた。
+     * 送る量は**サーバー側で減らしてある**（位置が変わった項目だけ書き直す）。
+     *
+     * 🔴 **409（項目の集合が違う）なら手元を捨てて取り直す。**
+     * 別のタブや端末で足した／消した後なので、こちらの並びを押し通してはいけない。
+     */
+    moveItem: async (itemId, offset) => {
+      if (list === null) return false
+
+      const moved = moveItemBy(list, itemId, offset)
+      if (!moved.ok) {
+        setRejection(moved.reason)
+        return false
+      }
+
+      if (!onServer) return applyLocal(moved)
+
+      const id = listId.current
+      if (id === null) return false
+
+      try {
+        const res = await api.api.lists[':listId'].items.order.$put({
+          param: { listId: id },
+          json: { itemIds: moved.list.items.map((item) => item.id) },
+        })
+
+        if (res.status === 409) {
+          setRejection('order-stale')
+          await loadFromServer()
+          return false
+        }
+
+        if (!res.ok) {
+          setRejection('server-error')
+          return false
+        }
+
+        setRejection(null)
+        await loadFromServer()
+
+        return true
+      } catch {
+        setRejection('server-error')
+        return false
+      }
+    },
 
     removeItem: async (itemId) =>
       onServer

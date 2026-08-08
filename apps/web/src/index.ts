@@ -581,11 +581,22 @@ const app = new Hono<AppEnv>()
         return c.json({ error: 'Item Set Mismatch' } as const, 409)
       }
 
+      // 🔴 **位置が変わった項目だけ書き直す**（#142）。
+      // 全部書くと、隣と入れ替えるだけで100行の書き込みになる。
+      // D1 の無料枠は 10万行/日（`TECH_STACK.md` §13）なので、押すたびに全部書くと重い
+      const currentPositions = new Map(current.map((item) => [item.id, item.position]))
+      const changed = itemIds
+        .map((id, position) => ({ id, position }))
+        .filter((row) => currentPositions.get(row.id) !== row.position)
+
       await db.batch([
         // batch は空配列を受け付けないので、必ず1つは入る touchList を先に置く
         touchList(db, listId),
-        ...itemIds.map((id, position) =>
-          db.update(items).set({ position, updatedAt: new Date() }).where(eq(items.id, id)),
+        ...changed.map((row) =>
+          db
+            .update(items)
+            .set({ position: row.position, updatedAt: new Date() })
+            .where(eq(items.id, row.id)),
         ),
       ])
 

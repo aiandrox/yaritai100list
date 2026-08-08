@@ -35,6 +35,8 @@ interface ListEditorProps {
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
   onRemoveItem: (id: string) => Promise<boolean>
+  /** 1つ分ずらす。`-1` で上、`+1` で下 */
+  onMoveItem: (id: string, offset: number) => Promise<boolean>
 }
 
 export function ListEditor({
@@ -45,6 +47,7 @@ export function ListEditor({
   onUpdateItemText,
   onToggleItem,
   onRemoveItem,
+  onMoveItem,
 }: ListEditorProps) {
   const filled = filledCount(list)
   const completed = completedCount(list)
@@ -145,6 +148,9 @@ export function ListEditor({
                 setPromptedId((current) => (current === item.id ? null : item.id))
               }}
               onRemove={(id) => void onRemoveItem(id)}
+              onMove={(id, offset) => void onMoveItem(id, offset)}
+              first={index === 0}
+              last={index === filled - 1}
             />
           ) : index === nextIndex ? (
             // key を固定して**同じ入力欄を使い回す**。項目を足すと1つ下へ移るが、
@@ -284,6 +290,9 @@ function ItemRow({
   onCommit,
   onToggle,
   onRemove,
+  onMove,
+  first,
+  last,
 }: {
   number: string
   item: Item
@@ -292,6 +301,9 @@ function ItemRow({
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onRemove: (id: string) => void
+  onMove: (id: string, offset: number) => void
+  first: boolean
+  last: boolean
 }) {
   const [draft, setDraft] = useState(item.text)
   const done = item.completedAt !== null
@@ -356,6 +368,39 @@ function ItemRow({
             {new Date(item.completedAt).toLocaleDateString('ja-JP')}
           </span>
         )}
+
+        {/*
+          並べ替え（#142）。**キーボードだけで操作できる形にしてある。**
+          ドラッグ&ドロップは座標が要るのでテストでも担保できず（TECH_STACK.md §10）、
+          それしか無いと触れない人が出る。
+
+          端では押せない。**理由は見れば分かる**（そこが端）ので、
+          押させて説明する必要は無い（#107 の作成ボタンと同じ判断）
+        */}
+        <span className="flex shrink-0 flex-col leading-none">
+          <button
+            type="button"
+            disabled={first}
+            aria-label={`${number} 番目を上へ`}
+            onClick={() => {
+              onMove(item.id, -1)
+            }}
+            className="px-1 text-[10px] text-slate-400 disabled:text-slate-200"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            disabled={last}
+            aria-label={`${number} 番目を下へ`}
+            onClick={() => {
+              onMove(item.id, 1)
+            }}
+            className="px-1 text-[10px] text-slate-400 disabled:text-slate-200"
+          >
+            ▼
+          </button>
+        </span>
 
         <button
           type="button"

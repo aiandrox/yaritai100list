@@ -14,6 +14,7 @@ import {
   formatItemNumber,
   hasAnythingToImport,
   moveItem,
+  moveItemBy,
   pickCurrentListId,
   parseStoredList,
   removeItem,
@@ -285,6 +286,45 @@ describe('moveItem', () => {
 
   it('無い ID なら not-found', () => {
     expect(moveItem(listOf('南極に行く'), 'nope', 0)).toEqual({ ok: false, reason: 'not-found' })
+  })
+})
+
+describe('moveItemBy', () => {
+  it('上へ1つ動かす', () => {
+    const list = expectOk(moveItemBy(listOf('1つ目', '2つ目', '3つ目'), 'i3', -1))
+
+    expect(list.items.map((item) => item.id)).toEqual(['i1', 'i3', 'i2'])
+  })
+
+  it('下へ1つ動かす', () => {
+    const list = expectOk(moveItemBy(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
+
+    expect(list.items.map((item) => item.id)).toEqual(['i2', 'i1', 'i3'])
+  })
+
+  it('🔴 先頭で上、末尾で下は何も起きない', () => {
+    const list = listOf('1つ目', '2つ目', '3つ目')
+
+    expect(expectOk(moveItemBy(list, 'i1', -1)).items.map((i) => i.id)).toEqual(['i1', 'i2', 'i3'])
+    expect(expectOk(moveItemBy(list, 'i3', 1)).items.map((i) => i.id)).toEqual(['i1', 'i2', 'i3'])
+  })
+
+  it('1件だけでも壊れない', () => {
+    const list = listOf('1つ目')
+
+    expect(expectOk(moveItemBy(list, 'i1', -1)).items.map((i) => i.id)).toEqual(['i1'])
+    expect(expectOk(moveItemBy(list, 'i1', 1)).items.map((i) => i.id)).toEqual(['i1'])
+  })
+
+  it('🔴 完了の状態は動かしても変わらない', () => {
+    const done = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目'), 'i1', 1_700_000_000_000))
+    const list = expectOk(moveItemBy(done, 'i1', 1))
+
+    expect(list.items[1]?.completedAt).toBe(1_700_000_000_000)
+  })
+
+  it('無い ID なら not-found', () => {
+    expect(moveItemBy(listOf('1つ目'), 'nope', 1)).toEqual({ ok: false, reason: 'not-found' })
   })
 })
 
