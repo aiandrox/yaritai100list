@@ -25,6 +25,9 @@ worker-configuration.d.ts
 *.sqlite3
 *.db
 
+# テンプレートを目で確かめるための出力（apps/render の deno task preview）
+apps/render/preview-*.png
+
 # テスト・カバレッジ
 coverage/
 
