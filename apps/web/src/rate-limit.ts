@@ -24,3 +24,22 @@ export const rateLimitCreates = createMiddleware<AppEnv>(async (c, next) => {
 
   return next()
 })
+
+/**
+ * 画像出力のレート制限。**`requireUser` の後に置く。**
+ *
+ * 🔴 **作成系と別の枠にする。** 1回で 100 項目をラスタライズするので、
+ * 他の操作とは重さが桁違い（生成サービスの CPU 枠を溶かす。`TECH_STACK.md` §9）。
+ * 同じ枠にすると、**画像を連打した人が項目の編集まで止めてしまう。**
+ *
+ * 設定（回数と期間）は `wrangler.jsonc` の `ratelimits`。
+ */
+export const rateLimitImages = createMiddleware<AppEnv>(async (c, next) => {
+  const { success } = await c.env.IMAGE_RATE_LIMIT.limit({ key: c.get('userId') })
+
+  if (!success) {
+    return c.json({ error: 'Too Many Requests' } as const, 429)
+  }
+
+  return next()
+})

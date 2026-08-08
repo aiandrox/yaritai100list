@@ -9,6 +9,7 @@ import {
   LISTS_PER_USER_MAX,
   SHARED_VISIBILITIES,
   itemTextSchema,
+  signExportImagePayload,
   signOgPayload,
   listTitleSchema,
   visibilitySchema,
@@ -24,8 +25,9 @@ import { createDb, type Db } from './db'
 import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
+import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
-import { rateLimitCreates } from './rate-limit'
+import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions } from './sentry'
 
@@ -420,6 +422,63 @@ const app = new Hono<AppEnv>()
     const rows = await selectItems(createDb(c.env.DB), list.id)
 
     return c.json(buildExportFile({ title: list.title, items: rows }, new Date()))
+  })
+
+  /**
+   * ダウンロード画像（#192）。**やりたいこと全部を1枚に描く。**
+   *
+   * 🔴 **`requireOwnedList` を通す。** ハンドラは `listId` を受け取らず、
+   * **すでに認可を通った行**を `c.get('list')` で受け取る（`src/authorization.ts`）。
+   * 他人の `listId` は「見つからない」と同じ 404 になる。
+   *
+   * 🔴 **ログインが要る**（#194 で決定）。未ログインだとクライアントが本文を送る形になり、
+   * **誰でも叩ける POST でラスタライズが走る。**
+   *
+   * OGP（`/og/:shareId`）との違いは**運び方だけ。** あちらは GET のクエリ、
+   * こちらは POST の本文（100項目は URL に載らない。#189）。
+   */
+  .get('/api/lists/:listId/image', requireUser, requireOwnedList, rateLimitImages, async (c) => {
+    const list = c.get('list')
+    const { RENDER_URL, RENDER_HMAC_SECRET } = c.env
+
+    /** 出せないときの返し。**理由は利用者に見せず、ログに残す**（#180 と同じ）。 */
+    const unavailable = (reason: string) => {
+      console.error(`export: ${reason}`)
+      return c.json({ error: 'Image Not Available' } as const, 503)
+    }
+
+    // 🔴 **鍵が無ければ画像を出さない。** 署名なしで叩ける状態を作らない
+    if (!RENDER_HMAC_SECRET) {
+      return unavailable('RENDER_HMAC_SECRET が設定されていない')
+    }
+
+    const rows = await selectItems(createDb(c.env.DB), list.id)
+    const payload = buildExportImagePayload(list, rows, new Date())
+    const signature = await signExportImagePayload(payload, RENDER_HMAC_SECRET)
+
+    // ⚠️ **繋がらないときは fetch が投げる。** 捕まえないと 500 になり、
+    // **失敗を「壊れた」として扱ってしまう**
+    let rendered: Response
+    try {
+      rendered = await fetch(exportImageRequest(RENDER_URL, payload, signature))
+    } catch {
+      return unavailable(`生成サービスに繋がらない（${RENDER_URL}）`)
+    }
+
+    if (!rendered.ok) {
+      // **403 なら両側の鍵が違う**（生成サービスは理由を返さない）
+      return unavailable(`生成サービスが ${String(rendered.status)} を返した`)
+    }
+
+    return new Response(rendered.body, {
+      headers: {
+        'content-type': rendered.headers.get('content-type') ?? 'image/png',
+        // ⚠️ **キャッシュさせない。** URL にバージョンが無く、中身は押すたびに変わりうる
+        'cache-control': 'no-store',
+        // 直接開かれたときの保険。見せる名前はクライアント側で付ける（#193）
+        'content-disposition': `attachment; filename="${EXPORT_IMAGE_FILE_NAME}"`,
+      },
+    })
   })
 
   /**
