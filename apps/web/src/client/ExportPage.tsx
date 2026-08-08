@@ -24,12 +24,18 @@ import { type SessionState } from './model'
  *
  * 🔴 **マークダウンはここで作る。** サーバーは閲覧者の時間帯を知らないので、
  * 達成日を UTC のまま日付にすると1日ずれる（#124）。
+ *
+ * 画像（#193）は3つ目の形式。**貼るのでも読み込むのでもなく、そのまま見せるもの。**
+ * こちらだけサーバーで作る（`/api/lists/:listId/image`。#192）。
  */
 
 type State =
   | { status: 'loading' }
   | { status: 'failed' }
   | { status: 'ready'; file: ExportFile; markdown: string }
+
+/** 画像の作成は数秒かかる。**押した後に何も起きないように見せない。** */
+type ImageState = 'idle' | 'working' | 'failed'
 
 export function ExportPage({ session, listId }: { session: SessionState; listId: string }) {
   // ログインが要る画面。**未ログインでは開かせない**（#112 と同じ扱い）
@@ -65,6 +71,7 @@ function SignInRequired({ session }: { session: SessionState }) {
 function ExportPageBody({ listId }: { listId: string }) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [copied, setCopied] = useState(false)
+  const [image, setImage] = useState<ImageState>('idle')
 
   const load = useCallback(async () => {
     try {
@@ -120,6 +127,37 @@ function ExportPageBody({ listId }: { listId: string }) {
     URL.revokeObjectURL(url)
   }
 
+  /**
+   * 画像を落とす。
+   *
+   * JSON と違って**中身はサーバーで作る**ので、
+   * 押してから返るまで数秒かかる。**その間の表示を出す。**
+   */
+  const downloadImage = async () => {
+    setImage('working')
+
+    try {
+      const res = await api.api.lists[':listId'].image.$get({ param: { listId } })
+      if (!res.ok) {
+        setImage('failed')
+        return
+      }
+
+      const url = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+
+      anchor.href = url
+      anchor.download = exportFileName(file.list.title, new Date(), 'png')
+      anchor.click()
+
+      // 解放しないとページを閉じるまでメモリに残る
+      URL.revokeObjectURL(url)
+      setImage('idle')
+    } catch {
+      setImage('failed')
+    }
+  }
+
   const copyMarkdown = async () => {
     try {
       await navigator.clipboard.writeText(markdown)
@@ -157,6 +195,32 @@ function ExportPageBody({ listId }: { listId: string }) {
         >
           JSON をダウンロード
         </button>
+      </section>
+
+      <section className="mt-4 rounded bg-white px-3 py-3">
+        <h2 className="font-bold text-slate-900">画像で見せる（PNG）</h2>
+        <p className="mt-1 text-xs text-slate-600">
+          <strong>やりたいこと100個を1枚に並べた画像</strong>です。SNS に貼ったり、
+          印刷して貼っておくのに使えます。
+          <br />
+          <strong>このアプリに読み込むことはできません。</strong>
+        </p>
+
+        <button
+          type="button"
+          onClick={() => void downloadImage()}
+          disabled={image === 'working'}
+          className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white disabled:opacity-60"
+        >
+          {image === 'working' ? '作っています…' : '画像をダウンロード'}
+        </button>
+
+        {/* 🔴 黙って何も起きないのが一番まずい。**理由の分かる表示を出す** */}
+        {image === 'failed' && (
+          <p className="mt-2 text-xs text-red-700">
+            画像を作れませんでした。少し待ってから、もう一度試してください
+          </p>
+        )}
       </section>
 
       <section className="mt-4 rounded bg-white px-3 py-3">

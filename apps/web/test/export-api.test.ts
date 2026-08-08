@@ -197,6 +197,13 @@ describe('exportFileName', () => {
   it('落とした結果が空なら既定の名前になる', () => {
     expect(exportFileName('///', new Date('2026-08-07T00:00:00.000Z'))).toBe('list-2026-08-07.json')
   })
+
+  it('拡張子を選べる（画像は png。#193）', () => {
+    // 画像だけ中身の作り方が違う（サーバーで作る）が、名前の付け方は揃える
+    expect(exportFileName('2026年の目標', new Date('2026-08-07T00:00:00.000Z'), 'png')).toBe(
+      '2026年の目標-2026-08-07.png',
+    )
+  })
 })
 
 describe('GET /api/lists/:listId/export', () => {
