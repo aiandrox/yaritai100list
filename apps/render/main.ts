@@ -208,7 +208,12 @@ async function handleOg(url: URL, now: Date): Promise<Response> {
   })
 }
 
-export async function handler(request: Request): Promise<Response> {
+/**
+ * ⚠️ `async` を付けていないのは、**この関数自身は待たないから**
+ * （`deno lint` の `require-await` に引っかかる）。
+ * 戻り値に `Response` と `Promise<Response>` の両方があるのはそのため。
+ */
+export function handler(request: Request): Response | Promise<Response> {
   const url = new URL(request.url)
   const now = new Date()
 
