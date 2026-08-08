@@ -7,6 +7,7 @@
 
 export * from './export'
 export * from './export-image'
+export * from './export-image-template'
 export * from './hmac'
 export * from './limits'
 export * from './og'
