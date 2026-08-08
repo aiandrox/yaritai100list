@@ -14,6 +14,7 @@ import {
   DEFAULT_LIST_TITLE,
   ITEMS_PER_LIST_MAX,
   itemTextSchema,
+  LISTS_PER_USER_MAX,
   listTitleSchema,
 } from '@yaritai100list/shared'
 import { z } from 'zod'
@@ -492,4 +493,63 @@ export function toImportBody(list: LocalList): { title: string; items: { text: s
  */
 export function hasAnythingToImport(stored: StoredListResult): boolean {
   return stored.status === 'loaded' && stored.list.items.length > 0
+}
+
+/**
+ * ログインすると何ができるか（#204）。
+ *
+ * 🔴 **`PRODUCT_SPEC.md` §2 の「ログインの動機」と同じ数だけ並べる。**
+ * 導線が3箇所にあり、それぞれ**1つの利点しか言っていなかった。**
+ * その場の文言は残すが、**全部をまとめて読める場所を1つ作る。**
+ *
+ * ⚠️ **画面ごとに書き分けない。** 同じ内容を3箇所に書くと必ずずれる。
+ * ここが唯一の定義で、`SignInBenefits.tsx` が描く。
+ */
+export interface SignInBenefit {
+  /** 見出し。**利点そのもの**を書く（「ログインすると〜」は書かない） */
+  title: string
+  /** いまの状態。**失うかもしれないこと**を先に言う */
+  without: string
+  /** ログインした後 */
+  with: string
+}
+
+export const SIGN_IN_BENEFITS: SignInBenefit[] = [
+  {
+    // **一番効くのはこれ。** 100個書いても失う可能性があることに気付けない
+    title: 'リストが消えない',
+    without: 'いま書いているものは、このブラウザにしかありません。履歴を消すと無くなります',
+    with: 'サーバーに保存されます。別の端末でも同じリストを開けます',
+  },
+  {
+    title: '「やった」印を付けられる',
+    without: '付けられません',
+    with: '叶えた日付が残ります',
+  },
+  {
+    title: `リストを${String(LISTS_PER_USER_MAX)}つまで持てる`,
+    without: '1つだけです',
+    with: '「2026年に」「一生のうちに」のように使い分けられます',
+  },
+  {
+    title: '人に見せられる',
+    without: '見せられません',
+    with: 'リンクを渡すと、その人がリストを見られます',
+  },
+  {
+    title: '画像で保存できる',
+    without: '保存できません',
+    with: `やりたいこと${String(ITEMS_PER_LIST_MAX)}個が1枚の画像になります。SNS に貼れます`,
+  },
+]
+
+/**
+ * ログインの利点を見せるか。
+ *
+ * 🔴 **ログイン中には出さない。** 出すと「もうできること」を勧めることになる。
+ * **`loading` と `error` でも出さない。** どちらも「未ログインだと分かっていない」状態で、
+ * ログイン済みの人にログインを促してしまう（`toCompletionPermission` と同じ注意）。
+ */
+export function showsSignInBenefits(session: SessionState): boolean {
+  return session.status === 'anonymous'
 }

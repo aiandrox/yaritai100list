@@ -12,6 +12,8 @@ import {
   completedCount,
   filledCount,
   formatItemNumber,
+  showsSignInBenefits,
+  SIGN_IN_BENEFITS,
   hasAnythingToImport,
   moveItem,
   pickCurrentListId,
@@ -529,5 +531,47 @@ describe('serializeList / parseStoredList', () => {
     })
 
     expect(parseStoredList(raw)).toMatchObject({ status: 'loaded' })
+  })
+})
+
+describe('SIGN_IN_BENEFITS / showsSignInBenefits', () => {
+  it('🔴 ログイン中には出さない', () => {
+    // 出すと「もうできること」を勧めることになる
+    expect(showsSignInBenefits({ status: 'authenticated' })).toBe(false)
+  })
+
+  it('🔴 状態が分からないときも出さない', () => {
+    // ログイン済みの人にログインを促してしまう（toCompletionPermission と同じ注意）
+    expect(showsSignInBenefits({ status: 'loading' })).toBe(false)
+    expect(showsSignInBenefits({ status: 'error' })).toBe(false)
+  })
+
+  it('未ログインのときだけ出す', () => {
+    expect(showsSignInBenefits({ status: 'anonymous' })).toBe(true)
+  })
+
+  it('🔴 PRODUCT_SPEC.md §2 の動機を全部載せている', () => {
+    // 導線が3箇所にあり、それぞれ1つの利点しか言っていなかった（#204）。
+    // **1つでも欠けると、その利点はどこからも読めない**
+    const titles = SIGN_IN_BENEFITS.map((benefit) => benefit.title).join('\n')
+
+    expect(titles).toContain('消えない')
+    expect(titles).toContain('「やった」印')
+    expect(titles).toContain('つまで持てる')
+    expect(titles).toContain('人に見せられる')
+    expect(titles).toContain('画像')
+    expect(SIGN_IN_BENEFITS).toHaveLength(5)
+  })
+
+  it('いまの状態と、ログイン後の両方を書いている', () => {
+    // 利点だけ並べても差が伝わらない。**失うかもしれないことを先に言う**
+    for (const benefit of SIGN_IN_BENEFITS) {
+      expect(benefit.without).not.toBe('')
+      expect(benefit.with).not.toBe('')
+    }
+  })
+
+  it('🔴 一番上は「消えない」（一番効くので先に言う）', () => {
+    expect(SIGN_IN_BENEFITS[0]?.title).toContain('消えない')
   })
 })

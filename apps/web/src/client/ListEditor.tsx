@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { useEffect, useRef, useState } from 'react'
 
+import { SignInBenefits } from './SignInBenefits'
 import {
   completedCount,
   filledCount,
@@ -525,7 +526,9 @@ function CompletionPrompt({
       <a href="/api/login/google" className="font-bold text-brand-deep underline">
         Googleでログイン
       </a>
-      すると、「やった」印を付けられます
+      すると、「やった」印を付けられます。
+      {/* **文脈に合った1つを先に言い、残りはここから読ませる**（#204） */}
+      <SignInBenefits />
     </PromptBox>
   )
 }
