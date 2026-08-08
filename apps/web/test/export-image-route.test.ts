@@ -21,6 +21,14 @@ import { signIn, testBaseUrl, testDb } from './helpers'
 const request = (path: string, init?: RequestInit) =>
   exports.default.fetch(new Request(`${testBaseUrl()}${path}`, init))
 
+/**
+ * 制限に当たるまで叩くのを諦める回数（#215）。
+ *
+ * **テストが使う枠は本番より小さい**（`vitest.config.ts` の `ratelimits`）。
+ * 枠より十分大きく、しかし小さく。**大きくすると、制限が壊れたときに遅く落ちる。**
+ */
+const GIVE_UP_AT = 15
+
 /** ログイン済みの利用者としてリストを1つ作る。 */
 async function createList(headers: Headers, userId: string, rows: string[] = ['南極に行く']) {
   const db = testDb()
@@ -170,7 +178,7 @@ describe('GET /api/lists/:listId/image', () => {
     const list = await createList(me.headers, me.userId)
 
     let limited: Response | null = null
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < GIVE_UP_AT; i++) {
       const res = await imageRequest(list.id, me.headers)
       if (res.status === 429) {
         limited = res
@@ -186,7 +194,7 @@ describe('GET /api/lists/:listId/image', () => {
     const me = await signIn(`${crypto.randomUUID()}@example.com`)
     const list = await createList(me.headers, me.userId)
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < GIVE_UP_AT; i++) {
       if ((await imageRequest(list.id, me.headers)).status === 429) break
     }
 
