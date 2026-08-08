@@ -108,8 +108,8 @@ export function ListEditor({
         「書けた」は 100 という枠がまだ埋まっていないことを見せる（PRODUCT_SPEC.md §1）。
         「やった」はそのうち何個叶えたか。**片方に置き換えない。**
 
-        分母はどちらも 100（上限）。マークダウン（#129）が分母を入力済みの数に
-        しているのは、あちらが転載用で読む人が知りたいのが達成の割合だから
+        **分母が違う**（#168）。「書けた」は 100（枠がいくつ空いているか）、
+        「やった」は書いた数（**書いていない枠を「やっていない」と数えない**）
       */}
       <p className="mt-1 flex items-baseline gap-3 text-brand-deep">
         <span className="flex items-baseline gap-1">
@@ -120,7 +120,7 @@ export function ListEditor({
 
         <span className="flex items-baseline gap-1">
           <span className="text-2xl font-bold tabular-nums">{completed}</span>
-          <span className="text-sm tabular-nums">/ {ITEMS_PER_LIST_MAX}</span>
+          <span className="text-sm tabular-nums">/ {filled}</span>
           <span className="text-xs text-slate-500">やった</span>
         </span>
       </p>
@@ -187,12 +187,22 @@ function ListTitleField({
   const [draft, setDraft] = useState(title)
   const input = useRef<HTMLInputElement>(null)
 
+  /**
+   * 確定して閉じた直後の `blur` を無視するための印（#167）。
+   *
+   * **外を押したら取り消し**にしたので、`blur` は取り消しの合図になった。
+   * ただし Enter での確定も `blur()` を通るため、そのままだと
+   * **確定した直後に取り消しが走る。**
+   */
+  const committing = useRef(false)
+
   // 押した後にもう一度押させない
   useEffect(() => {
     if (editing) input.current?.focus()
   }, [editing])
 
   const commit = async () => {
+    committing.current = true
     setEditing(false)
 
     if (draft === title) return
@@ -219,7 +229,7 @@ function ListTitleField({
           }}
           className="shrink-0 text-xs text-brand-deep underline"
         >
-          変える
+          変更
         </button>
       </div>
     )
@@ -236,10 +246,19 @@ function ListTitleField({
       onChange={(e) => {
         setDraft(e.target.value)
       }}
-      onBlur={() => void commit()}
+      // 🔴 **外を押したら取り消す**（#167）。確定は Enter だけ。
+      // 読むつもりで触った流れで書き換わらないようにするため
+      onBlur={() => {
+        if (committing.current) {
+          committing.current = false
+          return
+        }
+
+        cancel()
+      }}
       onKeyDown={(e) => {
-        if (isCommitKey(e)) e.currentTarget.blur()
-        // 取り消し。下書きを戻してから閉じるので、続けて起きる blur では何も起きない
+        // 確定。**blur を通すので、上の印で取り消しと見分ける**
+        if (isCommitKey(e)) void commit()
         if (e.key === 'Escape') cancel()
       }}
       className="w-full rounded-md bg-white text-xl font-bold text-slate-900 outline-2 outline-brand-deep"
