@@ -110,16 +110,8 @@ function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
         <ul className="mt-3">
           {/* 年を含む文言があるので、**開くたびに今の年で作る**（`signInBenefits`） */}
           {signInBenefits(new Date()).map((benefit) => (
-            <li key={benefit.title} className="border-b border-brand/40 py-3 last:border-b-0">
-              <p className="font-bold">{benefit.title}</p>
-              {/*
-                **失うかもしれないことを先に言う。** 利点だけ並べても差が伝わらない。
-                ただし**見出しの裏返しになる項目には書かない**（`model.ts` の注意書き）
-              */}
-              {benefit.without !== undefined && (
-                <p className="mt-1 text-xs text-slate-500">{benefit.without}</p>
-              )}
-              <p className="mt-1 text-sm">{benefit.with}</p>
+            <li key={benefit} className="border-b border-brand/40 py-3 text-sm last:border-b-0">
+              {benefit}
             </li>
           ))}
         </ul>

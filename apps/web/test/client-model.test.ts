@@ -3,7 +3,6 @@ import {
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
-  LISTS_PER_USER_MAX,
 } from '@yaritai100list/shared'
 import { describe, expect, it } from 'vitest'
 
@@ -556,52 +555,29 @@ describe('signInBenefits / showsSignInBenefits', () => {
   it('🔴 PRODUCT_SPEC.md §2 の動機を全部載せている', () => {
     // 導線が3箇所にあり、それぞれ1つの利点しか言っていなかった（#204）。
     // **1つでも欠けると、その利点はどこからも読めない**
-    const titles = signInBenefits(NOW)
-      .map((benefit) => benefit.title)
-      .join('\n')
+    const text = signInBenefits(NOW).join('\n')
 
-    expect(titles).toContain('消えない')
-    expect(titles).toContain('「やった」印')
-    expect(titles).toContain('つまで持てる')
-    expect(titles).toContain('人に見せられる')
-    expect(titles).toContain('画像')
+    expect(text).toContain('データがなくなります')
+    expect(text).toContain('チェックを付けられる')
+    expect(text).toContain('一生のうちに')
+    expect(text).toContain('共有リンク')
+    expect(text).toContain('画像をダウンロード')
     expect(signInBenefits(NOW)).toHaveLength(5)
   })
 
-  it('ログイン後にできることは全部書いてある', () => {
-    for (const benefit of signInBenefits(NOW)) {
-      expect(benefit.with).not.toBe('')
-    }
-  })
-
-  it('🔴 いまの状態は、読み手が知らないことがある項目にだけ書く', () => {
-    // 「見せられません」のような**見出しの裏返し**を全項目に付けると、
-    // 読む量が倍になるのに増える情報はゼロになる
-    const withCurrent = signInBenefits(NOW).filter((benefit) => benefit.without !== undefined)
-
-    expect(withCurrent.map((benefit) => benefit.title)).toEqual([
-      'リストが消えない',
-      `リストを${String(LISTS_PER_USER_MAX)}つまで持てる`,
-    ])
-  })
-
   it('書き出しは画像とマークダウンの両方に触れている', () => {
-    const exportable = signInBenefits(NOW).find((benefit) => benefit.title.includes('書き出せる'))
+    const text = signInBenefits(NOW).join('\n')
 
-    expect(exportable?.with).toContain('画像')
-    expect(exportable?.with).toContain('マークダウン')
+    expect(text).toContain('マークダウン')
   })
 
-  it('🔴 一番上は「消えない」（一番効くので先に言う）', () => {
-    expect(signInBenefits(NOW)[0]?.title).toContain('消えない')
+  it('🔴 一番上は「消える」話（一番効くので先に言う）', () => {
+    expect(signInBenefits(NOW)[0]).toContain('データがなくなります')
   })
 
   it('🔴 年は固定しない（翌年に古くならない）', () => {
     // 「2026年に」と書き込むと、翌年もそのまま出続ける
-    const text = (now: Date) =>
-      signInBenefits(now)
-        .map((benefit) => benefit.with)
-        .join('\n')
+    const text = (now: Date) => signInBenefits(now).join('\n')
 
     expect(text(NOW)).toContain('2026年に')
     expect(text(new Date('2031-01-01T00:00:00.000Z'))).toContain('2031年に')
