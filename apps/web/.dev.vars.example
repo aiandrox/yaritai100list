@@ -27,10 +27,10 @@ SENTRY_ENVIRONMENT=local
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
-# 画像生成サービス（Deno Deploy）。**両方そろって初めて OGP 画像が出る**（#171）。
-# 未設定なら /og/:shareId は 503 を返す。ローカルでは空でよい。
-#
-# RENDER_HMAC_SECRET は**両側で同じ値**にする（生成サービスが署名を確かめる）。
+# 画像生成サービス（Deno Deploy）と共有する鍵。**両側で同じ値**にする。
 #   openssl rand -base64 32
-RENDER_URL=
+# 未設定なら /og/:shareId は 503 を返す（ローカルでは空でよい）。
+#
+# URL の方は wrangler.jsonc の vars にある（秘密ではないため）。
+# ローカルから別の生成サービスを見たいときだけ、ここで RENDER_URL を上書きする。
 RENDER_HMAC_SECRET=

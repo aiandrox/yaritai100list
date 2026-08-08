@@ -27,6 +27,13 @@
   // （Host は攻撃者が差し替えられる）。
   "vars": {
     "BETTER_AUTH_URL": "https://yaritai100list.aiandrox.workers.dev",
+
+    // 画像生成サービス（Deno Deploy）。**秘密の値ではないのでここに書く**（#172）。
+    // 一緒に使う `RENDER_HMAC_SECRET` の方はシークレット（`wrangler secret put`）。
+    //
+    // ホスト名は `{アプリ名}.{org slug}.deno.net`。
+    // **org slug を変えるとここも変える**（`docs/console-settings.md`）。
+    "RENDER_URL": "https://yaritai100list-render.aiandrox.deno.net",
   },
 
   // SPA を Workers から配信する。ビルド出力のディレクトリは
