@@ -1,4 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
+
+  "compilerOptions": {
+    // 🔴 **DOM を入れない。** ここは Cloudflare Workers と Deno Deploy の両方から
+    // 使う（`TECH_STACK.md` §12-2）。`document` が見えると、いつか誰かが触る。
+    //
+    // `WebWorker` を入れているのは、**Web Crypto と TextEncoder のため**（#170）。
+    // OGP の署名で使う。どちらのランタイムにもあるが、ES2023 だけでは型が無い。
+    "lib": ["ES2023", "WebWorker"]
+  },
+
   "include": ["src"]
 }
