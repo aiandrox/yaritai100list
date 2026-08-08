@@ -9,6 +9,7 @@ import {
   LISTS_PER_USER_MAX,
   SHARED_VISIBILITIES,
   itemTextSchema,
+  signOgPayload,
   listTitleSchema,
   visibilitySchema,
 } from '@yaritai100list/shared'
@@ -23,6 +24,7 @@ import { createDb, type Db } from './db'
 import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
+import { buildOgPayload, cacheControlFor, renderRequestUrl } from './og'
 import { rateLimitCreates } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions } from './sentry'
@@ -648,6 +650,61 @@ const app = new Hono<AppEnv>()
         })),
       }),
     )
+  })
+
+  /**
+   * OGP 画像（#171）。**ログインは要らない。**
+   *
+   * 🔴 **`wrangler.jsonc` の `run_worker_first` に `/og/*` を入れてある。**
+   * 入れ忘れると Worker に届かず、SPA の index.html が返る（404 にならない）。
+   *
+   * 🔴 **共有ページ（#137）と同じ判定を通す。** 非公開のリストは画像も出さない。
+   * 「画像だけ漏れる」は典型的な事故（`CLAUDE.md` の不変条件）。
+   * 存在しない `shareId` と応答を揃えるのも同じ理由。
+   *
+   * 画像を作るのは Deno Deploy 側（#172）。**ここは認可して、署名して、渡すだけ。**
+   */
+  .get('/og/:shareId', async (c) => {
+    const db = createDb(c.env.DB)
+
+    const [list] = await db
+      .select()
+      .from(lists)
+      .where(
+        and(
+          eq(lists.shareId, c.req.param('shareId')),
+          inArray(lists.visibility, [...SHARED_VISIBILITIES]),
+        ),
+      )
+      .limit(1)
+
+    if (!list) {
+      return c.json({ error: 'Not Found' } as const, 404)
+    }
+
+    const { RENDER_URL, RENDER_HMAC_SECRET } = c.env
+
+    // まだ生成サービスが無い（#172）。**落ちるのではなく「用意できていない」と返す**
+    if (!RENDER_URL || !RENDER_HMAC_SECRET) {
+      return c.json({ error: 'Image Not Available' } as const, 503)
+    }
+
+    const payload = buildOgPayload(list, await selectItems(db, list.id), new Date())
+    const signature = await signOgPayload(payload, RENDER_HMAC_SECRET)
+
+    const rendered = await fetch(renderRequestUrl(RENDER_URL, payload, signature))
+
+    if (!rendered.ok) {
+      // 生成に失敗したものをキャッシュさせない
+      return c.json({ error: 'Image Not Available' } as const, 503)
+    }
+
+    return new Response(rendered.body, {
+      headers: {
+        'content-type': rendered.headers.get('content-type') ?? 'image/png',
+        'cache-control': cacheControlFor(c.req.query('v')),
+      },
+    })
   })
 
   /**

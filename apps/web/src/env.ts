@@ -2,6 +2,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 
 import type { AuthEnv } from './auth'
 import type { items, lists } from './db/schema'
+import type { RenderEnv } from './og'
 import type { SentryEnv } from './sentry'
 
 /**
@@ -17,7 +18,7 @@ import type { SentryEnv } from './sentry'
  * **このアプリが動くために必要な環境変数の一覧**がここに集まる形になっている。
  */
 export interface AppEnv {
-  Bindings: Env & AuthEnv & SentryEnv
+  Bindings: Env & AuthEnv & SentryEnv & RenderEnv
 
   Variables: {
     /** `requireUser` が入れる。ログイン中の利用者の id */

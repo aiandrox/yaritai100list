@@ -398,6 +398,7 @@ SDK 側は何も送っていない。消したい場合は
 | `GOOGLE_CLIENT_SECRET` | Google OAuth | `.dev.vars` | `wrangler secret put` | — |
 | `BETTER_AUTH_SECRET` | セッション署名 | `.dev.vars` | `wrangler secret put` | — |
 | `RENDER_HMAC_SECRET` | 画像生成の署名（**両側で同じ値**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
+| `RENDER_URL` | 画像生成サービスの URL（秘密ではないが、環境ごとに違うのでここ） | `.dev.vars` | `wrangler secret put` | — |
 | `SENTRY_DSN` | エラー通知（**シークレット扱い。理由は Sentry の節**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
 
 変数名は #3 / #8 / #18 での想定。**確定したらこの表を更新する。**

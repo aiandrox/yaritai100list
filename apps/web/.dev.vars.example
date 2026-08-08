@@ -26,3 +26,11 @@ SENTRY_ENVIRONMENT=local
 # **未設定でもアプリは起動する**（ログイン手段が無くなるだけ）。
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+
+# 画像生成サービス（Deno Deploy）。**両方そろって初めて OGP 画像が出る**（#171）。
+# 未設定なら /og/:shareId は 503 を返す。ローカルでは空でよい。
+#
+# RENDER_HMAC_SECRET は**両側で同じ値**にする（生成サービスが署名を確かめる）。
+#   openssl rand -base64 32
+RENDER_URL=
+RENDER_HMAC_SECRET=
