@@ -8,7 +8,11 @@
     // vitest-pool-workers の `./types` サブパスだけは明示的に入れる。
     // `cloudflare:test` モジュールの型宣言がここにある（パッケージ本体の型は
     // 設定用の API なので、これとは別）。
-    "types": ["@cloudflare/vitest-pool-workers/types"]
+    //
+    // vite/client は `import tokens from './tokens.css?raw'` の型宣言のため（#159）。
+    // 共有ページ（SSR）が SPA と同じ色・幅を読むのに使う。
+    // 無いと TS2307 になる（クライアント側の tsconfig でも同じ理由で入れている）。
+    "types": ["@cloudflare/vitest-pool-workers/types", "vite/client"]
   },
   "include": [
     "src",
