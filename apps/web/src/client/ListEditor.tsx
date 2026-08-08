@@ -429,8 +429,20 @@ function ItemRow({
           // 押した瞬間に案内を閉じない。閉じると直後の click で開き直り、
           // ✓ から閉じられなくなる（判定は ListEditor の dismiss）
           data-keep-prompt=""
+          /**
+           * 🔴 **未完了でも ✓ をうっすら出す**（#208）。
+           *
+           * 以前は白地に白文字で、**描いてはいるが見えなかった。**
+           * ただの丸に見えるので「押すと何が起きるか」が分からない。
+           * 削除の `×` も並べ替えの `⠿` も記号が見えているのに、ここだけ空だった。
+           *
+           * 薄い方は**枠と同じ色**（`text-brand`）にする。枠だけが浮いて見えず、
+           * 「この丸ごと1つの押せるもの」に見える。
+           * 濃い方は**塗りが反転する**（`bg-brand-deep` + 白文字）ので、
+           * 色が見えない環境でも明暗の差で区別が付く。
+           */
           className={`size-6 shrink-0 rounded-full border-2 text-xs leading-none ${
-            done ? 'border-brand-deep bg-brand-deep text-white' : 'border-brand bg-white text-white'
+            done ? 'border-brand-deep bg-brand-deep text-white' : 'border-brand bg-white text-brand'
           } ${completion.allowed ? '' : 'border-dashed opacity-60'}`}
         >
           ✓
