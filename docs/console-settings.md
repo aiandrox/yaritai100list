@@ -240,10 +240,35 @@ Vite に変えたため、2026-08-06 に GCP 側のリダイレクト URI も 87
 |---|---|---|
 | コンソール | https://console.deno.com | Classic（`dash.deno.com`）は 2026-07-20 廃止 |
 | organization slug | **`aiandrox`** | |
-| プラン | **Free** | **クレジットカード登録は不要**（2026-08-06 にサインアップ画面で確認） |
+| プラン | **Free** | 🔴 **クレジットカード登録が要る。** 未登録だと Free の上限の **1%** しか使えない（下記） |
 | アプリ名 | **`yaritai100list-render`** | **この名前で作る**（`RENDER_URL` がこの名前を前提にしている） |
 | ホスト名 | `yaritai100list-render.aiandrox.deno.net` | |
-| HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない。**Cloudflare 側は設定済み**（2026-08-08） |
+| HMAC 鍵の名前 | `RENDER_HMAC_SECRET` | Cloudflare 側と同じ値を共有する。値はここに書かない。**両側とも設定済み**（2026-08-08） |
+
+#### 🔴 組織を認証しないと Free の上限の 1% しか使えない
+
+2026-08-06 の調査では「クレジットカード登録は不要」と書いたが、**足りなかった。**
+支払い方法を登録するまで、Billing に次の但し書きが出る。
+
+> Your organization is not verified, so you can only use 1% of the Free plan limits
+> until you add a valid payment method.
+
+| | 本来の Free | 未認証（1%） |
+|---|---|---|
+| リクエスト | 1M / 月 | **10k / 月** |
+| Outbound Traffic | 20GB / 月 | **200MB / 月** |
+| CPU time | 15h / 月 | **9分 / 月** |
+
+⚠️ **超えるとアプリが止まる**（課金されるのではない）。止まると全リクエストがこう返る:
+
+```
+503 USAGE_EXCEEDED
+This application is suspended due to usage limits being exceeded.
+```
+
+2026-08-08 に実際に踏んだ。**アプリが返したのは 82KiB だけで、枠を食ったのはビルド**
+（当時 Install command が `npm install` で、ビルドのたびに monorepo を丸ごと落としていた。#182）。
+**カードを登録して解消**。プランは Free（$0）のまま。
 
 ### アプリを作るときの設定（#172、2026-08-08 に設定済み）
 
@@ -416,6 +441,22 @@ SDK 側は何も送っていない。消したい場合は
 | `GOOGLE_CLIENT_SECRET` | Google OAuth | `.dev.vars` | `wrangler secret put` | — |
 | `BETTER_AUTH_SECRET` | セッション署名 | `.dev.vars` | `wrangler secret put` | — |
 | `RENDER_HMAC_SECRET` | 画像生成の署名（**両側で同じ値**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
+
+### ⚠️ `wrangler secret put` は空の値を黙って受け付ける
+
+入力が隠されるプロンプトなので、**端末によっては貼り付けが効かない。**
+気づかず Enter を押すと**空の値が保存され、`wrangler secret list` には名前が出る**
+（存在するのに中身が空）。2026-08-08 にこれで詰まった。
+
+貼り付けを介さずに入れる:
+
+```
+cd apps/web && printf '%s' '<値>' | npx wrangler secret put RENDER_HMAC_SECRET
+```
+
+🔴 **`echo` を使わない。** 末尾に改行が付いて、署名が合わなくなる。
+
+**反映にデプロイは要らない**（新しいバージョンが作られて即座に 100% 配信される）。
 | `RENDER_URL` | 画像生成サービスの URL。**秘密ではないので `wrangler.jsonc` の `vars`**（#172） | `.dev.vars` で上書き可 | `wrangler.jsonc` の `vars` | — |
 | `SENTRY_DSN` | エラー通知（**シークレット扱い。理由は Sentry の節**） | `.dev.vars` | `wrangler secret put` | コンソールの環境変数 |
 
