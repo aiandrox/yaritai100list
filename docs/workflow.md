@@ -98,6 +98,41 @@ push 直後に叩いたときは `gh run list --branch <branch> --limit 1` で
 - **画面や挙動に関わる PR も、確認を待たずにマージしてよい**（2026-08-06 の利用者の判断）。
   見た目の確認は本番で行う。直す必要があれば別の PR にする
 
+### 見た目を変えたら、実物を PR に貼る
+
+⚠️ **テストは見た目を守らない**（§6 と `TECH_STACK.md` §10）。
+「クラスが付いている」ことしか見ておらず、**溢れ・詰まり・読みにくさは画像を見るまで分からない。**
+実際に #190 では 25行目が余白を突き抜けたまま、テストは全部緑だった。
+
+**ローカルの `npm run dev` に Chrome を繋いで撮る**（2026-08-08、#216）。
+Playwright は**リポジトリの依存に入れない**（この用途にしか使わないので `/tmp` に置く）。
+ブラウザも**手元の Chrome を使う**（`channel: 'chrome'`。ダウンロードが要らない）。
+
+```sh
+cd /tmp && npm i playwright-core
+```
+
+```js
+// /tmp/shot.mjs
+import { chromium } from '/tmp/node_modules/playwright-core/index.mjs'
+
+const browser = await chromium.launch({ channel: 'chrome' })
+// 主対象はモバイル縦1カラム（PRODUCT_SPEC.md §4.5）。**その幅で撮る**
+const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+
+await page.goto('http://localhost:5173/', { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: 'ほかにできること' }).click()   // 操作してから撮る
+await page.screenshot({ path: '/tmp/shot.png' })
+await browser.close()
+```
+
+貼り方:
+
+- 画像は **`previews` ブランチ**（`main` から切り離した置き場）に置き、raw URL で参照する。
+  🔴 **`main` に入れない。** デザインを直すたびに増えてリポジトリが重くなる
+- ⚠️ **同じファイル名で差し替えない。** GitHub が画像をキャッシュしていて、
+  force push しても**古い画像が出続ける。** 直したら `-2` のように名前を変える
+
 ### デプロイ
 
 **`main` にマージすると自動で出る**（2026-08-07、#117）。`.github/workflows/deploy.yml`。
