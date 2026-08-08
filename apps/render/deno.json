@@ -34,7 +34,9 @@
   // ここに `fmt` の設定を置くと、2つの道具が別のことを言い始める。
   "tasks": {
     "dev": "deno run --allow-net --allow-read --allow-env main.ts",
-    "check": "deno check main.ts main_test.ts",
+    "check": "deno check main.ts main_test.ts preview.ts",
+    // テンプレートを目で確かめる（#190）。出力は preview-*.png
+    "preview": "deno run --allow-read --allow-env --allow-write=. preview.ts",
     "test": "deno test --allow-read --allow-env"
   }
 }
