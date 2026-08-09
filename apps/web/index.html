@@ -3,7 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      🔴 **この1枚が SPA の全ルートに出る**（`/`・`/lists/:id`・`/lists/:id/share` …）。
+      Worker を通るのは `/api/*` `/share/*` `/og/*` だけなので
+      （`wrangler.jsonc` の `run_worker_first`）、**画面ごとに書き分けられない。**
+      ここに書けるのは「どの画面でも正しいこと」だけ。
+
+      共有ページ（`/share/:shareId`）は SSR で、メタタグは `src/share.ts` にある。
+      あちらはリストごとに中身が変わるので別物。
+
+      ⚠️ **文言と URL は他の場所にも書いてある。**
+      静的な HTML なので TypeScript の定数を読めない。
+      **ずれていないことは `test/index-html.test.ts` で固定してある。**
+    -->
     <title>やりたいことリスト100</title>
+    <meta
+      name="description"
+      content="100個のやりたいことを書き溜めて、叶えたら印を付けるアプリ。ログインせずに書き始められ、ログインするとリストを複数持てて、人に共有できます。"
+    />
+
+    <!--
+      OGP。画像は**静的な PNG**（`public/og.png`、生成は apps/render の deno task og）。
+      🔴 **リストの OGP と違い、画像生成サービスを叩かない。**
+      トップページは入口なので、あちらが落ちていても壊れてはいけない（#180 / #184）。
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="やりたいことリスト100" />
+    <meta property="og:title" content="やりたいことリスト100" />
+    <meta
+      property="og:description"
+      content="100個のやりたいことを書き溜めて、叶えたら印を付けるアプリ。ログインせずに書き始められ、ログインするとリストを複数持てて、人に共有できます。"
+    />
+    <meta property="og:url" content="https://yaritai100list.aiandrox.workers.dev/" />
+    <meta property="og:image" content="https://yaritai100list.aiandrox.workers.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      ⚠️ **`canonical` は置かない。** 1枚の HTML が全ルートに出るので、
+      どの URL を書いても `/lists/:id` では嘘になる。
+      検索から外すのは `public/robots.txt` の役割。
+    -->
+
+    <!-- ブラウザの上端の色（スマホ）。値は `src/tokens.css` のブランド色と同じ -->
+    <meta name="theme-color" content="#ffa2ab" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>

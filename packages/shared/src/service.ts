@@ -16,6 +16,24 @@ export const SERVICE_NAME = 'やりたいことリスト100'
 export const SERVICE_NAME_EN = 'yaritai100list'
 
 /**
+ * サービスを一言で言ったもの。**OGP 画像に載せる**（#229）。
+ *
+ * 🔴 **`README.md` / `CLAUDE.md` の1行目と同じ文。** 3箇所に別の説明があると、
+ * どれが本当なのか分からなくなる。書き換えるならまとめて書き換える。
+ */
+export const SERVICE_TAGLINE = '100個のやりたいことを書き溜めて、叶えたら印を付けるアプリ。'
+
+/**
+ * トップページの説明文（`<meta name="description">` と `og:description`）。
+ *
+ * ⚠️ **`apps/web/index.html` にも同じ文が書いてある。**
+ * あちらは静的な HTML なので、この定数を読めない
+ * （SPA は Worker を通さずに配信される。`wrangler.jsonc` の `run_worker_first`）。
+ * **ずれていないことはテストで固定してある**（`test/index-html.test.ts`）。
+ */
+export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインせずに書き始められ、ログインするとリストを複数持てて、人に共有できます。`
+
+/**
  * リストの既定タイトル。
  *
  * サービス名「やりたいことリスト100」と紛れないよう、頭に「人生で」を付けている
