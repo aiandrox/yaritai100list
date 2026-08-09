@@ -320,14 +320,28 @@ export function buildServiceOgTemplate(): OgElement {
       // 書き出し画像と同じ並べ方（大きい方が左、小さい方が右）。
       // あちらはリスト名とサービス名、こちらはサービス名と一言
       element({ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '26px' }, [
-        element({ fontSize: 44, fontWeight: 700 }, SERVICE_NAME),
-        element({ fontSize: 20, color: COLORS.muted }, SERVICE_TAGLINE),
+        element({ fontSize: SERVICE_OG_NAME_FONT_SIZE, fontWeight: 700 }, SERVICE_NAME),
+        element({ fontSize: SERVICE_OG_TAGLINE_FONT_SIZE, color: COLORS.muted }, SERVICE_TAGLINE),
       ]),
 
       element({ flexGrow: 1, gap: `${String(SERVICE_OG_COLUMN_GAP)}px` }, columns),
     ],
   )
 }
+
+const SERVICE_OG_NAME_FONT_SIZE = 44
+const SERVICE_OG_TAGLINE_FONT_SIZE = 20
+
+/**
+ * 見出しの行（サービス名 + 一言）が実際に使う幅。
+ *
+ * ⚠️ **`SERVICE_OG_CONTENT_WIDTH` を超えると一言が折り返す**（Satori は縮めない）。
+ * 折り返すと見出しの下に半端な行が落ちて間が抜ける。
+ * **文言を変えたときにここが破れる**ので、テストで固定してある。
+ */
+export const SERVICE_OG_HEADER_WIDTH =
+  (displayWidth(SERVICE_NAME) * SERVICE_OG_NAME_FONT_SIZE) / 2 +
+  (displayWidth(SERVICE_TAGLINE) * SERVICE_OG_TAGLINE_FONT_SIZE) / 2
 
 const SERVICE_OG_PADDING = 48
 const SERVICE_OG_COLUMNS = 4
@@ -336,7 +350,7 @@ const SERVICE_OG_COLUMN_GAP = 20
 const SERVICE_OG_ROW_GAP = 8
 
 /** 中身を置ける幅。**書き出し画像と同じ数え方。** */
-const SERVICE_OG_CONTENT_WIDTH = OG_IMAGE_WIDTH - SERVICE_OG_PADDING * 2
+export const SERVICE_OG_CONTENT_WIDTH = OG_IMAGE_WIDTH - SERVICE_OG_PADDING * 2
 
 const SERVICE_OG_COLUMN_WIDTH =
   (SERVICE_OG_CONTENT_WIDTH - SERVICE_OG_COLUMN_GAP * (SERVICE_OG_COLUMNS - 1)) / SERVICE_OG_COLUMNS

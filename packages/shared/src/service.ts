@@ -18,20 +18,28 @@ export const SERVICE_NAME_EN = 'yaritai100list'
 /**
  * サービスを一言で言ったもの。**OGP 画像に載せる**（#229）。
  *
- * 🔴 **`README.md` / `CLAUDE.md` の1行目と同じ文。** 3箇所に別の説明があると、
- * どれが本当なのか分からなくなる。書き換えるならまとめて書き換える。
+ * 🔴 **利用者が書いた文をそのまま使う**（2026-08-09）。**言い換えない。**
+ * 「〜アプリ。」のような説明ではなく、**読んだ人への呼びかけ**にしてある。
+ *
+ * ⚠️ `README.md` / `CLAUDE.md` の1行目とは**別の文でよい。**
+ * あちらは開発者向けにリポジトリが何かを言うもので、こちらは利用者に向けた誘い。
  */
-export const SERVICE_TAGLINE = '100個のやりたいことを書き溜めて、叶えたら印を付けるアプリ。'
+export const SERVICE_TAGLINE = '100個のやりたいことを書き出してみよう。'
 
 /**
  * トップページの説明文（`<meta name="description">` と `og:description`）。
+ *
+ * **`SERVICE_TAGLINE` から続く1つの文章。** 呼びかけ →「すぐ始められる」→
+ * 「ログインすると増えること」の順。ログインの動機は
+ * `PRODUCT_SPEC.md` §2 の5つのうち、**外から見て分かる3つだけ**を挙げている
+ * （「消えない」「複数持てる」は使ってみないと意味が伝わらない）。
  *
  * ⚠️ **`apps/web/index.html` にも同じ文が書いてある。**
  * あちらは静的な HTML なので、この定数を読めない
  * （SPA は Worker を通さずに配信される。`wrangler.jsonc` の `run_worker_first`）。
  * **ずれていないことはテストで固定してある**（`test/index-html.test.ts`）。
  */
-export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインせずに書き始められ、ログインするとリストを複数持てて、人に共有できます。`
+export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインなしで始められます。ログインをすると、達成記録を付けたり画像を作ったり他の人に共有することができます。`
 
 /**
  * リストの既定タイトル。
