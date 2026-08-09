@@ -11,6 +11,7 @@ import {
   SERVICE_NAME,
   SERVICE_OG_CONTENT_WIDTH,
   SERVICE_OG_HEADER_WIDTH,
+  SERVICE_OG_ITEM_COUNT,
   SERVICE_OG_TEXT_WIDTH,
   SERVICE_TAGLINE,
   type ExportImagePayload,
@@ -238,7 +239,7 @@ describe('buildServiceOgTemplate', () => {
     const found = texts(buildServiceOgTemplate())
 
     expect(found).toContain('001')
-    expect(found).toContain('048')
+    expect(found).toContain(String(SERVICE_OG_ITEM_COUNT).padStart(3, '0'))
   })
 
   it('「やった」印の付いたものが混ざっている', () => {
@@ -248,16 +249,20 @@ describe('buildServiceOgTemplate', () => {
     )
 
     expect(struck.length).toBeGreaterThan(0)
-    expect(struck.length).toBeLessThan(48 / 2)
+    expect(struck.length).toBeLessThan(SERVICE_OG_ITEM_COUNT / 2)
   })
 
   it('🔴 見本の文言が列からはみ出さない', () => {
-    const numbers = new Set(Array.from({ length: 48 }, (_, i) => String(i + 1).padStart(3, '0')))
+    const numbers = new Set(
+      Array.from({ length: SERVICE_OG_ITEM_COUNT }, (_, i) => String(i + 1).padStart(3, '0')),
+    )
     const samples = texts(buildServiceOgTemplate()).filter(
       (value) => value !== SERVICE_NAME && value !== SERVICE_TAGLINE && !numbers.has(value),
     )
 
-    expect(samples).toHaveLength(48)
+    expect(samples).toHaveLength(SERVICE_OG_ITEM_COUNT)
+    // 見本が足りないと空の行が出る（`row` は undefined を空文字で描く）
+    expect(samples.filter((sample) => sample === '')).toEqual([])
 
     // はみ出したものを**全部**出す（1件ずつ直させない）
     const overflowing = samples.filter((sample) => displayWidth(sample) > SERVICE_OG_TEXT_WIDTH)
