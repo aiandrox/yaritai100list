@@ -9,6 +9,8 @@ import {
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
   SERVICE_NAME,
+  SERVICE_OG_CONTENT_WIDTH,
+  SERVICE_OG_HEADER_WIDTH,
   SERVICE_OG_TEXT_WIDTH,
   SERVICE_TAGLINE,
   type ExportImagePayload,
@@ -260,6 +262,12 @@ describe('buildServiceOgTemplate', () => {
     // はみ出したものを**全部**出す（1件ずつ直させない）
     const overflowing = samples.filter((sample) => displayWidth(sample) > SERVICE_OG_TEXT_WIDTH)
     expect(overflowing).toEqual([])
+  })
+
+  it('🔴 見出しが1行に収まる（サービス名 + 一言）', () => {
+    // 溢れると一言が折り返し、見出しの下に半端な行が落ちる。
+    // **文言を変えたときにここが破れる**
+    expect(SERVICE_OG_HEADER_WIDTH).toBeLessThanOrEqual(SERVICE_OG_CONTENT_WIDTH)
   })
 
   it('🔴 実在しそうな個人情報を載せない', () => {
