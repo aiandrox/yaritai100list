@@ -4,8 +4,10 @@ import {
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
+  DISCOVER_ITEMS_MAX,
   hasFutureCompletedAt,
   isFutureCompletedAt,
+  POOL_VISIBILITIES,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   SHARED_VISIBILITIES,
@@ -16,14 +18,14 @@ import {
   visibilitySchema,
 } from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
-import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { items, lists } from './db/schema'
+import { adoptions, items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
@@ -829,6 +831,61 @@ const app = new Hono<AppEnv>()
         'cache-control': cacheControlFor(c.req.query('v')),
       },
     })
+  })
+
+  /**
+   * 取り入れ面のプール（#233 / 親 #10）。**ログインは要らない。**
+   *
+   * 取り入れ面は**書き始める前の人こそ対象**なので、ここで認証を求めない
+   * （2026-08-08 の判断。#10）。
+   *
+   * 🔴 **本文でまとめる**（2026-08-09 の利用者の判断）。
+   * 3人が「富士山に登る」と書いていても1行。項目ごとに出すと、
+   * **同じ本文が並び、人気の数も分散する。**
+   *
+   * 🔴 **`POOL_VISIBILITIES` で絞る。** 「非公開以外」で書くと、
+   * 後から公開範囲を1つ足したときに黙って流れ込む。
+   * リンク限定公開が入らないのがこの機能の要点（`PRODUCT_SPEC.md` §5.1）。
+   *
+   * 🔴 **返すのは本文と取り入れ数だけ。** 作者・完了状態・完了日時・リスト ID を返さない。
+   * アイデアそのものを探す場なので、叶えたかどうかは削ぎ落とす。
+   * **元のリストへ辿れる値も返さない**（2つの公開面を経路として交わらせない）。
+   */
+  .get('/api/discover', async (c) => {
+    const db = createDb(c.env.DB)
+
+    /**
+     * 並び順は**取り入れ数 → 書いている人数 → 本文**（2026-08-09 の利用者の判断）。
+     *
+     * 公開したての頃は**全部 0 件**なので、取り入れ数だけだと順序が無い。
+     * 第2キーに「公開リストのうち何人がその本文を書いているか」を置くと、
+     * **初日から意味のある順**になる。
+     *
+     * ⚠️ **書いている人数は応答に入れない。** 見せるのは取り入れ数だけ
+     * （`PRODUCT_SPEC.md` §5.4）。並べるための値と見せる値を混ぜない。
+     *
+     * 最後に本文で並べるのは、**同数のときに応答が毎回変わらないようにする**ため。
+     */
+    const rows = await db
+      .select({
+        text: items.text,
+        adopted: sql<number>`count(distinct ${adoptions.id})`,
+        writers: sql<number>`count(distinct ${lists.userId})`,
+      })
+      .from(items)
+      .innerJoin(lists, eq(lists.id, items.listId))
+      // 🔴 **left join。** 一度も取り入れられていない本文が消えないようにする
+      .leftJoin(adoptions, eq(adoptions.sourceText, items.text))
+      .where(inArray(lists.visibility, [...POOL_VISIBILITIES]))
+      .groupBy(items.text)
+      .orderBy(
+        desc(sql`count(distinct ${adoptions.id})`),
+        desc(sql`count(distinct ${lists.userId})`),
+        asc(items.text),
+      )
+      .limit(DISCOVER_ITEMS_MAX)
+
+    return c.json({ items: rows.map(({ text, adopted }) => ({ text, adopted })) })
   })
 
   /**

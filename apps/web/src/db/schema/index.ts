@@ -5,6 +5,7 @@
  * `./src/db/schema/*.ts` を見るので、置き忘れてもマイグレーションには入るが、
  * アプリ側から import できなくなる。
  */
+export * from './adoptions'
 export * from './auth'
 export * from './items'
 export * from './lists'

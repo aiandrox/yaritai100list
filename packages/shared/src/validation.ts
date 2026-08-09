@@ -29,6 +29,18 @@ export const visibilitySchema = z.enum(VISIBILITIES)
 export const SHARED_VISIBILITIES = ['unlisted', 'public'] as const
 
 /**
+ * 取り入れ面のプールに**項目を提供する**公開範囲（#233）。
+ *
+ * 🔴 **「非公開以外」ではなく、許可するものを列挙する**（`SHARED_VISIBILITIES` と同じ理由）。
+ * 除外で書くと、後から公開範囲を1つ足したときに**黙ってプールに流れ込む。**
+ *
+ * ⚠️ **`SHARED_VISIBILITIES` とは別物。** あちらは「共有ページを見せてよいか」で、
+ * `unlisted` を含む。こちらは「項目をプールに出してよいか」なので `public` だけ
+ * （`PRODUCT_SPEC.md` §5.1。**全公開とリンク限定公開の違いは、まさにこれ**）。
+ */
+export const POOL_VISIBILITIES = ['public'] as const
+
+/**
  * 文字数は **UTF-16 のコード単位**で数える（`String.prototype.length`）。
  *
  * 見た目の文字数（書記素）で数える方が利用者の直感には近いが、
