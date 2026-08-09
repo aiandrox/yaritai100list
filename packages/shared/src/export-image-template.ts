@@ -317,11 +317,19 @@ export function buildServiceOgTemplate(): OgElement {
       color: COLORS.ink,
     },
     [
-      // 書き出し画像と同じ並べ方（大きい方が左、小さい方が右）。
-      // あちらはリスト名とサービス名、こちらはサービス名と一言
-      element({ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '26px' }, [
+      /**
+       * 見出しと一言。**縦に積む**（2026-08-09 の利用者の判断）。
+       *
+       * 🔴 **横に並べない。** 右端に小さく置くと、見出しの飾りに見えて読まれない。
+       * **下に置けば見出しの続きとして読まれる。**
+       *
+       * 🔴 **薄い色にしない。** ここは「何のサービスか」を言う唯一の文なので、
+       * 本文と同じ濃さ（`COLORS.ink`）にする。
+       * 薄いのは升目の「やった分」だけでよい。
+       */
+      element({ flexDirection: 'column', gap: '10px', marginBottom: '24px' }, [
         element({ fontSize: SERVICE_OG_NAME_FONT_SIZE, fontWeight: 700 }, SERVICE_NAME),
-        element({ fontSize: SERVICE_OG_TAGLINE_FONT_SIZE, color: COLORS.muted }, SERVICE_TAGLINE),
+        element({ fontSize: SERVICE_OG_TAGLINE_FONT_SIZE, color: COLORS.ink }, SERVICE_TAGLINE),
       ]),
 
       element({ flexGrow: 1, gap: `${String(SERVICE_OG_COLUMN_GAP)}px` }, columns),
@@ -329,23 +337,38 @@ export function buildServiceOgTemplate(): OgElement {
   )
 }
 
-const SERVICE_OG_NAME_FONT_SIZE = 44
-const SERVICE_OG_TAGLINE_FONT_SIZE = 20
+const SERVICE_OG_NAME_FONT_SIZE = 54
+const SERVICE_OG_TAGLINE_FONT_SIZE = 26
 
 /**
- * 見出しの行（サービス名 + 一言）が実際に使う幅。
+ * 見出しと一言のうち、**長い方**が使う幅。
  *
- * ⚠️ **`SERVICE_OG_CONTENT_WIDTH` を超えると一言が折り返す**（Satori は縮めない）。
- * 折り返すと見出しの下に半端な行が落ちて間が抜ける。
+ * 縦に積んであるので**足し算ではなく、どちらか広い方**を見る。
+ *
+ * ⚠️ **`SERVICE_OG_CONTENT_WIDTH` を超えると折り返す**（Satori は縮めない）。
+ * 折り返すと升目が下へ押し出され、**一番下の行が画像からはみ出す。**
  * **文言を変えたときにここが破れる**ので、テストで固定してある。
  */
-export const SERVICE_OG_HEADER_WIDTH =
-  (displayWidth(SERVICE_NAME) * SERVICE_OG_NAME_FONT_SIZE) / 2 +
-  (displayWidth(SERVICE_TAGLINE) * SERVICE_OG_TAGLINE_FONT_SIZE) / 2
+export const SERVICE_OG_HEADER_WIDTH = Math.max(
+  (displayWidth(SERVICE_NAME) * SERVICE_OG_NAME_FONT_SIZE) / 2,
+  (displayWidth(SERVICE_TAGLINE) * SERVICE_OG_TAGLINE_FONT_SIZE) / 2,
+)
+
+/**
+ * OGP に並べる見本の数。
+ *
+ * 🔴 **書き出し画像の 100 とは違う。** あちらは 4列 × 25行に全部並べるが、
+ * OGP は横長（1.91:1）で縦が足りない。**入るところまでにする**
+ * （2026-08-09 の利用者の判断）。
+ *
+ * ⚠️ **増やすと一番下の行が画像からはみ出す。** Satori は溢れても切らないので、
+ * 変えたら `deno task og` を流して**目で見ること。**
+ */
+export const SERVICE_OG_ITEM_COUNT = 40
 
 const SERVICE_OG_PADDING = 48
 const SERVICE_OG_COLUMNS = 4
-const SERVICE_OG_ROWS = 12
+const SERVICE_OG_ROWS = 10
 const SERVICE_OG_COLUMN_GAP = 20
 const SERVICE_OG_ROW_GAP = 8
 
@@ -381,8 +404,12 @@ export const SERVICE_OG_TEXT_WIDTH =
  * ⚠️ **`SERVICE_OG_TEXT_WIDTH` に収まる長さにすること**（テストで固定してある）。
  * 溢れても Satori は切らないので、テストが無いと気づけない。
  *
- * 「やった」印は5個おき。**多すぎると取り消し線だらけで読みにくく、
+ * 「やった」印は7個おき。**多すぎると取り消し線だらけで読みにくく、
  * 少なすぎると「印を付ける」が伝わらない。**
+ *
+ * ⚠️ **行数の約数にしない。** 10行なので5個おきにすると
+ * **どの列も1行目と6行目が消える**という規則的な縞になり、作り物に見える。
+ * 7 は 10 と互いに素なので、列ごとに位置がずれる。
  */
 const SERVICE_OG_SAMPLE = [
   '富士山に登る',
@@ -425,12 +452,4 @@ const SERVICE_OG_SAMPLE = [
   '廃線跡を歩く',
   '大きな図書館へ行く',
   '燻製を作る',
-  '満月の夜に散歩する',
-  '天体望遠鏡を覗く',
-  '郷土料理を食べ歩く',
-  '沢登りをする',
-  '手ぶらで旅に出る',
-  '感謝を言葉で伝える',
-  '縁側のある家に住む',
-  '朝市で買い物をする',
-].map((text, index) => ({ text, completed: index % 5 === 0 }))
+].map((text, index) => ({ text, completed: index % 7 === 0 }))
