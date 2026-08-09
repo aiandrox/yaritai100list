@@ -1,7 +1,7 @@
 import type { ExportImagePayload } from './export-image'
 import { ITEMS_PER_LIST_MAX } from './limits'
-import type { OgElement } from './og-template'
-import { SERVICE_NAME } from './service'
+import { OG_IMAGE_WIDTH, type OgElement } from './og-template'
+import { SERVICE_NAME, SERVICE_TAGLINE } from './service'
 
 /**
  * 画像出力のレイアウト（#190）。**4列 × 25行に 001〜100 を全部並べる。**
@@ -155,18 +155,42 @@ function element(
 }
 
 /**
+ * 行の寸法。**書き出し画像とトップページの OGP で使い回す**（#229）。
+ *
+ * 大きさは違うが、**行の作り（番号 → 本文、下に細い罫）は同じ。**
+ * 別々に書くと、片方だけ直したときに見た目がずれる。
+ */
+interface RowSize {
+  columnWidth: number
+  numberWidth: number
+  numberFontSize: number
+  textFontSize: number
+}
+
+const EXPORT_ROW: RowSize = {
+  columnWidth: COLUMN_WIDTH,
+  numberWidth: 46,
+  numberFontSize: 20,
+  textFontSize: 17,
+}
+
+/**
  * 1行ぶん。**番号と、その右の項目テキスト。**
  *
  * 未入力でも**番号だけは出す**（`PRODUCT_SPEC.md` §5.3）。
  * 100個すべて並べることで「まだ埋まっていない」が見える。
  * アプリ画面で100行を必ず描くのと同じ思想（§4.5）。
  */
-function row(index: number, item: { text: string; completed: boolean } | undefined): OgElement {
+function row(
+  index: number,
+  item: { text: string; completed: boolean } | undefined,
+  size: RowSize = EXPORT_ROW,
+): OgElement {
   const number = String(index + 1).padStart(3, '0')
 
   return element(
     {
-      width: `${String(COLUMN_WIDTH)}px`,
+      width: `${String(size.columnWidth)}px`,
       alignItems: 'center',
       gap: '10px',
       paddingBottom: '4px',
@@ -175,9 +199,9 @@ function row(index: number, item: { text: string; completed: boolean } | undefin
     [
       element(
         {
-          width: '46px',
+          width: `${String(size.numberWidth)}px`,
           justifyContent: 'flex-end',
-          fontSize: 20,
+          fontSize: size.numberFontSize,
           fontWeight: 700,
           // 🔴 **番号は全部同じ色**（2026-08-08 の利用者の判断）。
           // 「やった」かどうかは**項目テキスト側**（取り消し線と文字色）で見せる。
@@ -189,7 +213,7 @@ function row(index: number, item: { text: string; completed: boolean } | undefin
       element(
         {
           flexGrow: 1,
-          fontSize: 17,
+          fontSize: size.textFontSize,
           color: item?.completed === true ? COLORS.muted : COLORS.ink,
           // 22文字（入力の上限）でも収まる大きさにしてあるが、**念のため切る**
           overflow: 'hidden',
@@ -248,3 +272,151 @@ export function buildExportImageTemplate(payload: ExportImagePayload): OgElement
     ],
   )
 }
+
+// ---------------------------------------------------------------------------
+// トップページの OGP（#229）
+// ---------------------------------------------------------------------------
+
+/**
+ * トップページの OGP 画像。**書き出し画像のデザインを踏襲する**
+ * （2026-08-09 の利用者の判断）。
+ *
+ * 🔴 **サービス名と一言だけのカードにしない。** それだと
+ * 「何かのアプリらしい」までしか伝わらない。
+ * **番号付きの升目と取り消し線**を見せれば、
+ * 「たくさん書いて、叶えたら印を付けるもの」が文を読まなくても分かる。
+ *
+ * 🔴 **これだけは動的に作らない。** 中身が変わらないので、**1枚だけ作って
+ * `apps/web/public/og.png` に置く**（生成は `apps/render` の `deno task og`）。
+ * リストの OGP は毎回 Deno Deploy を叩くが、**トップページは入口なので、
+ * 画像生成サービスが落ちていても壊れてはいけない**（実際に 503 になった。#180 / #184）。
+ *
+ * ⚠️ **文言や配色を変えたら `deno task og` を流し直して PNG をコミットし直すこと。**
+ * ここを直しても画像は自動では追従しない。
+ */
+export function buildServiceOgTemplate(): OgElement {
+  const columns = Array.from({ length: SERVICE_OG_COLUMNS }, (_, column) =>
+    element(
+      { flexDirection: 'column', gap: `${String(SERVICE_OG_ROW_GAP)}px` },
+      Array.from({ length: SERVICE_OG_ROWS }, (_, line) => {
+        const index = column * SERVICE_OG_ROWS + line
+
+        return row(index, SERVICE_OG_SAMPLE[index], SERVICE_OG_ROW)
+      }),
+    ),
+  )
+
+  return element(
+    {
+      flexDirection: 'column',
+      width: '100%',
+      height: '100%',
+      padding: `${String(SERVICE_OG_PADDING)}px`,
+      backgroundColor: COLORS.brandSoft,
+      fontFamily: 'Noto Sans JP',
+      color: COLORS.ink,
+    },
+    [
+      // 書き出し画像と同じ並べ方（大きい方が左、小さい方が右）。
+      // あちらはリスト名とサービス名、こちらはサービス名と一言
+      element({ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '26px' }, [
+        element({ fontSize: 44, fontWeight: 700 }, SERVICE_NAME),
+        element({ fontSize: 20, color: COLORS.muted }, SERVICE_TAGLINE),
+      ]),
+
+      element({ flexGrow: 1, gap: `${String(SERVICE_OG_COLUMN_GAP)}px` }, columns),
+    ],
+  )
+}
+
+const SERVICE_OG_PADDING = 48
+const SERVICE_OG_COLUMNS = 4
+const SERVICE_OG_ROWS = 12
+const SERVICE_OG_COLUMN_GAP = 20
+const SERVICE_OG_ROW_GAP = 8
+
+/** 中身を置ける幅。**書き出し画像と同じ数え方。** */
+const SERVICE_OG_CONTENT_WIDTH = OG_IMAGE_WIDTH - SERVICE_OG_PADDING * 2
+
+const SERVICE_OG_COLUMN_WIDTH =
+  (SERVICE_OG_CONTENT_WIDTH - SERVICE_OG_COLUMN_GAP * (SERVICE_OG_COLUMNS - 1)) / SERVICE_OG_COLUMNS
+
+const SERVICE_OG_ROW: RowSize = {
+  columnWidth: SERVICE_OG_COLUMN_WIDTH,
+  numberWidth: 38,
+  numberFontSize: 17,
+  textFontSize: 16,
+}
+
+/**
+ * 見本の項目に使える幅（半角何文字ぶんか）。
+ *
+ * 🔴 **決め打ちの数字にしない。** 列の幅から番号と隙間を引いて出す。
+ * 直に「13文字まで」と書くと、列の数を変えたときに**黙って溢れる**
+ * （Satori は溢れても切らない。気づくのは画像を見たときだけ）。
+ */
+export const SERVICE_OG_TEXT_WIDTH =
+  ((SERVICE_OG_COLUMN_WIDTH - SERVICE_OG_ROW.numberWidth - 10) / SERVICE_OG_ROW.textFontSize) * 2
+
+/**
+ * OGP に載せる見本のやりたいこと。
+ *
+ * 🔴 **実在の誰かのリストではない。** ここに書いたものが全世界のカードに出る。
+ * **書きそうで、当たり障りのないもの**を選ぶ。
+ *
+ * ⚠️ **`SERVICE_OG_TEXT_WIDTH` に収まる長さにすること**（テストで固定してある）。
+ * 溢れても Satori は切らないので、テストが無いと気づけない。
+ *
+ * 「やった」印は5個おき。**多すぎると取り消し線だらけで読みにくく、
+ * 少なすぎると「印を付ける」が伝わらない。**
+ */
+const SERVICE_OG_SAMPLE = [
+  '富士山に登る',
+  'オーロラを見る',
+  'フルマラソンを走る',
+  '茶道を習う',
+  '一人で海外へ行く',
+  'ピアノで一曲弾く',
+  '本を100冊読む',
+  '陶芸で器を作る',
+  '祖母の味を再現する',
+  '星空の下で眠る',
+  '気球に乗る',
+  '京都で紅葉を見る',
+  '短編小説を書く',
+  '犬と暮らす',
+  '家庭菜園を始める',
+  '献血に行く',
+  '落語を寄席で聴く',
+  '温泉宿に泊まる',
+  '手紙を書いて出す',
+  '早起きを習慣にする',
+  '古い写真を整理する',
+  '自分でパンを焼く',
+  '山小屋で朝日を見る',
+  'スペイン語を習う',
+  '海外の友人に会う',
+  '三味線を触ってみる',
+  '夜行列車に乗る',
+  '美術館を巡る',
+  '自転車で海まで行く',
+  '蕎麦を打つ',
+  '座禅を組む',
+  '親に旅行を贈る',
+  '島に一週間滞在する',
+  '銭湯を巡る',
+  '苔の鉢を育てる',
+  '流氷を見に行く',
+  '写真展を開く',
+  '廃線跡を歩く',
+  '大きな図書館へ行く',
+  '燻製を作る',
+  '満月の夜に散歩する',
+  '天体望遠鏡を覗く',
+  '郷土料理を食べ歩く',
+  '沢登りをする',
+  '手ぶらで旅に出る',
+  '感謝を言葉で伝える',
+  '縁側のある家に住む',
+  '朝市で買い物をする',
+].map((text, index) => ({ text, completed: index % 5 === 0 }))

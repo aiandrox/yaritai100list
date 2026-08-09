@@ -1,5 +1,6 @@
 import {
   buildExportImageTemplate,
+  buildServiceOgTemplate,
   displayWidth,
   EXPORT_IMAGE_HEIGHT,
   EXPORT_IMAGE_WIDTH,
@@ -8,6 +9,8 @@ import {
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
   SERVICE_NAME,
+  SERVICE_OG_TEXT_WIDTH,
+  SERVICE_TAGLINE,
   type ExportImagePayload,
   type OgElement,
 } from '@yaritai100list/shared'
@@ -211,5 +214,59 @@ describe('buildExportImageTemplate', () => {
 
   it('OGP とは別の縦横比（役割が違う）', () => {
     expect(EXPORT_IMAGE_WIDTH / EXPORT_IMAGE_HEIGHT).not.toBeCloseTo(1200 / 630, 2)
+  })
+})
+
+/**
+ * トップページの OGP（#229）。**書き出し画像のデザインを踏襲したもの。**
+ *
+ * 🔴 見るのは **「見本の文言が列からはみ出さないこと」。**
+ * Satori は溢れても切らないので、**長い文言を足しても誰も気づけない。**
+ * ここが唯一の歯止め（画像は1枚だけ作ってコミットするので、CI では描かれない）。
+ */
+describe('buildServiceOgTemplate', () => {
+  it('サービス名と一言が載っている', () => {
+    const found = texts(buildServiceOgTemplate())
+
+    expect(found).toContain(SERVICE_NAME)
+    expect(found).toContain(SERVICE_TAGLINE)
+  })
+
+  it('番号付きの行が並ぶ（001 から）', () => {
+    const found = texts(buildServiceOgTemplate())
+
+    expect(found).toContain('001')
+    expect(found).toContain('048')
+  })
+
+  it('「やった」印の付いたものが混ざっている', () => {
+    // 全部未完了だと「叶えたら印を付ける」が伝わらない
+    const struck = styles(buildServiceOgTemplate()).filter(
+      (style) => style.textDecoration === 'line-through',
+    )
+
+    expect(struck.length).toBeGreaterThan(0)
+    expect(struck.length).toBeLessThan(48 / 2)
+  })
+
+  it('🔴 見本の文言が列からはみ出さない', () => {
+    const numbers = new Set(Array.from({ length: 48 }, (_, i) => String(i + 1).padStart(3, '0')))
+    const samples = texts(buildServiceOgTemplate()).filter(
+      (value) => value !== SERVICE_NAME && value !== SERVICE_TAGLINE && !numbers.has(value),
+    )
+
+    expect(samples).toHaveLength(48)
+
+    // はみ出したものを**全部**出す（1件ずつ直させない）
+    const overflowing = samples.filter((sample) => displayWidth(sample) > SERVICE_OG_TEXT_WIDTH)
+    expect(overflowing).toEqual([])
+  })
+
+  it('🔴 実在しそうな個人情報を載せない', () => {
+    const found = texts(buildServiceOgTemplate()).join('')
+
+    // ここに書いたものが全世界のカードに出る
+    expect(found).not.toContain('@')
+    expect(found).not.toContain('aiandrox')
   })
 })
