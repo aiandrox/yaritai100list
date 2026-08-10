@@ -33,16 +33,28 @@ export function Layout({
         ⚠️ 効くのは広い画面だけ。よくある電話の横幅（約 24rem）はそれより狭い
       */}
       <div className="mx-auto max-w-(--page-max-width) px-4 pb-24">
-        <header className="-mx-4 mb-4 flex items-baseline justify-between bg-brand px-4 py-3">
-          <Link href="/" className="text-xs font-bold text-slate-900">
+        <header className="-mx-4 mb-4 flex items-baseline justify-between gap-3 bg-brand px-4 py-3">
+          <Link href="/" className="shrink-0 text-xs font-bold text-slate-900">
             {SERVICE_NAME}
           </Link>
 
-          {showListsLink && (
-            <Link href="/lists" className="text-xs text-slate-900 underline">
-              すべてのリスト
+          <nav className="flex items-baseline gap-3 text-xs text-slate-900">
+            {/*
+              取り入れ面（#235）。🔴 **ログインの有無で出し分けない。**
+              書き始める前の人こそ対象なので、未ログインにこそ届いてほしい。
+              「すべてのリスト」と並べるのは、**どちらもリスト1つに紐付かない画面**だから
+              （共有の設定と書き出しはリストの画面にだけ置く。#202）
+            */}
+            <Link href="/discover" className="shrink-0 underline">
+              さがす
             </Link>
-          )}
+
+            {showListsLink && (
+              <Link href="/lists" className="shrink-0 underline">
+                すべてのリスト
+              </Link>
+            )}
+          </nav>
         </header>
 
         {children}

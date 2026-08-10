@@ -15,9 +15,11 @@ import {
   showsSignInBenefits,
   signInBenefits,
   hasAnythingToImport,
+  hasText,
   moveItem,
   pickCurrentListId,
   parseStoredList,
+  rejectionMessage,
   removeItem,
   renameList,
   serializeList,
@@ -668,5 +670,54 @@ describe('signInBenefits / showsSignInBenefits', () => {
 
     expect(text(NOW)).toContain('2026年に')
     expect(text(new Date('2031-01-01T00:00:00.000Z'))).toContain('2031年に')
+  })
+})
+
+describe('hasText', () => {
+  const list = listOf('南極に行く', 'オーロラを見る')
+
+  it('あれば true', () => {
+    expect(hasText(list, '南極に行く')).toBe(true)
+  })
+
+  it('無ければ false', () => {
+    expect(hasText(list, '北極に行く')).toBe(false)
+  })
+
+  it('🔴 完全一致で見る（部分一致で「ある」ことにしない）', () => {
+    // 「南極に行く」を持っている人に「南極に行く準備をする」を取り入れ済みと出さない
+    expect(hasText(list, '南極')).toBe(false)
+    expect(hasText(list, '南極に行く準備をする')).toBe(false)
+  })
+
+  it('1件も無いリストでも落ちない', () => {
+    expect(hasText(createEmptyList(), '南極に行く')).toBe(false)
+  })
+})
+
+describe('rejectionMessage', () => {
+  it('🔴 「空」と「長すぎ」で違う文言になる', () => {
+    // 長すぎて弾かれた人に「1文字以上入力してください」と出しても直せない（#79）
+    expect(rejectionMessage('text-empty')).not.toBe(rejectionMessage('text-too-long'))
+  })
+
+  it('🔴 文字数の上限を文言に埋め込まない（shared の定数から出す）', () => {
+    expect(rejectionMessage('text-too-long')).toContain(String(ITEM_TEXT_MAX_LENGTH))
+    expect(rejectionMessage('list-full')).toContain(String(ITEMS_PER_LIST_MAX))
+  })
+
+  it('どの理由にも文言がある', () => {
+    const reasons = [
+      'text-empty',
+      'text-too-long',
+      'title-empty',
+      'title-too-long',
+      'list-full',
+      'not-found',
+      'server-error',
+      'order-stale',
+    ] as const
+
+    for (const reason of reasons) expect(rejectionMessage(reason)).not.toBe('')
   })
 })

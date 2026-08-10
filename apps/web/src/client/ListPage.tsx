@@ -1,16 +1,10 @@
-import {
-  ITEM_TEXT_MAX_LENGTH,
-  ITEMS_PER_LIST_MAX,
-  LIST_TITLE_MAX_LENGTH,
-} from '@yaritai100list/shared'
-
 import { Link } from 'wouter'
 
 import { ListEditor } from './ListEditor'
 import { Notice } from './Notice'
 import { SignInBenefits } from './SignInBenefits'
-import { toCompletionPermission, type SessionState } from './model'
-import { useList, type ImportOutcome, type ListController, type Rejection } from './useList'
+import { rejectionMessage, toCompletionPermission, type SessionState } from './model'
+import { useList, type ImportOutcome, type ListController } from './useList'
 
 /**
  * リスト1つを編集する画面。`/` と `/lists/:listId` の両方で使う。
@@ -18,25 +12,6 @@ import { useList, type ImportOutcome, type ListController, type Rejection } from
  * `listId` を渡さなければ**最後に更新したリスト**を開く（`PRODUCT_SPEC.md` §4.3）。
  * 読み書きの配線は `useList.ts`、判定と変換は `model.ts` の純関数。
  */
-
-/**
- * 断られた理由ごとの文言。
- *
- * 🔴 **「空」と「長すぎ」を同じ文言にしない**（#79 で実際に踏んだ）。
- * 長すぎて弾かれた人に「1文字以上入力してください」と出しても、何を直せばいいのか
- * 分からない。文字数は `packages/shared` の定数から出す（ここに数字を書かない）。
- */
-const REJECTION_MESSAGES: Record<Rejection, string> = {
-  'text-empty': 'やりたいことを入力してください',
-  'text-too-long': `やりたいことは${String(ITEM_TEXT_MAX_LENGTH)}文字までです`,
-  'title-empty': 'タイトルを入力してください',
-  'title-too-long': `タイトルは${String(LIST_TITLE_MAX_LENGTH)}文字までです`,
-  'list-full': `${String(ITEMS_PER_LIST_MAX)}件まで書けます。減らすと続けて書けます`,
-  'not-found': '対象の項目が見つかりませんでした',
-  'server-error': '保存できませんでした。通信を確かめて、もう一度試してください',
-  // 別のタブや端末で項目が増減していた。手元の並びを押し通さず、取り直している（#142）
-  'order-stale': '他のところで項目が変わっていたので、最新の状態を読み直しました',
-}
 
 export function ListPage({ session, listId }: { session: SessionState; listId?: string }) {
   // 🔴 **`/lists/:listId` は未ログインでは開かせない**（#112）。
@@ -136,7 +111,7 @@ function ListPageBody({
 
           {rejection !== null && (
             <p role="alert" className="mb-2 rounded bg-white px-3 py-2 text-sm text-brand-deep">
-              {REJECTION_MESSAGES[rejection]}
+              {rejectionMessage(rejection)}
             </p>
           )}
 
