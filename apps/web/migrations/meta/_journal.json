@@ -64,6 +64,13 @@
       "when": 1786276546338,
       "tag": "0008_add_adoptions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786319581797,
+      "tag": "0009_drop_adoption_on_text_change",
+      "breakpoints": true
     }
   ]
 }
