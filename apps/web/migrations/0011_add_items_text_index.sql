@@ -1,0 +1,1 @@
+CREATE INDEX `items_text_idx` ON `items` (`text`);

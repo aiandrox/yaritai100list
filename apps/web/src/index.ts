@@ -25,7 +25,7 @@ import { z } from 'zod'
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { adoptions, items, lists } from './db/schema'
+import { items, lists } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
@@ -56,21 +56,6 @@ const createListSchema = z.object({ title: listTitleSchema.optional() }).strict(
 
 /** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
 const createItemSchema = z.object({ text: itemTextSchema }).strict()
-
-/**
- * 取り入れ（#234）。**本文だけ受け取る。**
- *
- * 🔴 **完了状態を受け取る口を作らない。** 他人が叶えたことは自分の達成ではない。
- * 受け取れる形にすると、**要求の組み立てだけで「完了済みの項目」を作れてしまう。**
- *
- * 🔴 **取り入れ元の項目 ID も受け取らない。** プールの単位は本文なので要らないし、
- * 受け取ると「どのリストから取り入れたか」を送り側が指定できてしまう。
- *
- * 本文の検証は `itemTextSchema`（普通に書いた項目と同じ）。
- * ⚠️ **これだけでは足りない。** 「いまプールにあるか」はハンドラで確かめる
- * （スキーマから DB を引けないため）。
- */
-const adoptItemSchema = z.object({ text: itemTextSchema }).strict()
 
 /**
  * 項目の変更。
@@ -856,13 +841,9 @@ const app = new Hono<AppEnv>()
    *
    * 🔴 **本文でまとめる**（2026-08-09 の利用者の判断）。
    * 3人が「富士山に登る」と書いていても1行。項目ごとに出すと、
-   * **同じ本文が並び、人気の数も分散する。**
+   * **同じ本文が並び、数も分散する。**
    *
-   * 🔴 **`POOL_VISIBILITIES` で絞る。** 「非公開以外」で書くと、
-   * 後から公開範囲を1つ足したときに黙って流れ込む。
-   * リンク限定公開が入らないのがこの機能の要点（`PRODUCT_SPEC.md` §5.1）。
-   *
-   * 🔴 **返すのは本文と取り入れ数だけ。** 作者・完了状態・完了日時・リスト ID を返さない。
+   * 🔴 **返すのは本文だけ。** 作者・完了状態・完了日時・リスト ID を返さない。
    * アイデアそのものを探す場なので、叶えたかどうかは削ぎ落とす。
    * **元のリストへ辿れる値も返さない**（2つの公開面を経路として交わらせない）。
    */
@@ -870,127 +851,47 @@ const app = new Hono<AppEnv>()
     const db = createDb(c.env.DB)
 
     /**
-     * 並び順は**取り入れ数 → 書いている人数 → 本文**（2026-08-09 の利用者の判断）。
+     * 🔴 **出す本文と、数える範囲が違う**（2026-08-10 の利用者の判断）。
      *
-     * 公開したての頃は**全部 0 件**なので、取り入れ数だけだと順序が無い。
-     * 第2キーに「公開リストのうち何人がその本文を書いているか」を置くと、
-     * **初日から意味のある順**になる。
+     * | | 範囲 |
+     * |---|---|
+     * | プールに**出す**本文 | 全公開リストにあるものだけ（`POOL_VISIBILITIES`） |
+     * | 並べるための**人数** | **全リスト。非公開・リンク限定公開も含む** |
      *
-     * ⚠️ **書いている人数は応答に入れない。** 見せるのは取り入れ数だけ
-     * （`PRODUCT_SPEC.md` §5.4）。並べるための値と見せる値を混ぜない。
+     * 数える範囲を全公開だけにすると、**公開リストが少ないうちは全部1人**で
+     * 順序が付かない。非公開まで含めると初日から意味のある順になる。
+     *
+     * ⚠️ **だから人数を応答に入れない。**
+     * 出すと「知りたい本文を自分の全公開リストに書く → プールに出る →
+     * 表示された人数を読む」で、**何人が非公開でそれを持っているかを問い合わせられる。**
+     * 並びに効かせるだけなら、順位からしか推測できず精度が大きく落ちる。
+     * 丸めて出すかどうかは #241。
      *
      * 最後に本文で並べるのは、**同数のときに応答が毎回変わらないようにする**ため。
      */
     const rows = await db
-      .select({
-        text: items.text,
-        adopted: sql<number>`count(distinct ${adoptions.id})`,
-        writers: sql<number>`count(distinct ${lists.userId})`,
-      })
+      .select({ text: items.text, writers: sql<number>`count(distinct ${lists.userId})` })
       .from(items)
       .innerJoin(lists, eq(lists.id, items.listId))
-      // 🔴 **left join。** 一度も取り入れられていない本文が消えないようにする
-      .leftJoin(adoptions, eq(adoptions.sourceText, items.text))
-      .where(inArray(lists.visibility, [...POOL_VISIBILITIES]))
-      .groupBy(items.text)
-      .orderBy(
-        desc(sql`count(distinct ${adoptions.id})`),
-        desc(sql`count(distinct ${lists.userId})`),
-        asc(items.text),
+      .where(
+        // 🔴 **ここでは公開範囲を絞らない**（人数は全リストで数えるため）。
+        // 絞るのは「プールに出す本文か」の方
+        inArray(
+          items.text,
+          db
+            .select({ text: items.text })
+            .from(items)
+            .innerJoin(lists, eq(lists.id, items.listId))
+            .where(inArray(lists.visibility, [...POOL_VISIBILITIES])),
+        ),
       )
+      .groupBy(items.text)
+      .orderBy(desc(sql`count(distinct ${lists.userId})`), asc(items.text))
       .limit(DISCOVER_ITEMS_MAX)
 
-    return c.json({ items: rows.map(({ text, adopted }) => ({ text, adopted })) })
+    // **人数は返さない**（上の注意書き）
+    return c.json({ items: rows.map(({ text }) => ({ text })) })
   })
-
-  /**
-   * プールの本文を自分のリストに取り入れる（#234 / 親 #10）。
-   *
-   * 🔴 **完了状態を引き継がない。** 他人が叶えたことは自分の達成ではない。
-   * そもそも受け取る口を作っていない（本文だけを受け取る）。
-   *
-   * 🔴 **送られた本文をそのまま信じない。** いまプールにあることを確かめる。
-   * 確かめないと、**この口から任意の本文を「取り入れた」ことにして人気指標を作れる。**
-   *
-   * ⚠️ **未ログインはここへ来ない。** 未ログインの取り入れは localStorage で完結し、
-   * サーバーに記録を残さない（#236）。数えるには**認証なしで書き込める口**が要り、
-   * 人気指標を水増しできてしまう。指標の正しさを取った。
-   *
-   * **本文を書き換えたときに関係を消す処理はここに無い。**
-   * DB のトリガー（マイグレーション 0009）に置いてある。
-   * `items` の更新経路に後始末を紛れ込ませない、という判断（#87）。
-   */
-  .post(
-    '/api/lists/:listId/adopt',
-    requireUser,
-    rateLimitCreates,
-    requireOwnedList,
-    zValidator('json', adoptItemSchema),
-    async (c) => {
-      const db = createDb(c.env.DB)
-      const listId = c.get('list').id
-      const { text } = c.req.valid('json')
-
-      /**
-       * **いまプールにあるか。**
-       *
-       * `POOL_VISIBILITIES` で絞るのは `/api/discover` と同じ理由。
-       * ここを緩めると、リンク限定公開の項目を「取り入れた」ことにできてしまう。
-       */
-      const [inPool] = await db
-        .select({ text: items.text })
-        .from(items)
-        .innerJoin(lists, eq(lists.id, items.listId))
-        .where(and(eq(items.text, text), inArray(lists.visibility, [...POOL_VISIBILITIES])))
-        .limit(1)
-
-      if (!inPool) {
-        return c.json({ error: 'Not In Pool' } as const, 404)
-      }
-
-      const id = newId()
-
-      /**
-       * 🔴 **上限と重複の判定を挿入と1文にする。**
-       *
-       * 「数えてから入れる」と、素早く2回押されたときに**両方が通って重複する**
-       * （リストの作成 `POST /api/lists` と同じ理由）。
-       *
-       * 0行だったときに**どちらで弾かれたのか分からない**ので、下で分けて聞き直す。
-       */
-      const inserted = await db.all<{ id: string }>(sql`
-        insert into ${items} (id, list_id, text, position)
-        select ${id}, ${listId}, ${text},
-               (select count(*) from ${items} where ${items.listId} = ${listId})
-        where (select count(*) from ${items} where ${items.listId} = ${listId}) < ${ITEMS_PER_LIST_MAX}
-          and not exists (
-            select 1 from ${items} where ${items.listId} = ${listId} and ${items.text} = ${text}
-          )
-        returning id
-      `)
-
-      if (inserted.length === 0) {
-        const [duplicate] = await db
-          .select({ id: items.id })
-          .from(items)
-          .where(and(eq(items.listId, listId), eq(items.text, text)))
-          .limit(1)
-
-        // **理由を分ける。** 「もう持っている」と「枠が無い」では次にやることが違う
-        return duplicate
-          ? c.json({ error: 'Already Adopted' } as const, 409)
-          : c.json({ error: 'Item Limit Reached' } as const, 409)
-      }
-
-      await db.insert(adoptions).values({ id: newId(), adopterItemId: id, sourceText: text })
-      await touchList(db, listId)
-
-      const [item] = await db.select().from(items).where(eq(items.id, id))
-      if (!item) throw new Error('取り入れた項目を読み戻せなかった')
-
-      return c.json({ item }, 201)
-    },
-  )
 
   /**
    * Better Auth の全エンドポイント（セッション取得、サインアウト、コールバック等）。
