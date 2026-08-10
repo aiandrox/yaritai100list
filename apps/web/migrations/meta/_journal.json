@@ -71,6 +71,20 @@
       "when": 1786319581797,
       "tag": "0009_drop_adoption_on_text_change",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786326294465,
+      "tag": "0010_drop_adoptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1786326353528,
+      "tag": "0011_add_items_text_index",
+      "breakpoints": true
     }
   ]
 }
