@@ -44,22 +44,31 @@ interface PoolItem {
   adopted: boolean
 }
 
+/** 入口に出すジャンル（#255）。**1件も無いものはサーバーが外している。** */
+interface GenreEntry {
+  slug: string
+  label: string
+}
+
 type PoolState =
   | { status: 'loading' }
   | { status: 'failed' }
-  | { status: 'ready'; items: PoolItem[]; hasNext: boolean }
+  | { status: 'ready'; items: PoolItem[]; hasNext: boolean; genres: GenreEntry[] }
 
 export function DiscoverPage({ session }: { session: SessionState }) {
   const [pool, setPool] = useState<PoolState>({ status: 'loading' })
 
   /**
-   * ページは URL に載せる（`?page=2`）。
+   * ページとジャンルは URL に載せる（`?page=2&genre=travel`）。
    *
    * **戻るボタンが効き、渡したリンクが同じところを開く。**
    * 画面の中の状態にすると、1件取り入れて戻ってきたときに先頭へ飛ぶ。
+   *
+   * 🔴 **ジャンルはスラッグ**（#255）。日本語のラベルを URL に入れない。
    */
   const [searchParams] = useSearchParams()
   const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1)
+  const genre = searchParams.get('genre')
 
   /**
    * 取り入れ先は**トップと同じリスト**（最後に更新したもの。`PRODUCT_SPEC.md` §4.3）。
@@ -105,7 +114,11 @@ export function DiscoverPage({ session }: { session: SessionState }) {
 
       try {
         const res = await api.api.discover.$get({
-          query: { page: String(page), ...(listId === null ? {} : { listId }) },
+          query: {
+            page: String(page),
+            ...(listId === null ? {} : { listId }),
+            ...(genre === null ? {} : { genre }),
+          },
         })
         if (!res.ok) {
           setPool({ status: 'failed' })
@@ -128,6 +141,7 @@ export function DiscoverPage({ session }: { session: SessionState }) {
           status: 'ready',
           items: list === null ? body.items : sortAdoptedLast(body.items, list),
           hasNext: body.hasNext,
+          genres: body.genres,
         })
       } catch {
         setPool({ status: 'failed' })
@@ -135,7 +149,7 @@ export function DiscoverPage({ session }: { session: SessionState }) {
     }
 
     void load()
-  }, [page, listId, canLoad])
+  }, [page, listId, genre, canLoad])
 
   return (
     <div>
@@ -155,7 +169,9 @@ export function DiscoverPage({ session }: { session: SessionState }) {
         </Notice>
       )}
 
-      {pool.status === 'ready' && pool.items.length === 0 && <EmptyPool />}
+      {pool.status === 'ready' && <GenreNav genres={pool.genres} current={genre} />}
+
+      {pool.status === 'ready' && pool.items.length === 0 && <EmptyPool genre={genre} />}
 
       {pool.status === 'ready' && pool.items.length > 0 && (
         <>
@@ -197,10 +213,69 @@ export function DiscoverPage({ session }: { session: SessionState }) {
             ))}
           </ul>
 
-          <Pager page={page} hasNext={pool.hasNext} />
+          <Pager page={page} hasNext={pool.hasNext} genre={genre} />
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * 取り入れ面の URL を作る。**ページとジャンルを取り違えないよう1箇所に集める。**
+ *
+ * 既定（1ページ目・ジャンル指定なし）は `?` を付けない。
+ * **同じ画面に2つの URL があると、戻るボタンの履歴が汚れる。**
+ */
+function discoverHref({ page = 1, genre }: { page?: number; genre?: string | null }): string {
+  const params = new URLSearchParams()
+  if (genre != null) params.set('genre', genre)
+  if (page > 1) params.set('page', String(page))
+
+  const query = params.toString()
+
+  return query === '' ? '/discover' : `/discover?${query}`
+}
+
+/**
+ * ジャンルの入口（#255）。
+ *
+ * - **横スクロールの1行。** 1行で済み、一覧が下に押されない
+ * - **既定は「すべて」。** いきなり選ばせない
+ * - **1件も無いジャンルは出さない**（サーバーが外している）。押しても空、が起きない
+ * - 🔴 この2つは噛み合っている。**貯まっていないうちは数個しか並ばないので、
+ *   そもそも横スクロールが要らない**
+ *
+ * ⚠️ **ジャンルを変えたら1ページ目に戻す**（`discoverHref` に `page` を渡さない）。
+ * 3ページ目から件数の少ないジャンルへ移ると、**空の画面に着地する。**
+ */
+function GenreNav({ genres, current }: { genres: GenreEntry[]; current: string | null }) {
+  // 1つも無ければ入口ごと出さない（「すべて」だけの行に意味が無い）
+  if (genres.length === 0) return null
+
+  const chip = 'shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap'
+  const on = `${chip} border-brand-deep bg-brand-deep font-bold text-white`
+  const off = `${chip} border-brand bg-white text-slate-700`
+
+  return (
+    /*
+     * ⚠️ **見切れを作る**（`-mr-4 pr-4`）。右端でぴったり切ると
+     * 「まだ続く」ことが分からない。`overflow-x-auto` だけでは足りない
+     */
+    <nav className="-mr-4 mt-3 flex gap-2 overflow-x-auto pb-1 pr-4">
+      <Link href={discoverHref({})} className={current === null ? on : off}>
+        すべて
+      </Link>
+
+      {genres.map(({ slug, label }) => (
+        <Link
+          key={slug}
+          href={discoverHref({ genre: slug })}
+          className={current === slug ? on : off}
+        >
+          {label}
+        </Link>
+      ))}
+    </nav>
   )
 }
 
@@ -209,8 +284,10 @@ export function DiscoverPage({ session }: { session: SessionState }) {
  *
  * ⚠️ **総ページ数を出さない。** 出すには全体を数えることになり、
  * ページを開くたびに問い合わせが2回になる。**「次があるか」だけで足りる。**
+ *
+ * ⚠️ **ジャンルを引き継ぐ**（#255）。落とすと、2ページ目で絞り込みが外れる。
  */
-function Pager({ page, hasNext }: { page: number; hasNext: boolean }) {
+function Pager({ page, hasNext, genre }: { page: number; hasNext: boolean; genre: string | null }) {
   if (page === 1 && !hasNext) return null
 
   const link = 'rounded-md border border-brand-deep px-3 py-1.5 font-bold text-brand-deep'
@@ -218,10 +295,7 @@ function Pager({ page, hasNext }: { page: number; hasNext: boolean }) {
   return (
     <nav className="mt-4 flex items-center justify-between text-xs">
       {page > 1 ? (
-        <Link
-          href={page === 2 ? '/discover' : `/discover?page=${String(page - 1)}`}
-          className={link}
-        >
+        <Link href={discoverHref({ page: page - 1, genre })} className={link}>
           前へ
         </Link>
       ) : (
@@ -231,7 +305,7 @@ function Pager({ page, hasNext }: { page: number; hasNext: boolean }) {
       <span className="text-slate-600">{page} ページ目</span>
 
       {hasNext ? (
-        <Link href={`/discover?page=${String(page + 1)}`} className={link}>
+        <Link href={discoverHref({ page: page + 1, genre })} className={link}>
           次へ
         </Link>
       ) : (
@@ -278,8 +352,27 @@ function AdoptButton({
  *
  * 🔴 **初日に必ず通る画面。** 全公開のリストが1つも無ければ空になる。
  * **「エラーではなく、まだ貯まっていない」と分かる文面にする。**
+ *
+ * ⚠️ **ジャンルを指定しているときは別の文面**（#255）。
+ * 入口には空のジャンルを出していないので普通は通らないが、
+ * **貼られた URL を後から開くと通る**（その間にプールが変わっている）。
+ * 全公開の説明を出しても的外れなので、「すべて」へ戻す。
  */
-function EmptyPool() {
+function EmptyPool({ genre }: { genre: string | null }) {
+  if (genre !== null) {
+    return (
+      <div className="mt-4 rounded-lg bg-white px-4 py-5 text-sm text-slate-600">
+        <p>このジャンルには、いま何もありません。</p>
+        <p className="mt-2">
+          <Link href={discoverHref({})} className="font-bold text-brand-deep underline">
+            すべて
+          </Link>
+          から探せます。
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="mt-4 rounded-lg bg-white px-4 py-5 text-sm text-slate-600">
       <p>まだ何も集まっていません。</p>
