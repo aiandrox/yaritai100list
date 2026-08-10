@@ -351,11 +351,43 @@ Deno Deploy 側が例外として許されているのは、**あれが Cookie �
 
 - **落ちても「出さない」として保存はしない**ので、誤った判定が焼き付くことはない
 - ただし**判定が全く進まなくなる。** `pool-judge: failed=` がログに出続ける
-- モデルを変えたら**判定を貼り直す**:
-  `wrangler d1 execute DB --remote --command "delete from wish_texts"`
 
 ⚠️ **Cron の間隔は Neurons の枠から決めている**（1時間ごと × 15件 = 360件/日）。
 短くすると、溜まっているときに**半日で枠を焼く。**
+
+### 🔴 `wish_texts` を一括で消さないこと
+
+モデルを変えたときに貼り直したくなるが、**やってはいけない。**
+
+```sh
+# 🔴 これをやると取り入れ面が空になる
+wrangler d1 execute DB --remote --command "delete from wish_texts"
+```
+
+プール（#254）は `wish_texts` から毎日作り直すので、消すと**次の日次バッチでプールが空になる。**
+判定は**1日 360 件**しか進まないので、1万件あれば**28日間、取り入れ面が空**のまま。
+
+貼り直しの仕組みは #254 で入れる（**古い判定を使い続けたまま、順に判定し直す**）。
+
+### 出してはいけないものが出てしまったとき
+
+AI の判定をすり抜けることはある。**2箇所直す。片方だけでは直らない。**
+
+```sh
+# 1. いま出ているものを消す（即座に効く）
+wrangler d1 execute DB --remote --command \
+  "delete from pool where canonical = '...'"
+
+# 2. 次のバッチで戻ってこないようにする
+wrangler d1 execute DB --remote --command \
+  "update wish_texts set verdict='ng', canonical=null, genre=null where raw_text = '...'"
+```
+
+- **1 だけ**だと、翌日の日次バッチで戻ってくる
+- **2 だけ**だと、消えるまで最大1日かかる
+
+⚠️ **`raw_text` は書かれたままの本文**（正規化前）。同じ意味でも表記が違えば別の行なので、
+`like` で拾うか、`pool` の `canonical` から辿って該当する `wish_texts` を全部直す。
 
 ### ⚠️ 無料枠の 5,000 errors/月は**プロジェクト間で共有**
 
