@@ -225,6 +225,31 @@ function ExportPageBody({ listId }: { listId: string }) {
           <strong>このアプリに読み込むことはできません。</strong>
         </p>
 
+        {/*
+          何が出てくるかを押す前に見せる（#240）。
+          **画像はサーバーで作るので数秒かかる。** 待った末に思っていたものと違ったら、
+          その時間は丸損になる（JSON とマークダウンは中身をこの画面で確かめられる）。
+
+          🔴 **本人のリストのプレビューではなく、焼いておいた見本。**
+          本物を出すと**画面を開いただけで生成サービスを叩く**ことになり、
+          数秒とレート制限の枠（60秒で10回。#192）を消費する。
+
+          作り直しは `apps/render` の `deno task sample`。
+          **テンプレートを変えたら流し直すこと**（ずれた見本はかえって不信を招く）。
+        */}
+        <img
+          src="/export-sample.png"
+          alt="4列25行に番号付きで100個分の枠が並び、書いた項目が入っている画像。叶えた項目には打ち消し線が引かれている"
+          // 実物は 2000x1414。**縮小したものを置いてある**（`sample-export.ts`）。
+          // 寸法を書いておかないと、読み込む前後で下の文とボタンが飛ぶ
+          width={800}
+          height={566}
+          className="mt-3 w-full rounded border border-brand"
+        />
+        <p className="mt-1 text-xs text-slate-500">
+          これは見本です。<strong>実際にはあなたのリストの内容で作られます。</strong>
+        </p>
+
         <button
           type="button"
           onClick={() => void downloadImage()}
