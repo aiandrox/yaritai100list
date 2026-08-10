@@ -5,7 +5,7 @@ import {
   toPoolJudgement,
   type PoolJudgement,
 } from '@yaritai100list/shared'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 
 import type { Db } from './db'
 import { items, lists, wishTexts } from './db/schema'
@@ -44,9 +44,12 @@ export const POOL_JUDGE_BATCH_SIZE = 15
  *
  * 🔴 **モデルを変えても `wish_texts` を一括で消さないこと。**
  * 消せば作り直されるが、**判定は1日 360 件しか進まない**（Neurons の枠）。
- * その間**プールが空になる**（プールは `wish_texts` から毎日作り直すため）。
+ * その間**プールが空になる**（プールは `wish_texts` から作り直すため）。
  * 1万件あれば28日間、取り入れ面が空になる。
- * 貼り直しの仕組みは #254 で入れる（**古い判定を使い続けたまま、順に判定し直す**）。
+ *
+ * **ここの値を書き換えるだけでよい**（#254）。`wish_texts.model` と突き合わせて
+ * 古い行を少しずつ拾い直す（`selectUnjudged`）。**上書きされるまで古い判定が使われる**ので、
+ * 入れ替えの最中もプールは埋まったままになる。
  *
  * 手元で確かめた結果（2026-08-10）:
  * - 「富士山登頂」「富士山に登りたい」→ どちらも `富士山に登る` に寄った
@@ -77,7 +80,7 @@ export function poolJudgeInput(normalized: string) {
 }
 
 /**
- * まだ判定していない本文を取る。
+ * 判定が要る本文を取る。**まだ判定していないもの、または古いモデルで判定したもの。**
  *
  * **全公開リストにある本文だけ**（`POOL_VISIBILITIES`）。
  * 非公開のものまで AI に送ると、**出す予定の無い本文を外に出す**ことになる。
@@ -88,31 +91,55 @@ export function poolJudgeInput(normalized: string) {
  *
  * ⚠️ **正規化した形をキーにしていたときは、全公開項目を全部 JS に読み込んで
  * 正規化していた。** 項目が増えると**定期実行の CPU 10ms（Free）を超える。**
+ *
+ * 🔴 **まだ判定していないものを先に処理する**（#254）。
+ * モデルを変えた直後は「古いモデルの行」が何千件も並ぶ。順番を決めないと、
+ * **その日に書かれた新しい本文が何日もプールに出てこない。**
+ * 判定し直しは**プールに既に出ているもの**の作り直しなので、後回しでよい。
  */
 export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
+  // null（この列より前に入った行）も「古い」として拾う
+  const stale = or(isNull(wishTexts.model), ne(wishTexts.model, POOL_JUDGE_MODEL))
+
   const rows = await db
-    .selectDistinct({ text: items.text })
+    .selectDistinct({
+      text: items.text,
+      // まだ判定していないもの = 0 が先
+      unjudged: sql<number>`case when ${wishTexts.rawText} is null then 0 else 1 end`,
+    })
     .from(items)
     .innerJoin(lists, eq(lists.id, items.listId))
     .leftJoin(wishTexts, eq(wishTexts.rawText, items.text))
-    .where(and(inArray(lists.visibility, [...POOL_VISIBILITIES]), isNull(wishTexts.rawText)))
+    .where(
+      and(inArray(lists.visibility, [...POOL_VISIBILITIES]), or(isNull(wishTexts.rawText), stale)),
+    )
+    .orderBy(asc(sql`case when ${wishTexts.rawText} is null then 0 else 1 end`))
     .limit(limit)
 
   return rows.map((row) => row.text)
 }
 
-/** 判定を1件保存する。**キーは書かれたままの本文。** */
+/**
+ * 判定を1件保存する。**キーは書かれたままの本文。**
+ *
+ * 🔴 **既にある行は上書きする**（#254）。以前は何もしないようにしていたが、
+ * それだと**モデルを変えても古い判定が永久に残る。**
+ * 上書きは「AI が答えを返せたとき」しか呼ばれない（`judgeUnjudged`）ので、
+ * **失敗が古い判定を壊すことは無い。**
+ */
 export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement) {
+  const row = {
+    verdict: judgement.publishable ? 'ok' : 'ng',
+    canonical: judgement.publishable ? judgement.canonical : null,
+    genre: judgement.publishable ? judgement.genre : null,
+    model: POOL_JUDGE_MODEL,
+    checkedAt: new Date(),
+  }
+
   return db
     .insert(wishTexts)
-    .values({
-      rawText,
-      verdict: judgement.publishable ? 'ok' : 'ng',
-      canonical: judgement.publishable ? judgement.canonical : null,
-      genre: judgement.publishable ? judgement.genre : null,
-      checkedAt: new Date(),
-    })
-    .onConflictDoNothing()
+    .values({ rawText, ...row })
+    .onConflictDoUpdate({ target: wishTexts.rawText, set: row })
 }
 
 /**
