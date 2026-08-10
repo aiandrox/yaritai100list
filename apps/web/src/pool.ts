@@ -47,6 +47,10 @@ const publicVisibilities = sql.raw(
  * 非公開まで含めると初日から意味のある順になる。
  * ⚠️ **だから `writers` を応答に入れない**（`db/schema/pool.ts` の注意書き）。
  *
+ * 🔴 **`hiddenInShare`（#237）にした項目は、どちらの範囲からも「書いていない」扱いで除く。**
+ * 候補にもしないし、人数にも数えない。`writers` は応答に出ないとはいえ、
+ * 他人の同じ本文の並び順には影響するため、**隠した本人の分だけそこにも残らないようにする。**
+ *
  * ⚠️ **ジャンルは `min()` で1つに決めている。** 同じ代表表現に別のジャンルが
  * 付くことがある（AI が本文ごとに答えるため）。多数決にすると SQL が一段深くなるわりに、
  * **実際にはほぼ揃う。** 揺れるようなら #255 で作り直す。
@@ -64,6 +68,7 @@ const insertPool = sql`
    where judged.verdict = 'ok'
      and judged.canonical is not null
      and judged.genre is not null
+     and written.hidden_in_share = 0
      and judged.canonical in (
            select public_judged.canonical
              from items as public_written
@@ -71,6 +76,7 @@ const insertPool = sql`
              join wish_texts as public_judged on public_judged.raw_text = public_written.text
             where public_judged.verdict = 'ok'
               and public_owner.visibility in (${publicVisibilities})
+              and public_written.hidden_in_share = 0
          )
    group by judged.canonical
 `

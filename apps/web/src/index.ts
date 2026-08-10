@@ -12,6 +12,7 @@ import {
   isFutureCompletedAt,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
+  SHARE_HIDDEN_ITEM_LABEL,
   SHARED_VISIBILITIES,
   itemTextSchema,
   signExportImagePayload,
@@ -113,12 +114,17 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
  *
  * 空の本文（`{}`）は拒否する。黙って何もしない応答を返すと、
  * 送り側の間違いに気づけない。
+ *
+ * 🔴 **`hiddenInShare`（#237）はリストの `visibility` とは別物。**
+ * 「誰が見られるか」ではなく「見られる相手にこの1件の本文を見せるか」で、
+ * 共有ページにだけ効く。ダウンロード画像・書き出しには適用しない。
  */
 const updateItemSchema = z
   .object({
     text: itemTextSchema.optional(),
     completed: z.boolean().optional(),
     completedAt: z.iso.datetime().optional(),
+    hiddenInShare: z.boolean().optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
@@ -160,11 +166,19 @@ const importListSchema = z
 /**
  * 一度の `insert` に入れる項目の数。
  *
- * ⚠️ **D1 は1文あたりのバインド変数に上限がある**（100件を1文で入れると
- * `too many SQL variables` で落ちる。#89 で踏んだ）。1行4列なので20行ずつに割る。
+ * ⚠️ **D1 は1文あたりのバインド変数の上限が100個**（実測。#89 で踏んだ）。
+ * 一番列の多い呼び出し（`POST /api/lists/restore`。`id` / `list_id` / `text` /
+ * `completed_at` / `hidden_in_share`（#237） / `position` の6列。
+ * `created_at` / `updated_at` は SQL 側の既定値なのでバインド変数を使わない）でも
+ * 16行 × 6列 = 96個に収まるようにしてある。
+ *
+ * 🔴 **`hiddenInShare` を明示せずに `insert` しても、JS 側の既定値（`false`）が
+ * バインド変数として1個乗る。** SQL 側の既定値（`sql\`...\`` で書いた列）と違い、
+ * 省略しても列数には数えなければならない（#237 でここが100個の上限に触れて実測し直した）。
+ *
  * 分けても `batch` に渡せば1トランザクションのまま。
  */
-const INSERT_CHUNK = 20
+const INSERT_CHUNK = 16
 
 /** そのリストの項目を並び順で取る。 */
 function selectItems(db: Db, listId: string) {
@@ -651,6 +665,7 @@ const app = new Hono<AppEnv>()
             ? {}
             : { completedAt: patch.completed ? new Date() : null }),
           ...(completedAt === undefined ? {} : { completedAt }),
+          ...(patch.hiddenInShare === undefined ? {} : { hiddenInShare: patch.hiddenInShare }),
           updatedAt: new Date(),
         })
         .where(eq(items.id, item.id))
@@ -782,9 +797,14 @@ const app = new Hono<AppEnv>()
         title: list.title,
         // 🔴 **更新日時を URL に入れる**（#173）。入れないと SNS が古い画像を出し続ける
         imageUrl: ogImageUrl(new URL(c.req.url).origin, list.shareId, list.updatedAt),
+        // 🔴 **伏せる項目（#237）は、ここで本文を落としてから渡す。**
+        // `renderSharePage` には見せてよいデータだけを渡す（`src/share.ts` の設計どおり）。
+        // 達成状況（`completed`）は伏せても見せてよいが、完了日時（「いつ」）は伏せる
         items: rows.map((item) => ({
-          text: item.text,
-          completedAt: item.completedAt === null ? null : item.completedAt.getTime(),
+          text: item.hiddenInShare ? SHARE_HIDDEN_ITEM_LABEL : item.text,
+          completed: item.completedAt !== null,
+          completedAt:
+            !item.hiddenInShare && item.completedAt !== null ? item.completedAt.getTime() : null,
         })),
       }),
     )

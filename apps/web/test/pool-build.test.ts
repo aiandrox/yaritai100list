@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 
 import { items, lists, pool, wishTexts } from '../src/db/schema'
@@ -187,6 +187,39 @@ describe('rebuildPool', () => {
       await runBatch()
 
       expect(await readTable()).toEqual(first)
+    })
+  })
+
+  /**
+   * 共有で見せない項目（#237）は、プールでも「書いていない」扱いにする。
+   *
+   * `makeList` は項目単位のオプションを持たないので、作った後で
+   * 直接 `hidden_in_share` を立てる（本文と持ち主で絞って更新する）。
+   */
+  describe('共有で見せない項目（#237）', () => {
+    /** 指定した本文の項目を、指定したリストの中だけ隠す。 */
+    async function hide(listId: string, text: string) {
+      await testDb()
+        .update(items)
+        .set({ hiddenInShare: true })
+        .where(and(eq(items.listId, listId), eq(items.text, text)))
+    }
+
+    it('🔴 全公開リストにしかなく、隠されている本文はプールに出ない', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['隠したい項目'] })
+      await hide('p1', '隠したい項目')
+      await runBatch()
+
+      expect(await readTable()).toEqual([])
+    })
+
+    it('🔴 隠した項目は人数のカウントにも入らない', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['かくれない人気'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['かくれない人気'] })
+      await hide('p2', 'かくれない人気')
+      await runBatch()
+
+      expect((await readTable())[0]?.writers).toBe(1)
     })
   })
 

@@ -52,6 +52,18 @@ export const items = sqliteTable(
     completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
 
     /**
+     * 共有ページで本文を伏せるか（#237）。**既定は伏せない。**
+     *
+     * 🔴 **リストの公開範囲（`lists.visibility`）とは別物。** あちらは「誰が見られるか」、
+     * こちらは「見られる相手にこの1件の本文を見せるか」。項目単位で、共有ページにだけ効く
+     * （ダウンロード画像・マークダウン書き出し・JSON書き出しには適用しない。#237 のコメント）。
+     *
+     * 隠しても番号・完了マーク・達成数へのカウントはそのまま出す。伏せるのは本文（と完了日時）だけ
+     * （`src/share.ts` の `renderSharePage`）。取り入れ面のプール（`src/pool.ts`）からも除く。
+     */
+    hiddenInShare: integer('hidden_in_share', { mode: 'boolean' }).notNull().default(false),
+
+    /**
      * リスト内の並び順。**0 から始まる詰まった連番**（`TECH_STACK.md` §7）。
      *
      * 表示上の番号（`001`〜）はこの順序から作る。番号を列として持たない
