@@ -38,11 +38,13 @@ jobs:
     # `issues` イベントには `github.event.comment` が無いので、イベントごとに見る場所を変える。
     #
     # 🔴 **これは認可ではない。** 誰が呼べるかは action 側が見ている（下記）。
+    #
+    # ⚠️ **続きの行を字下げしない。** `>-` は「より深く字下げされた行」の改行を残すので、
+    # 揃えないと式の途中に改行が入る。
     if: >-
-      (github.event_name == 'issues' &&
-        (contains(github.event.issue.body, '@claude') ||
-         contains(github.event.issue.title, '@claude'))) ||
-      (github.event_name != 'issues' && contains(github.event.comment.body, '@claude'))
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') ||
+      contains(github.event.issue.title, '@claude'))) || (github.event_name != 'issues' &&
+      contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
     # 暴走を止める。枠は無制限（public）だが、待たされるのは自分
     timeout-minutes: 30
