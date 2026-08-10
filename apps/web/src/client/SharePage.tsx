@@ -31,7 +31,6 @@ interface ListState {
 interface ShareItemState {
   id: string
   text: string
-  completedAt: string | null
   hiddenInShare: boolean
 }
 
@@ -179,14 +178,26 @@ function SharePageBody({ listId }: { listId: string }) {
   }
 
   /**
-   * 項目ごとの「共有で見せない」（#237）。
+   * 項目ごとの「共有する」（#237）。
    *
-   * `useList.ts` の楽観更新は通さない。**この画面の主目的は一覧して見直すこと**で、
-   * 押した直後の見た目より、サーバーに確かに反映されたことの方を優先する。
+   * 🔴 **チェックを楽観的に即反映する**（2026-08-10 の利用者のフィードバック）。
+   * サーバーの応答を待ってから `load()` で描き直すと、押した瞬間に見た目が変わらず
+   * 「効いたのか」が分かりにくい。先に見た目を変え、失敗したときだけ `load()` で戻す。
    */
   const toggleHidden = async (itemId: string, hiddenInShare: boolean) => {
     setMessage(null)
     setCopied(false)
+
+    setState((current) =>
+      current.status === 'ready'
+        ? {
+            ...current,
+            items: current.items.map((item) =>
+              item.id === itemId ? { ...item, hiddenInShare } : item,
+            ),
+          }
+        : current,
+    )
 
     const res = await api.api.lists[':listId'].items[':itemId'].$patch({
       param: { listId, itemId },
@@ -195,6 +206,7 @@ function SharePageBody({ listId }: { listId: string }) {
 
     if (!res.ok) {
       setMessage('変えられませんでした。通信を確かめてください')
+      await load() // 見た目を実際の状態に戻す
       return
     }
 
@@ -281,56 +293,14 @@ function SharePageBody({ listId }: { listId: string }) {
       </section>
 
       {/*
-        共有で見せない項目（#237）。**公開範囲が非公開のときは出さない**
-        （公開していなければ、隠しても意味が無い。下の URL セクションと同じ条件）。
-
-        🔴 **本文は常に実際のテキストを出す。伏せない。** ここは持ち主専用の画面で、
-        「どれを隠しているか」を見分けて操作できる必要がある。見た目は公開ページ
-        （`src/share.ts`）に寄せてある（番号・完了なら打ち消し線）が、実装は独立している
-        （SSR と SPA の2重実装を避けるという方針は、実際の共有ページ描画にだけ適用する）。
-      */}
-      {list.visibility !== 'private' && items.length > 0 && (
-        <section className="mt-4 rounded bg-white px-3 py-3">
-          <h2 className="font-bold text-slate-900">共有で見せない項目</h2>
-          <p className="mt-1 text-xs text-slate-600">
-            チェックすると、共有ページでその項目の本文が
-            <strong className="font-bold">{SHARE_HIDDEN_ITEM_LABEL}</strong>
-            に置き換わります。番号と達成状況はそのまま出ます
-          </p>
-
-          <ul className="mt-2">
-            {items.map((item, index) => (
-              <li key={item.id} className="border-t border-brand/30 py-2 first:border-t-0">
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="shrink-0"
-                    checked={item.hiddenInShare}
-                    onChange={() => void toggleHidden(item.id, !item.hiddenInShare)}
-                  />
-                  <span className="w-8 shrink-0 text-right text-xs tabular-nums text-slate-500">
-                    {String(index + 1).padStart(3, '0')}
-                  </span>
-                  <span
-                    className={`min-w-0 flex-1 break-words text-sm ${
-                      item.completedAt === null ? 'text-slate-900' : 'text-slate-400 line-through'
-                    }`}
-                  >
-                    {item.text}
-                  </span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/*
         🔴 **非公開のときは URL を出さない**（#138）。
         出すと「このリンクを渡せば見える」と誤解する。実際は開けない。
 
         **代わりの案内も出さない**（#151）。選択肢の説明
         （「自分だけが見られます。リンクを渡しても開けません」）で足りている
+
+        🔴 **項目ごとの表示設定（下）より先に出す**（2026-08-10 の利用者のフィードバック）。
+        「誰に渡す URL か」が先に分かってから「その相手に何を見せるか」を選ぶ順にする
       */}
       {list.visibility !== 'private' && (
         <section className="mt-4 rounded bg-white px-3 py-3">
@@ -395,6 +365,59 @@ function SharePageBody({ listId }: { listId: string }) {
               リンクを作り直す
             </button>
           )}
+        </section>
+      )}
+
+      {/*
+        項目ごとの表示設定（#237）。**公開範囲が非公開のときは出さない**
+        （公開していなければ、隠しても意味が無い。上の URL セクションと同じ条件）。
+
+        🔴 **チェックは「共有する」を意味する**（2026-08-10 の利用者のフィードバック）。
+        「見せない」をチェックする形は、チェックが付いている＝何か強調された状態というのが
+        直感と逆になる（何かを増やす操作に見える）。「共有する」をチェックにすれば、
+        外す＝隠す、という自然な向きになる
+
+        🔴 **本文は常に実際のテキストを出す。伏せない。** ここは持ち主専用の画面で、
+        「どれを隠しているか」を見分けて操作できる必要がある
+      */}
+      {list.visibility !== 'private' && items.length > 0 && (
+        <section className="mt-4 rounded bg-white px-3 py-3">
+          <h2 className="font-bold text-slate-900">共有する項目</h2>
+          <p className="mt-1 text-xs text-slate-600">
+            チェックを外すと、共有ページでその項目の本文が
+            <strong className="font-bold">{SHARE_HIDDEN_ITEM_LABEL}</strong>
+            になります。番号と達成状況はそのまま出ます
+          </p>
+
+          <ul className="mt-2">
+            {items.map((item, index) => (
+              <li key={item.id} className="border-t border-brand/30 py-2 first:border-t-0">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="shrink-0"
+                    checked={!item.hiddenInShare}
+                    onChange={() => void toggleHidden(item.id, !item.hiddenInShare)}
+                  />
+                  <span className="w-8 shrink-0 text-right text-xs tabular-nums text-slate-500">
+                    {String(index + 1).padStart(3, '0')}
+                  </span>
+                  {/*
+                    🔴 **打ち消し線は「隠れているか」を表す**（2026-08-10）。
+                    チェックを外した瞬間、`toggleHidden` の楽観更新で `item.hiddenInShare` が
+                    即座に変わるので、サーバーの応答を待たずにここへ反映される
+                  */}
+                  <span
+                    className={`min-w-0 flex-1 break-words text-sm ${
+                      item.hiddenInShare ? 'text-slate-400 line-through' : 'text-slate-900'
+                    }`}
+                  >
+                    {item.text}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </div>
