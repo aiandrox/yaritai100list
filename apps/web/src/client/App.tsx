@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Route, Switch, useLocation } from 'wouter'
 
+import { DiscoverPage } from './DiscoverPage'
 import { ExportPage } from './ExportPage'
 import { Layout } from './Layout'
 import { ListPage } from './ListPage'
@@ -71,6 +72,14 @@ export function App() {
             リストを1つしか持っていない人に無駄な1タップを作らない */}
         <Route path="/">
           <ListPage session={session} />
+        </Route>
+
+        {/*
+          取り入れ面（#235 / 親 #10）。**ログインは要らない。**
+          書き始める前の人こそ対象なので、ここで認証を求めない
+        */}
+        <Route path="/discover">
+          <DiscoverPage session={session} />
         </Route>
 
         <Route path="/lists">

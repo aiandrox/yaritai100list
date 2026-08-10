@@ -12,8 +12,10 @@
 
 import {
   DEFAULT_LIST_TITLE,
+  ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   itemTextSchema,
+  LIST_TITLE_MAX_LENGTH,
   listTitleSchema,
 } from '@yaritai100list/shared'
 import { z } from 'zod'
@@ -290,6 +292,55 @@ export function withDatePart(completedAt: number, dateInput: string): number | n
   }
 
   return next.getTime()
+}
+
+/**
+ * 断られた理由。**ローカルの検証結果とサーバーの応答を同じ形にまとめる。**
+ * 画面はどちらに保存しているかを気にせず文言を出せる。
+ */
+export type Rejection =
+  | Extract<ListResult, { ok: false }>['reason']
+  | 'server-error'
+  /** 並べ替えを送ったら、サーバー側の項目と食い違っていた（#142） */
+  | 'order-stale'
+
+/**
+ * 断られた理由の文言。
+ *
+ * 🔴 **「空」と「長すぎ」を同じ文言にしない**（#79 で実際に踏んだ）。
+ * 長すぎて弾かれた人に「1文字以上入力してください」と出しても、何を直せばいいのか
+ * 分からない。文字数は `packages/shared` の定数から出す（ここに数字を書かない）。
+ *
+ * ⚠️ **画面ごとに書かない。** リストの編集と取り入れ面（#235）の両方から使う。
+ * 別々に持つと、同じ理由で違う文言が出る。
+ */
+export function rejectionMessage(reason: Rejection): string {
+  return REJECTION_MESSAGES[reason]
+}
+
+const REJECTION_MESSAGES: Record<Rejection, string> = {
+  'text-empty': 'やりたいことを入力してください',
+  'text-too-long': `やりたいことは${String(ITEM_TEXT_MAX_LENGTH)}文字までです`,
+  'title-empty': 'タイトルを入力してください',
+  'title-too-long': `タイトルは${String(LIST_TITLE_MAX_LENGTH)}文字までです`,
+  'list-full': `${String(ITEMS_PER_LIST_MAX)}件まで書けます。減らすと続けて書けます`,
+  'not-found': '対象の項目が見つかりませんでした',
+  'server-error': '保存できませんでした。通信を確かめて、もう一度試してください',
+  // 別のタブや端末で項目が増減していた。手元の並びを押し通さず、取り直している（#142）
+  'order-stale': '他のところで項目が変わっていたので、最新の状態を読み直しました',
+}
+
+/**
+ * その本文が既にリストにあるか（#235）。
+ *
+ * 取り入れ面で「取り入れ済み」を出すための判定。**完全一致で見る。**
+ * 前後の空白は `itemTextSchema` が落としているので、揺れは残らない。
+ *
+ * 🔴 **サーバーに聞かない。** 未ログインでも同じ判定が要る（保存先が localStorage）ので、
+ * 手元のリストだけで決められる形にしてある。
+ */
+export function hasText(list: LocalList, text: string): boolean {
+  return list.items.some((item) => item.text === text)
 }
 
 export function removeItem(list: LocalList, id: string): ListResult {

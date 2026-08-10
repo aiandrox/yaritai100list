@@ -19,6 +19,7 @@ import {
   type Item,
   type ListResult,
   type LocalList,
+  type Rejection,
   type SessionState,
 } from './model'
 
@@ -81,15 +82,8 @@ export interface ListController {
   moveItem: (id: string, toIndex: number) => Promise<boolean>
 }
 
-/**
- * 断られた理由。**ローカルの検証結果とサーバーの応答を同じ形にまとめる。**
- * 画面はどちらに保存しているかを気にせず文言を出せる。
- */
-export type Rejection =
-  | Extract<ListResult, { ok: false }>['reason']
-  | 'server-error'
-  /** 並べ替えを送ったら、サーバー側の項目と食い違っていた（#142） */
-  | 'order-stale'
+// 断られた理由の型と文言は `model.ts`（取り入れ面からも使うため）
+export type { Rejection }
 
 /**
  * @param requestedListId `/lists/:listId` で開いたときのリスト。
