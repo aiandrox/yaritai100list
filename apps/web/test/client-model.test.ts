@@ -723,6 +723,10 @@ describe('rejectionMessage', () => {
   })
 })
 
+/**
+ * ⚠️ **これは未ログインのときだけ使う**（#249）。
+ * ログイン中の並べ替えはサーバー側（`discover-api.test.ts`）。
+ */
 describe('sortAdoptedLast', () => {
   const list = listOf('B', 'D')
 
