@@ -20,6 +20,7 @@ import {
 } from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
 import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
@@ -65,6 +66,17 @@ const createListSchema = z.object({ title: listTitleSchema.optional() }).strict(
  */
 const discoverQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(DISCOVER_MAX_PAGE).optional(),
+
+  /**
+   * 取り入れ先のリスト（#249）。**渡すと、そこに既にある本文が後ろに回る。**
+   *
+   * 🔴 **必ず持ち主か確かめる**（下のハンドラ）。確かめないと、
+   * **他人のリスト ID を渡して並びの変化を読むだけで中身を言い当てられる。**
+   * 非公開リストの中身が漏れるので、ここが一番危ない。
+   *
+   * 省略できる（未ログインは localStorage にリストがあり、サーバーは知らない）。
+   */
+  listId: z.string().optional(),
 })
 
 /** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
@@ -862,7 +874,50 @@ const app = new Hono<AppEnv>()
    */
   .get('/api/discover', zValidator('query', discoverQuerySchema), async (c) => {
     const db = createDb(c.env.DB)
-    const page = c.req.valid('query').page ?? 1
+    const { page = 1, listId } = c.req.valid('query')
+
+    /**
+     * 🔴 **渡されたリストが本当に自分のものか確かめる**（#249）。
+     *
+     * 確かめずに並べ替えに使うと、**他人のリスト ID を渡して
+     * 「どれが後ろに回ったか」を読むだけで中身を言い当てられる。**
+     * 非公開リストの内容が、読み取り専用の口から漏れることになる。
+     *
+     * 見つからない場合と他人のものである場合で**同じ応答を返す**
+     * （`requireOwnedList` と同じ理由。存在を教えない）。
+     */
+    let adopterListId: string | null = null
+    if (listId !== undefined) {
+      const auth = createAuth(db, c.env)
+      const session = await auth.api.getSession({ headers: c.req.raw.headers })
+
+      const [owned] = session
+        ? await db
+            .select({ id: lists.id })
+            .from(lists)
+            .where(and(eq(lists.id, listId), eq(lists.userId, session.user.id)))
+            .limit(1)
+        : []
+
+      if (!owned) {
+        return c.json({ error: 'Not Found' } as const, 404)
+      }
+
+      adopterListId = owned.id
+    }
+
+    /**
+     * 取り入れ先のリストにある本文かどうか。**後ろへ回すためだけに使う。**
+     *
+     * 🔴 **ページの中だけで並べ替えても足りない**（#249 で直した）。
+     * 画面側で並べ替えると、**1ページ目に自分の項目が固まっていたときに
+     * 2ページ目の知らない項目が繰り上がってこない。**
+     *
+     * `adopterListId` が無いとき（未ログイン・省略）は `''` と突き合わせる。
+     * **どの行にも当たらない**ので、全部「持っていない」扱いになる。
+     */
+    const mine = alias(items, 'mine')
+    const adopted = sql<number>`max(case when ${mine.id} is null then 0 else 1 end)`
 
     /**
      * 🔴 **出す本文と、数える範囲が違う**（2026-08-10 の利用者の判断）。
@@ -887,6 +942,7 @@ const app = new Hono<AppEnv>()
       .select({ text: items.text, writers: sql<number>`count(distinct ${lists.userId})` })
       .from(items)
       .innerJoin(lists, eq(lists.id, items.listId))
+      .leftJoin(mine, and(eq(mine.text, items.text), eq(mine.listId, adopterListId ?? '')))
       .where(
         // 🔴 **ここでは公開範囲を絞らない**（人数は全リストで数えるため）。
         // 絞るのは「プールに出す本文か」の方
@@ -900,7 +956,12 @@ const app = new Hono<AppEnv>()
         ),
       )
       .groupBy(items.text)
-      .orderBy(desc(sql`count(distinct ${lists.userId})`), asc(items.text))
+      .orderBy(
+        // **既に持っているものを後ろへ**（#249）。探しに来た人にとって選択肢ではない
+        asc(adopted),
+        desc(sql`count(distinct ${lists.userId})`),
+        asc(items.text),
+      )
       /**
        * 🔴 **1件多く取る。**
        *

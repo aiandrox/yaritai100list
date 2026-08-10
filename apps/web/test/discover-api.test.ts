@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
 import { items, lists } from '../src/db/schema'
-import { createTestUser, testBaseUrl, testDb } from './helpers'
+import { createTestUser, signIn, testBaseUrl, testDb } from './helpers'
 
 /**
  * 取り入れ面のプールのテスト（#233 / 親 #10）。
@@ -18,11 +18,16 @@ import { createTestUser, testBaseUrl, testDb } from './helpers'
  * - **並び順が毎回同じこと。** 同数のときに揺れると画面が意味もなく並び替わる
  */
 
-const discover = (query = '') =>
-  exports.default.fetch(new Request(`${testBaseUrl()}/api/discover${query}`))
+const discover = (query = '', headers?: Headers) =>
+  exports.default.fetch(
+    new Request(
+      `${testBaseUrl()}/api/discover${query}`,
+      headers === undefined ? undefined : { headers: Object.fromEntries(headers) },
+    ),
+  )
 
-async function readPool(query = '') {
-  const res = await discover(query)
+async function readPool(query = '', headers?: Headers) {
+  const res = await discover(query, headers)
   const body = await res.json<{ items: { text: string }[]; hasNext: boolean }>()
 
   return { status: res.status, items: body.items, hasNext: body.hasNext }
@@ -190,6 +195,113 @@ describe('GET /api/discover', () => {
 
       expect(texts((await readPool()).items)).toEqual(['A', 'B', 'C'])
       expect(texts((await readPool()).items)).toEqual(['A', 'B', 'C'])
+    })
+  })
+
+  /**
+   * 取り入れ済みを後ろへ回す（#249）。
+   *
+   * 🔴 見るのは **「他人のリスト ID で並びを変えられないこと」。**
+   * ここが通ると、**並びの変化を読むだけで非公開リストの中身を言い当てられる。**
+   * 読み取り専用の口から中身が漏れるので、この機能で一番危ないところ。
+   */
+  describe('取り入れ済みを後ろへ（#249）', () => {
+    /** 自分のリストを1つ作る（`texts` は既に持っている本文）。 */
+    async function myList(texts: string[]) {
+      const me = await signIn(`me-${crypto.randomUUID()}@example.com`)
+      const id = `mine-${crypto.randomUUID()}`
+
+      await testDb()
+        .insert(lists)
+        .values({
+          id,
+          userId: me.userId,
+          title: '自分のリスト',
+          visibility: 'private',
+          shareId: crypto.randomUUID().replaceAll('-', ''),
+        })
+      if (texts.length > 0) {
+        await testDb()
+          .insert(items)
+          .values(
+            texts.map((text, i) => ({ id: `${id}-${String(i)}`, listId: id, text, position: i })),
+          )
+      }
+
+      return { ...me, listId: id }
+    }
+
+    it('持っている本文が後ろへ回る', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B', 'C'] })
+      const me = await myList(['A'])
+
+      const pool = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(pool.items)).toEqual(['B', 'C', 'A'])
+    })
+
+    it('🔴 ページをまたいで効く（1ページ目に持っている本文が残らない）', async () => {
+      // 画面側で並べ替えるだけだと、2ページ目の知らない本文が繰り上がってこない
+      const all = Array.from({ length: DISCOVER_PAGE_SIZE + 3 }, (_, i) =>
+        String(i).padStart(4, '0'),
+      )
+      await makeList({ id: 'p1', visibility: 'public', texts: all })
+      // 1ページ目に入るはずの本文を3つ持っている
+      const me = await myList(['0000', '0001', '0002'])
+
+      const first = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(first.items)).not.toContain('0000')
+      // 押し出された分だけ、2ページ目にあったはずの本文が繰り上がる
+      expect(texts(first.items)).toContain(String(DISCOVER_PAGE_SIZE).padStart(4, '0'))
+    })
+
+    it('持っていないものの間では人気順のまま', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['ひとり', 'みんな', '持っている'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['みんな'] })
+      const me = await myList(['持っている'])
+
+      const pool = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(pool.items)).toEqual(['みんな', 'ひとり', '持っている'])
+    })
+
+    describe('断るもの', () => {
+      it('🔴 他人のリスト ID では並べ替えられない', async () => {
+        // 通ると、並びの変化から非公開リストの中身を読める
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+        const owner = await myList(['A'])
+        const stranger = await signIn(`stranger-${crypto.randomUUID()}@example.com`)
+
+        const res = await discover(`?listId=${owner.listId}`, stranger.headers)
+
+        expect(res.status).toBe(404)
+      })
+
+      it('🔴 未ログインでは並べ替えられない', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+        const owner = await myList(['A'])
+
+        expect((await discover(`?listId=${owner.listId}`)).status).toBe(404)
+      })
+
+      it('🔴 存在しない ID と他人の ID で応答が一致する', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A'] })
+        const owner = await myList(['A'])
+        const stranger = await signIn(`stranger2-${crypto.randomUUID()}@example.com`)
+
+        const other = await discover(`?listId=${owner.listId}`, stranger.headers)
+        const missing = await discover('?listId=no-such-list', stranger.headers)
+
+        expect(other.status).toBe(missing.status)
+        expect(await other.text()).toBe(await missing.text())
+      })
+    })
+
+    it('渡さなければ今まで通り（未ログインでも読める）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+
+      expect(texts((await readPool()).items)).toEqual(['A', 'B'])
     })
   })
 

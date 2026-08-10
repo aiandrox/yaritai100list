@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'wouter'
 
 import { api } from './api'
 import { Notice } from './Notice'
-import { hasText, rejectionMessage, sortAdoptedLast, type SessionState } from './model'
+import {
+  hasText,
+  rejectionMessage,
+  sortAdoptedLast,
+  type LocalList,
+  type SessionState,
+} from './model'
 import { useList } from './useList'
 
 /**
@@ -55,21 +61,60 @@ export function DiscoverPage({ session }: { session: SessionState }) {
   const controller = useList(session)
   const { screen, rejection } = controller
 
+  /**
+   * 取り入れ先のリスト。**サーバーに渡すと、そこにある本文が後ろへ回る**（#249）。
+   *
+   * 未ログインのときは `null`（保存先が localStorage なので、サーバーは知らない）。
+   */
+  const listId = screen.status === 'ready' && screen.source === 'server' ? screen.key : null
+
+  /**
+   * 並べ替えに使う手元のリスト。**`useEffect` の外から読むので ref に置く。**
+   *
+   * 依存に入れると、**1件取り入れるたびにプールを取り直す**ことになる。
+   */
+  const listRef = useRef<LocalList | null>(null)
+  if (screen.status === 'ready') listRef.current = screen.list
+
+  /**
+   * 🔴 **リストが分かるまで取りに行かない。**
+   *
+   * 先に取ってしまうと、**リストが読めた後にもう一度取り直すことになり、
+   * 並びが目の前で入れ替わる。**
+   */
+  const canLoad = screen.status === 'ready'
+
   useEffect(() => {
+    if (!canLoad) return
+
     const load = async () => {
       setPool({ status: 'loading' })
 
       try {
-        const res = await api.api.discover.$get({ query: { page: String(page) } })
+        const res = await api.api.discover.$get({
+          query: { page: String(page), ...(listId === null ? {} : { listId }) },
+        })
         if (!res.ok) {
           setPool({ status: 'failed' })
           return
         }
 
         const body = await res.json()
+        const texts = body.items.map((item) => item.text)
+        const list = listRef.current
+
+        /**
+         * 🔴 **並びを受け取った時点で決めて、あとは動かさない。**
+         *
+         * 毎回描くたびに並べ替えると、**1件取り入れた瞬間にその行が下へ飛び、
+         * 下にあった行が全部せり上がる。** 押した本人が見失う。
+         *
+         * ⚠️ ログイン中はサーバーが既に並べているので、ここは効かない。
+         * **未ログインのため**に残してある（サーバーは localStorage を知らない）。
+         */
         setPool({
           status: 'ready',
-          texts: body.items.map((item) => item.text),
+          texts: list === null ? texts : sortAdoptedLast(texts, list),
           hasNext: body.hasNext,
         })
       } catch {
@@ -78,7 +123,7 @@ export function DiscoverPage({ session }: { session: SessionState }) {
     }
 
     void load()
-  }, [page])
+  }, [page, listId, canLoad])
 
   return (
     <div>
@@ -111,14 +156,10 @@ export function DiscoverPage({ session }: { session: SessionState }) {
 
           <ul className="mt-2">
             {/*
-              🔴 **既に持っているものを後ろへ回す**（#246）。
-              探しに来た人にとって、もう持っているものは選択肢ではない。
-              **消さない**のは「取り入れ済み」だと分かることに意味があるため
+              並びは受け取った時点で決まっている（上の `load`）。
+              **ここで並べ替えない。** 取り入れた瞬間に行が飛ぶ
             */}
-            {(screen.status === 'ready'
-              ? sortAdoptedLast(pool.texts, screen.list)
-              : pool.texts
-            ).map((text) => (
+            {pool.texts.map((text) => (
               <li
                 key={text}
                 className="flex items-center gap-2 border-b border-brand/40 py-2.5 text-sm"

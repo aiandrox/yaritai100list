@@ -339,8 +339,13 @@ const REJECTION_MESSAGES: Record<Rejection, string> = {
  * ⚠️ **サーバーの並びは崩さない。** 同じ組の中では受け取った順のまま
  * （`Array.prototype.sort` は安定なので、真偽値の差だけで並べれば元の順が残る）。
  *
- * ⚠️ **効くのは受け取ったページの中だけ。** サーバーは誰のリストかを知らないので、
- * **2ページ目の未取得の項目が1ページ目に繰り上がることはない。**
+ * ⚠️ **使うのは未ログインのときだけ**（#249 で変えた）。
+ * ログイン中は**サーバーが全体を並べ替える**（取り入れ先のリスト ID を渡している）。
+ * 画面側だけで並べ替えると、**1ページ目に自分の項目が固まっていたときに
+ * 2ページ目の知らない項目が繰り上がってこない。**
+ *
+ * ⚠️ **受け取った時点で1回だけ呼ぶ**（`DiscoverPage`）。描くたびに呼ぶと、
+ * 1件取り入れた瞬間にその行が下へ飛び、下にあった行が全部せり上がる。
  */
 export function sortAdoptedLast(texts: string[], list: LocalList): string[] {
   return [...texts].sort((a, b) => Number(hasText(list, a)) - Number(hasText(list, b)))
