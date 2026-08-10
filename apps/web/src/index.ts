@@ -58,6 +58,21 @@ const createListSchema = z.object({ title: listTitleSchema.optional() }).strict(
 const createItemSchema = z.object({ text: itemTextSchema }).strict()
 
 /**
+ * 取り入れ（#234）。**本文だけ受け取る。**
+ *
+ * 🔴 **完了状態を受け取る口を作らない。** 他人が叶えたことは自分の達成ではない。
+ * 受け取れる形にすると、**要求の組み立てだけで「完了済みの項目」を作れてしまう。**
+ *
+ * 🔴 **取り入れ元の項目 ID も受け取らない。** プールの単位は本文なので要らないし、
+ * 受け取ると「どのリストから取り入れたか」を送り側が指定できてしまう。
+ *
+ * 本文の検証は `itemTextSchema`（普通に書いた項目と同じ）。
+ * ⚠️ **これだけでは足りない。** 「いまプールにあるか」はハンドラで確かめる
+ * （スキーマから DB を引けないため）。
+ */
+const adoptItemSchema = z.object({ text: itemTextSchema }).strict()
+
+/**
  * 項目の変更。
  *
  * 🔴 **完了にする瞬間の日時はサーバーが決める。** `completed: true` で受けるのは
@@ -887,6 +902,95 @@ const app = new Hono<AppEnv>()
 
     return c.json({ items: rows.map(({ text, adopted }) => ({ text, adopted })) })
   })
+
+  /**
+   * プールの本文を自分のリストに取り入れる（#234 / 親 #10）。
+   *
+   * 🔴 **完了状態を引き継がない。** 他人が叶えたことは自分の達成ではない。
+   * そもそも受け取る口を作っていない（本文だけを受け取る）。
+   *
+   * 🔴 **送られた本文をそのまま信じない。** いまプールにあることを確かめる。
+   * 確かめないと、**この口から任意の本文を「取り入れた」ことにして人気指標を作れる。**
+   *
+   * ⚠️ **未ログインはここへ来ない。** 未ログインの取り入れは localStorage で完結し、
+   * サーバーに記録を残さない（#236）。数えるには**認証なしで書き込める口**が要り、
+   * 人気指標を水増しできてしまう。指標の正しさを取った。
+   *
+   * **本文を書き換えたときに関係を消す処理はここに無い。**
+   * DB のトリガー（マイグレーション 0009）に置いてある。
+   * `items` の更新経路に後始末を紛れ込ませない、という判断（#87）。
+   */
+  .post(
+    '/api/lists/:listId/adopt',
+    requireUser,
+    rateLimitCreates,
+    requireOwnedList,
+    zValidator('json', adoptItemSchema),
+    async (c) => {
+      const db = createDb(c.env.DB)
+      const listId = c.get('list').id
+      const { text } = c.req.valid('json')
+
+      /**
+       * **いまプールにあるか。**
+       *
+       * `POOL_VISIBILITIES` で絞るのは `/api/discover` と同じ理由。
+       * ここを緩めると、リンク限定公開の項目を「取り入れた」ことにできてしまう。
+       */
+      const [inPool] = await db
+        .select({ text: items.text })
+        .from(items)
+        .innerJoin(lists, eq(lists.id, items.listId))
+        .where(and(eq(items.text, text), inArray(lists.visibility, [...POOL_VISIBILITIES])))
+        .limit(1)
+
+      if (!inPool) {
+        return c.json({ error: 'Not In Pool' } as const, 404)
+      }
+
+      const id = newId()
+
+      /**
+       * 🔴 **上限と重複の判定を挿入と1文にする。**
+       *
+       * 「数えてから入れる」と、素早く2回押されたときに**両方が通って重複する**
+       * （リストの作成 `POST /api/lists` と同じ理由）。
+       *
+       * 0行だったときに**どちらで弾かれたのか分からない**ので、下で分けて聞き直す。
+       */
+      const inserted = await db.all<{ id: string }>(sql`
+        insert into ${items} (id, list_id, text, position)
+        select ${id}, ${listId}, ${text},
+               (select count(*) from ${items} where ${items.listId} = ${listId})
+        where (select count(*) from ${items} where ${items.listId} = ${listId}) < ${ITEMS_PER_LIST_MAX}
+          and not exists (
+            select 1 from ${items} where ${items.listId} = ${listId} and ${items.text} = ${text}
+          )
+        returning id
+      `)
+
+      if (inserted.length === 0) {
+        const [duplicate] = await db
+          .select({ id: items.id })
+          .from(items)
+          .where(and(eq(items.listId, listId), eq(items.text, text)))
+          .limit(1)
+
+        // **理由を分ける。** 「もう持っている」と「枠が無い」では次にやることが違う
+        return duplicate
+          ? c.json({ error: 'Already Adopted' } as const, 409)
+          : c.json({ error: 'Item Limit Reached' } as const, 409)
+      }
+
+      await db.insert(adoptions).values({ id: newId(), adopterItemId: id, sourceText: text })
+      await touchList(db, listId)
+
+      const [item] = await db.select().from(items).where(eq(items.id, id))
+      if (!item) throw new Error('取り入れた項目を読み戻せなかった')
+
+      return c.json({ item }, 201)
+    },
+  )
 
   /**
    * Better Auth の全エンドポイント（セッション取得、サインアウト、コールバック等）。
