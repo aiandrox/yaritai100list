@@ -25,7 +25,7 @@ interface ListState {
 type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; list: ListState }
 
 /** 選択肢の説明。**「何ができるか」だけでなく「何が起きるか」を書く。** */
-const CHOICES: { value: Visibility; label: string; description: string }[] = [
+const CHOICES: { value: Visibility; label: string; description: React.ReactNode }[] = [
   {
     value: 'private',
     label: '非公開',
@@ -39,10 +39,41 @@ const CHOICES: { value: Visibility; label: string; description: string }[] = [
   {
     value: 'public',
     label: '全体に公開',
-    description:
-      'URL を渡した人が見られます。さらに、書いた項目が「やりたいことを探す場所」に出ます（この場所は準備中です）',
+    description: (
+      <>
+        URL を渡した人が見られます。さらに、
+        {/*
+          🔴 **どこに出るのかを見に行けるようにする**（#246）。
+          「みんなのやりたいこと」に並ぶと書いても、**そこがどんな場所かを
+          見たことがなければ判断できない。** 公開範囲は
+          「うっかり公開される経路を作らない」と決めている（`PRODUCT_SPEC.md` §5.1）ので、
+          選ぶ前に確かめられる方に倒す
+        */}
+        <Link href="/discover" className="font-bold text-brand-deep underline">
+          書いた項目が「みんなのやりたいこと」に並び、ほかの人が自分のリストに取り入れられます
+        </Link>
+      </>
+    ),
   },
 ]
+
+/**
+ * 全公開にすると**何が出るのか**の補足。
+ *
+ * 🔴 **「リストごと晒される」と読まれないようにする。**
+ * 出るのは項目の本文だけで、作者もリストのタイトルも出ない
+ * （`PRODUCT_SPEC.md` §5.1 の「公開面は2種類あり、見せる情報が異なる」）。
+ * **公開範囲を選ぶうえで一番効く情報**なので、選択肢の文言だけに任せない。
+ */
+function DiscoverHint() {
+  return (
+    <p className="mt-2 text-xs text-slate-600">
+      「みんなのやりたいこと」に出るのは
+      <strong className="font-bold">項目の本文だけ</strong>
+      です。誰が書いたかも、リストの名前も出ません。
+    </p>
+  )
+}
 
 export function SharePage({ session, listId }: { session: SessionState; listId: string }) {
   // ログインが要る画面。**未ログインでは開かせない**（#112 と同じ扱い）
@@ -180,23 +211,30 @@ function SharePageBody({ listId }: { listId: string }) {
 
         <ul className="mt-2">
           {CHOICES.map((choice) => (
-            <li key={choice.value} className="border-t border-brand/30 first:border-t-0">
-              <label className="flex cursor-pointer gap-2 py-2">
+            <li key={choice.value} className="border-t border-brand/30 py-2 first:border-t-0">
+              <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="radio"
                   name="visibility"
-                  className="mt-1 shrink-0"
+                  className="shrink-0"
                   checked={list.visibility === choice.value}
                   onChange={() => void changeVisibility(choice.value)}
                 />
-                <span className="min-w-0">
-                  <span className="text-sm text-slate-900">{choice.label}</span>
-                  <span className="block text-xs text-slate-600">{choice.description}</span>
-                </span>
+                <span className="text-sm text-slate-900">{choice.label}</span>
               </label>
+
+              {/*
+                🔴 **説明は `label` の外に置く**（#246）。
+                中に入れると、**説明の中のリンクを押しただけで公開範囲が変わる**
+                （`label` の中を押すと結び付いた `input` が反応するため）。
+                うっかり公開される経路を作らない、という決定に直接効く
+              */}
+              <p className="mt-0.5 ml-6 text-xs text-slate-600">{choice.description}</p>
             </li>
           ))}
         </ul>
+
+        <DiscoverHint />
       </section>
 
       {/*

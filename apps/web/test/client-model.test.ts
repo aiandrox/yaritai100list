@@ -24,6 +24,7 @@ import {
   renameList,
   serializeList,
   shareUrl,
+  sortAdoptedLast,
   sortListsByCreated,
   setItemCompletedAt,
   toCompletionPermission,
@@ -719,5 +720,33 @@ describe('rejectionMessage', () => {
     ] as const
 
     for (const reason of reasons) expect(rejectionMessage(reason)).not.toBe('')
+  })
+})
+
+describe('sortAdoptedLast', () => {
+  const list = listOf('B', 'D')
+
+  it('🔴 既に持っているものが後ろへ回る', () => {
+    expect(sortAdoptedLast(['A', 'B', 'C', 'D'], list)).toEqual(['A', 'C', 'B', 'D'])
+  })
+
+  it('🔴 それぞれの組の中では受け取った順のまま（サーバーの並びを崩さない）', () => {
+    // 人気順で来ているので、持っていないもの同士の順を入れ替えてはいけない
+    expect(sortAdoptedLast(['C', 'A', 'D', 'B'], list)).toEqual(['C', 'A', 'D', 'B'])
+  })
+
+  it('全部持っていても落ちない', () => {
+    expect(sortAdoptedLast(['B', 'D'], list)).toEqual(['B', 'D'])
+  })
+
+  it('1つも持っていなければそのまま', () => {
+    expect(sortAdoptedLast(['A', 'C'], createEmptyList())).toEqual(['A', 'C'])
+  })
+
+  it('🔴 渡された配列を書き換えない（React の state をそのまま渡すため）', () => {
+    const texts = ['A', 'B', 'C']
+    sortAdoptedLast(texts, list)
+
+    expect(texts).toEqual(['A', 'B', 'C'])
   })
 })

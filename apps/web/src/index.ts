@@ -4,7 +4,8 @@ import {
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
-  DISCOVER_ITEMS_MAX,
+  DISCOVER_MAX_PAGE,
+  DISCOVER_PAGE_SIZE,
   hasFutureCompletedAt,
   isFutureCompletedAt,
   POOL_VISIBILITIES,
@@ -53,6 +54,18 @@ const updateListSchema = z
  * 何も指定しない場合でも `{}` を送ること（Better Auth の 415 と同じ性質の落とし穴）。
  */
 const createListSchema = z.object({ title: listTitleSchema.optional() }).strict()
+
+/**
+ * 取り入れ面のページ番号（#246）。**1 始まり。**
+ *
+ * ⚠️ **上限を持つ**（`DISCOVER_MAX_PAGE`）。飛ばす件数が大きいほど問い合わせが重くなり、
+ * `?page=100000` を投げられると**プール全体を走査したうえで0件を返す**ことになる。
+ *
+ * `coerce` するのは、クエリ文字列が常に文字列で来るため。
+ */
+const discoverQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(DISCOVER_MAX_PAGE).optional(),
+})
 
 /** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
 const createItemSchema = z.object({ text: itemTextSchema }).strict()
@@ -847,8 +860,9 @@ const app = new Hono<AppEnv>()
    * アイデアそのものを探す場なので、叶えたかどうかは削ぎ落とす。
    * **元のリストへ辿れる値も返さない**（2つの公開面を経路として交わらせない）。
    */
-  .get('/api/discover', async (c) => {
+  .get('/api/discover', zValidator('query', discoverQuerySchema), async (c) => {
     const db = createDb(c.env.DB)
+    const page = c.req.valid('query').page ?? 1
 
     /**
      * 🔴 **出す本文と、数える範囲が違う**（2026-08-10 の利用者の判断）。
@@ -887,10 +901,20 @@ const app = new Hono<AppEnv>()
       )
       .groupBy(items.text)
       .orderBy(desc(sql`count(distinct ${lists.userId})`), asc(items.text))
-      .limit(DISCOVER_ITEMS_MAX)
+      /**
+       * 🔴 **1件多く取る。**
+       *
+       * 「次のページがあるか」を知るためだけ。**別に件数を数えない**
+       * （数えるには全体を走査することになり、ページを開くたびに2回引く）。
+       */
+      .limit(DISCOVER_PAGE_SIZE + 1)
+      .offset((page - 1) * DISCOVER_PAGE_SIZE)
 
     // **人数は返さない**（上の注意書き）
-    return c.json({ items: rows.map(({ text }) => ({ text })) })
+    return c.json({
+      items: rows.slice(0, DISCOVER_PAGE_SIZE).map(({ text }) => ({ text })),
+      hasNext: rows.length > DISCOVER_PAGE_SIZE,
+    })
   })
 
   /**
