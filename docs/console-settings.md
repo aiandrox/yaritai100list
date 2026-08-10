@@ -161,10 +161,14 @@ VM は Ubuntu 24.04、root で実行、**5分以内に終わって exit 0 する
 #!/bin/bash
 set -eu
 
-# 1. Node 24。VM の既定は 22 で、root の package.json は engines: ">=24"。
-#    ⚠️ 落ちてもセッションは止めない。engines は npm の警告どまりで、22 でも
-#    typecheck もテストも通る。揃えられたら揃える程度のもの
-( npm install -g n && n 24 ) || true
+# 1. Node 24。VM の既定は 22。root の package.json は engines: ">=24"。
+#    ⚠️ `n 24` だけでは効かない。n は /usr/local/bin に入れるが、
+#    **PATH は /opt/node22/bin の方が先**（下記）。**PATH に載っている側を差し替える**
+if npm install -g n && n 24 && /usr/local/bin/node -v; then
+  for b in node npm npx corepack; do
+    if [ -e "/usr/local/bin/$b" ]; then ln -sf "/usr/local/bin/$b" "/opt/node22/bin/$b"; fi
+  done
+fi
 
 # 2. Deno（apps/render）。VM に入っていない。
 #    🔴 公式の install.sh を使わない。あれは deno.land を叩くが、
@@ -172,18 +176,44 @@ set -eu
 npm install -g deno
 
 # 3. gh（docs/workflow.md がイシュー操作に使う）。VM に入っていない。
-#    認証は要らない（GitHub プロキシが実際の資格情報を差し込む）
-apt-get update && apt-get install -y gh || true
+#    Ubuntu noble の universe に 2.45.0 がある。認証は要らない（プロキシが差し込む）。
+#    🔴 **`apt-get update && apt-get install` と書かない**（下記）
+apt-get update || true
+apt-get install -y gh || true
 ```
 
-**最初のセッションで確かめること**（Claude に走らせる）:
+#### 🔴 この script で2回踏んだこと（2026-08-10 に実測）
+
+**どちらも `|| true` のせいでセッションは正常に起動し、入っていないことに気づけなかった。**
+
+| 踏んだこと | 実際に起きていたこと |
+|---|---|
+| `n 24` を入れても `node -v` が 22 | **`n` は成功していた。** PATH が `/opt/node22/bin` を `/usr/local/bin` より先に見ていた |
+| `apt install gh` が入らない | **`apt-get update` が非ゼロで終わっていた。** `&&` で `install` に到達しない |
+
+PATH の実測値（先頭から）:
+
+```
+/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:
+/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:...
+```
+
+`apt-get update` が非ゼロで終わる理由は、**VM の sources に deadsnakes と ondrej の PPA が
+入っていて、`ppa.launchpadcontent.net` がプロキシに 403 で弾かれる**ため。
+`archive.ubuntu.com` / `security.ubuntu.com` 側は通っているので、**この失敗は無視してよい。**
+だから `&&` ではなく `apt-get update || true` と行を分ける。
+
+#### 最初のセッションで確かめること
+
+script を変えると**スナップショットが作り直される**ので、
+**反映されるのは次に新しく始めたセッションから**（いま開いているセッションでは変わらない）。
 
 ```sh
 node -v && deno --version && gh --version
 ```
 
-`node -v` が 22 のままなら `n` の入れ先と `PATH` の優先順がずれている。
-**22 でも作業はできる**ので、そこで止まらずに進めてよい。
+3つとも出れば成功。**`node` が 22 のままでも作業はできる**
+（`engines` は npm の警告どまり）ので、そこで止まらずに進めてよい。
 
 #### 環境変数を入れてはいけない
 
