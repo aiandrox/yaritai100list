@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 
 import { items, lists, wishTexts } from '../src/db/schema'
-import { judgeUnjudged, poolJudgeInput, selectUnjudged } from '../src/pool-judge'
+import { judgeUnjudged, POOL_JUDGE_MODEL, poolJudgeInput, selectUnjudged } from '../src/pool-judge'
 import { createTestUser, testDb } from './helpers'
 
 /**
@@ -188,12 +188,7 @@ describe('selectUnjudged', () => {
 
   it('判定済みの本文は返さない', async () => {
     await seedPublic('p1', ['富士山に登る', 'オーロラを見る'])
-    await testDb().insert(wishTexts).values({
-      rawText: '富士山に登る',
-      verdict: 'ok',
-      canonical: '富士山に登る',
-      genre: 'travel',
-    })
+    await judged('富士山に登る', POOL_JUDGE_MODEL)
 
     expect(await selectUnjudged(testDb(), 10)).toEqual(['オーロラを見る'])
   })
@@ -203,7 +198,46 @@ describe('selectUnjudged', () => {
 
     expect(await selectUnjudged(testDb(), 2)).toHaveLength(2)
   })
+
+  /**
+   * モデルを変えたときの拾い直し（#254）。
+   *
+   * 🔴 **一括で消さずに済ませるための仕組み。** 消すとプールが空になり、
+   * 戻るのに何日もかかる（判定は1日 360 件しか進まない）。
+   */
+  describe('モデルを変えたとき', () => {
+    it('🔴 古いモデルで判定した本文を拾い直す', async () => {
+      await seedPublic('p1', ['富士山に登る'])
+      await judged('富士山に登る', '@cf/meta/llama-3.1-8b-instruct')
+
+      expect(await selectUnjudged(testDb(), 10)).toEqual(['富士山に登る'])
+    })
+
+    it('モデルが記録されていない行も拾い直す（この列より前に入った行）', async () => {
+      await seedPublic('p1', ['富士山に登る'])
+      await judged('富士山に登る', null)
+
+      expect(await selectUnjudged(testDb(), 10)).toEqual(['富士山に登る'])
+    })
+
+    it('🔴 まだ判定していない本文を先に処理する', async () => {
+      // 入れ替えの最中に、その日書かれた本文が何日も出てこないのを避ける。
+      // 拾い直しは「もうプールに出ているもの」の作り直しなので後回しでよい
+      await seedPublic('p1', ['古い判定がある'])
+      await judged('古い判定がある', '@cf/meta/llama-3.1-8b-instruct')
+      await seedPublic('p2', ['まだ判定していない'])
+
+      expect(await selectUnjudged(testDb(), 1)).toEqual(['まだ判定していない'])
+    })
+  })
 })
+
+/** 判定済みの行を1つ作る。`model` を渡し分けて「古い判定」を作れるようにしてある。 */
+async function judged(rawText: string, model: string | null) {
+  await testDb()
+    .insert(wishTexts)
+    .values({ rawText, verdict: 'ok', canonical: rawText, genre: 'travel', model })
+}
 
 describe('judgeUnjudged', () => {
   const answer = (value: unknown) => ({ run: vi.fn().mockResolvedValue({ response: value }) })
@@ -305,6 +339,53 @@ describe('judgeUnjudged', () => {
     await judgeUnjudged(testDb(), ai)
 
     expect(ai.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('判定したモデルを残す（#254 の拾い直しに使う）', async () => {
+    await seedPublic('p1', ['富士山登頂'])
+
+    await judgeUnjudged(testDb(), answer({ publishable: true, canonical: 'x', genre: 'other' }))
+
+    expect((await testDb().select().from(wishTexts))[0]?.model).toBe(POOL_JUDGE_MODEL)
+  })
+
+  it('🔴 古い判定を上書きする（消さずに入れ替えるため。#254）', async () => {
+    await seedPublic('p1', ['富士山登頂'])
+    await testDb().insert(wishTexts).values({
+      rawText: '富士山登頂',
+      verdict: 'ng',
+      model: '@cf/meta/llama-3.1-8b-instruct',
+    })
+
+    await judgeUnjudged(
+      testDb(),
+      answer({ publishable: true, canonical: '富士山に登る', genre: 'travel' }),
+    )
+
+    expect(await testDb().select().from(wishTexts)).toMatchObject([
+      { rawText: '富士山登頂', verdict: 'ok', canonical: '富士山に登る', model: POOL_JUDGE_MODEL },
+    ])
+  })
+
+  it('🔴 拾い直しに失敗しても古い判定が残る（プールを空にしない）', async () => {
+    await seedPublic('p1', ['富士山登頂'])
+    await testDb().insert(wishTexts).values({
+      rawText: '富士山登頂',
+      verdict: 'ok',
+      canonical: '富士山に登る',
+      genre: 'travel',
+      model: '@cf/meta/llama-3.1-8b-instruct',
+    })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await judgeUnjudged(testDb(), { run: vi.fn().mockRejectedValue(new Error('5028')) })
+
+    expect((await testDb().select().from(wishTexts))[0]).toMatchObject({
+      verdict: 'ok',
+      canonical: '富士山に登る',
+    })
+
+    logged.mockRestore()
   })
 
   it('1回で処理する件数に上限がある', async () => {

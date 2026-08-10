@@ -31,10 +31,23 @@ import { useList } from './useList'
  * **何人が非公開でその本文を持っているかを問い合わせられる**（#241）。
  */
 
+/**
+ * プールの1行。
+ *
+ * `adopted` は**サーバーが決めた「もう持っているか」**（#254）。
+ * 表記が違っても代表表現で突き合わせるので、
+ * 「富士山登頂」を持っている人には「富士山に登る」が持っている扱いになる。
+ * **未ログインでは常に false**（保存先が localStorage なのでサーバーは知らない）。
+ */
+interface PoolItem {
+  text: string
+  adopted: boolean
+}
+
 type PoolState =
   | { status: 'loading' }
   | { status: 'failed' }
-  | { status: 'ready'; texts: string[]; hasNext: boolean }
+  | { status: 'ready'; items: PoolItem[]; hasNext: boolean }
 
 export function DiscoverPage({ session }: { session: SessionState }) {
   const [pool, setPool] = useState<PoolState>({ status: 'loading' })
@@ -100,7 +113,6 @@ export function DiscoverPage({ session }: { session: SessionState }) {
         }
 
         const body = await res.json()
-        const texts = body.items.map((item) => item.text)
         const list = listRef.current
 
         /**
@@ -114,7 +126,7 @@ export function DiscoverPage({ session }: { session: SessionState }) {
          */
         setPool({
           status: 'ready',
-          texts: list === null ? texts : sortAdoptedLast(texts, list),
+          items: list === null ? body.items : sortAdoptedLast(body.items, list),
           hasNext: body.hasNext,
         })
       } catch {
@@ -143,9 +155,9 @@ export function DiscoverPage({ session }: { session: SessionState }) {
         </Notice>
       )}
 
-      {pool.status === 'ready' && pool.texts.length === 0 && <EmptyPool />}
+      {pool.status === 'ready' && pool.items.length === 0 && <EmptyPool />}
 
-      {pool.status === 'ready' && pool.texts.length > 0 && (
+      {pool.status === 'ready' && pool.items.length > 0 && (
         <>
           {/* **どこに入るかを先に書く。** 黙ってどれかのリストに入れない */}
           {screen.status === 'ready' && (
@@ -159,7 +171,7 @@ export function DiscoverPage({ session }: { session: SessionState }) {
               並びは受け取った時点で決まっている（上の `load`）。
               **ここで並べ替えない。** 取り入れた瞬間に行が飛ぶ
             */}
-            {pool.texts.map((text) => (
+            {pool.items.map(({ text, adopted }) => (
               <li
                 key={text}
                 className="flex items-center gap-2 border-b border-brand/40 py-2.5 text-sm"
@@ -167,7 +179,15 @@ export function DiscoverPage({ session }: { session: SessionState }) {
                 <span className="min-w-0 flex-1 break-words text-slate-900">{text}</span>
 
                 {screen.status === 'ready' &&
-                  (hasText(screen.list, text) ? (
+                  /**
+                   * 🔴 **サーバーの判定を先に見る**（#254）。
+                   * あちらは代表表現で突き合わせるので、**表記が違っても拾える。**
+                   *
+                   * `hasText` は完全一致しか見ない。残してあるのは
+                   * **未ログイン**（サーバーは localStorage を知らない）と、
+                   * **取り入れた直後**（プールを取り直さないので `adopted` が古い）のため。
+                   */
+                  (adopted || hasText(screen.list, text) ? (
                     // **消さずに残す。** 消えると「押せたのか」が分からない
                     <span className="shrink-0 text-xs text-slate-500">リストにあります</span>
                   ) : (

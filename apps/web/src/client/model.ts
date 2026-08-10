@@ -347,8 +347,8 @@ const REJECTION_MESSAGES: Record<Rejection, string> = {
  * ⚠️ **受け取った時点で1回だけ呼ぶ**（`DiscoverPage`）。描くたびに呼ぶと、
  * 1件取り入れた瞬間にその行が下へ飛び、下にあった行が全部せり上がる。
  */
-export function sortAdoptedLast(texts: string[], list: LocalList): string[] {
-  return [...texts].sort((a, b) => Number(hasText(list, a)) - Number(hasText(list, b)))
+export function sortAdoptedLast<T extends { text: string }>(rows: T[], list: LocalList): T[] {
+  return [...rows].sort((a, b) => Number(hasText(list, a.text)) - Number(hasText(list, b.text)))
 }
 
 /**
