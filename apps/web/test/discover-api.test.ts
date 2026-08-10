@@ -4,10 +4,12 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
 import { items, lists } from '../src/db/schema'
-import { createTestUser, signIn, testBaseUrl, testDb } from './helpers'
+import { rebuildPool } from '../src/pool'
+import { signIn, testBaseUrl, testDb } from './helpers'
+import { makeList, runBatch } from './pool-helpers'
 
 /**
- * 取り入れ面のプールのテスト（#233 / 親 #10）。
+ * 取り入れ面のプールのテスト（#233 / #254、親 #10）。
  *
  * 🔴 見るのは3つ。
  *
@@ -16,6 +18,10 @@ import { createTestUser, signIn, testBaseUrl, testDb } from './helpers'
  * - **人数を応答に入れていないこと。** 人数は非公開リストも数えているので、
  *   出すと**何人が非公開でその本文を持っているかを問い合わせられる**
  * - **並び順が毎回同じこと。** 同数のときに揺れると画面が意味もなく並び替わる
+ *
+ * ⚠️ **`/api/discover` は `pool` を読むだけ**（#254）。プールを作るのはバッチなので、
+ * **読む前に1回まわす**（`readPool` が `runBatch` を呼ぶ）。
+ * 作り直しそのもののテストは `pool-build.test.ts`。
  */
 
 const discover = (query = '', headers?: Headers) =>
@@ -26,7 +32,10 @@ const discover = (query = '', headers?: Headers) =>
     ),
   )
 
+/** バッチを1回まわしてから読む。**プールが古いままの状態を見たいときは `discover` を直接使う。** */
 async function readPool(query = '', headers?: Headers) {
+  await runBatch()
+
   const res = await discover(query, headers)
   const body = await res.json<{ items: { text: string }[]; hasNext: boolean }>()
 
@@ -34,44 +43,6 @@ async function readPool(query = '', headers?: Headers) {
 }
 
 const texts = (rows: { text: string }[]) => rows.map((row) => row.text)
-
-/**
- * 公開範囲を指定してリストを作り、項目を入れる。
- *
- * **持ち主を分けられるようにしてある**（人数で並べるため）。
- */
-async function makeList(options: {
-  id: string
-  visibility: 'private' | 'unlisted' | 'public'
-  texts: string[]
-  userId?: string
-}) {
-  const db = testDb()
-  const userId = options.userId ?? (await createTestUser(`${options.id}@example.com`))
-
-  await db.insert(lists).values({
-    id: options.id,
-    userId,
-    title: 'x',
-    visibility: options.visibility,
-    shareId: crypto.randomUUID().replaceAll('-', ''),
-  })
-
-  const rows = options.texts.map((text, position) => ({
-    id: `${options.id}-${String(position)}`,
-    listId: options.id,
-    text,
-    position,
-  }))
-
-  // ⚠️ **1文にまとめない。** D1 はバインド変数の数に上限があり、
-  // 100件を1文で入れると `too many SQL variables` で落ちる（#89 で踏んだのと同じ）
-  for (let i = 0; i < rows.length; i += 20) {
-    await db.insert(items).values(rows.slice(i, i + 20))
-  }
-
-  return { userId }
-}
 
 describe('GET /api/discover', () => {
   it('未ログインでも読める（書き始める前の人が対象）', async () => {
@@ -101,7 +72,7 @@ describe('GET /api/discover', () => {
       expect((await readPool()).items).toEqual([])
     })
 
-    it('🔴 全公開を解除すると本文がプールから消える', async () => {
+    it('🔴 全公開を解除すると、次のバッチで本文がプールから消える', async () => {
       await makeList({ id: 'p1', visibility: 'public', texts: ['南極に行く'] })
       expect(texts((await readPool()).items)).toEqual(['南極に行く'])
 
@@ -110,12 +81,53 @@ describe('GET /api/discover', () => {
       expect((await readPool()).items).toEqual([])
     })
 
+    it('⚠️ 次のバッチまでは残る（プールはリアルタイムではない）', async () => {
+      // 消えるのが遅れても漏洩にならない、というのが #253 の判定を前提にした設計。
+      // 「即座に消える」と誤解して他の判断を組み立てないよう、ここに書いておく
+      await makeList({ id: 'p1', visibility: 'public', texts: ['南極に行く'] })
+      await readPool()
+
+      await testDb().update(lists).set({ visibility: 'private' })
+
+      const stale = await discover()
+      expect(texts((await stale.json<{ items: { text: string }[] }>()).items)).toEqual([
+        '南極に行く',
+      ])
+    })
+
     it('🔴 本文を書き換えると、古い本文がプールから消える', async () => {
       await makeList({ id: 'p1', visibility: 'public', texts: ['書き換える前'] })
 
       await testDb().update(items).set({ text: '書き換えた後' })
 
       expect(texts((await readPool()).items)).toEqual(['書き換えた後'])
+    })
+
+    it('🔴 判定で落ちた本文は出ない（#253）', async () => {
+      await makeList({
+        id: 'p1',
+        visibility: 'public',
+        texts: ['田中太郎に告白する', '南極に行く'],
+      })
+      await runBatch({ 田中太郎に告白する: { verdict: 'ng' } })
+
+      const res = await discover()
+      const body = await res.json<{ items: { text: string }[] }>()
+
+      expect(texts(body.items)).toEqual(['南極に行く'])
+    })
+
+    it('🔴 まだ判定していない本文は出ない（判定を待つ）', async () => {
+      // 判定は1日 360 件しか進まないので、追いつくまでは出ないのが正しい。
+      // ここを「未判定は通す」にすると、個人名が判定前に外へ出る
+      await makeList({ id: 'p1', visibility: 'public', texts: ['まだ判定していない'] })
+      // 判定を作らずにプールだけ作り直す
+      await rebuildPool(testDb())
+
+      const res = await discover()
+
+      expect(res.status).toBe(200)
+      expect((await res.json<{ items: unknown[] }>()).items).toEqual([])
     })
 
     it('他の人が全公開で書いていれば残る', async () => {
@@ -130,13 +142,13 @@ describe('GET /api/discover', () => {
   })
 
   describe('返す内容', () => {
-    it('🔴 本文だけを返す（人数も作者も完了状態も返さない）', async () => {
+    it('🔴 本文と「もう持っているか」だけを返す（作者も完了状態も返さない）', async () => {
       await makeList({ id: 'p1', visibility: 'public', texts: ['南極に行く'] })
       await testDb().update(items).set({ completedAt: new Date() })
 
       const [row] = (await readPool()).items
 
-      expect(row).toEqual({ text: '南極に行く' })
+      expect(row).toEqual({ text: '南極に行く', adopted: false })
     })
 
     it('🔴 人数を返さない（非公開リストの中身が集計から探れないように）', async () => {
@@ -147,7 +159,7 @@ describe('GET /api/discover', () => {
 
       const [row] = (await readPool()).items
 
-      expect(Object.keys(row ?? {})).toEqual(['text'])
+      expect(Object.keys(row ?? {})).toEqual(['text', 'adopted'])
     })
   })
 
@@ -157,6 +169,39 @@ describe('GET /api/discover', () => {
       await makeList({ id: 'p2', visibility: 'public', texts: ['南極に行く', 'B'] })
 
       expect((await readPool()).items.filter((row) => row.text === '南極に行く')).toHaveLength(1)
+    })
+
+    it('🔴 表記が違っても代表表現で1行にまとまる（#254）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['富士山に登りたい'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['富士山登頂'] })
+      await runBatch({
+        富士山に登りたい: { canonical: '富士山に登る' },
+        富士山登頂: { canonical: '富士山に登る' },
+      })
+
+      const res = await discover()
+
+      expect(texts((await res.json<{ items: { text: string }[] }>()).items)).toEqual([
+        '富士山に登る',
+      ])
+    })
+
+    it('🔴 まとまった行の人数が両方の書き手を数えている', async () => {
+      // 数え損ねると、名寄せするほど順位が下がることになる
+      await makeList({ id: 'p1', visibility: 'public', texts: ['富士山に登りたい', 'ひとり'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['富士山登頂'] })
+      await runBatch({
+        富士山に登りたい: { canonical: '富士山に登る' },
+        富士山登頂: { canonical: '富士山に登る' },
+      })
+
+      const res = await discover()
+
+      // 2人 → 1人 の順。まとめ損ねていれば「ひとり」と並んで本文順になる
+      expect(texts((await res.json<{ items: { text: string }[] }>()).items)).toEqual([
+        '富士山に登る',
+        'ひとり',
+      ])
     })
   })
 
@@ -264,6 +309,76 @@ describe('GET /api/discover', () => {
       const pool = await readPool(`?listId=${me.listId}`, me.headers)
 
       expect(texts(pool.items)).toEqual(['みんな', 'ひとり', '持っている'])
+    })
+
+    it('持っている本文に印が付く（画面の「リストにあります」）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+      const me = await myList(['A'])
+
+      const pool = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(pool.items).toEqual([
+        { text: 'B', adopted: false },
+        { text: 'A', adopted: true },
+      ])
+    })
+
+    it('渡さなければ何も持っていない扱い（未ログイン）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A'] })
+
+      expect((await readPool()).items).toEqual([{ text: 'A', adopted: false }])
+    })
+
+    /**
+     * 🔴 **束（代表表現）で突き合わせる**（#254）。
+     *
+     * 完全一致だけで見ると、代表が `富士山に登る`・自分が `富士山登頂` のときに
+     * 「持っていない」と出る。取り入れると**同じことが2行**になる。
+     */
+    describe('別の表記で持っているとき（#254）', () => {
+      it('🔴 代表表現が同じなら「持っている」', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['富士山に登りたい', 'B'] })
+        const me = await myList(['富士山登頂'])
+        await runBatch({
+          富士山に登りたい: { canonical: '富士山に登る' },
+          // 自分の本文にも判定がある状態（自分のリストも全公開にしている、など）
+          富士山登頂: { canonical: '富士山に登る' },
+        })
+
+        const res = await discover(`?listId=${me.listId}`, me.headers)
+        const body = await res.json<{ items: { text: string; adopted: boolean }[] }>()
+
+        expect(body.items).toEqual([
+          { text: 'B', adopted: false },
+          { text: '富士山に登る', adopted: true },
+        ])
+      })
+
+      it('⚠️ 判定が無い本文は完全一致でしか拾えない（既知の限界）', async () => {
+        // 判定を付けるのは全公開リストの本文だけ（非公開の本文は AI に送らない。#253）。
+        // なので**非公開リストにだけある表記ゆれ**は寄せられない。
+        // ここを埋めるには非公開の本文を AI に送ることになるので、埋めない
+        await makeList({ id: 'p1', visibility: 'public', texts: ['富士山に登りたい'] })
+        const me = await myList(['富士山登頂'])
+        await runBatch({ 富士山に登りたい: { canonical: '富士山に登る' } })
+
+        const res = await discover(`?listId=${me.listId}`, me.headers)
+        const body = await res.json<{ items: { text: string; adopted: boolean }[] }>()
+
+        expect(body.items).toEqual([{ text: '富士山に登る', adopted: false }])
+      })
+
+      it('代表表現と同じ本文を持っていれば、判定が無くても「持っている」', async () => {
+        // 取り入れボタンで入るのは代表表現そのものなので、この経路が一番多い
+        await makeList({ id: 'p1', visibility: 'public', texts: ['富士山に登りたい'] })
+        const me = await myList(['富士山に登る'])
+        await runBatch({ 富士山に登りたい: { canonical: '富士山に登る' } })
+
+        const res = await discover(`?listId=${me.listId}`, me.headers)
+        const body = await res.json<{ items: { text: string; adopted: boolean }[] }>()
+
+        expect(body.items).toEqual([{ text: '富士山に登る', adopted: true }])
+      })
     })
 
     describe('断るもの', () => {

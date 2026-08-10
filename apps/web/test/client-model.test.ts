@@ -730,27 +730,35 @@ describe('rejectionMessage', () => {
 describe('sortAdoptedLast', () => {
   const list = listOf('B', 'D')
 
+  /** プールの行（`/api/discover` が返す形）。並べ替えの対象は本文だけ。 */
+  const rows = (...texts: string[]) => texts.map((text) => ({ text, adopted: false }))
+
+  const sorted = (...texts: string[]) => sortAdoptedLast(rows(...texts), list).map((r) => r.text)
+
   it('🔴 既に持っているものが後ろへ回る', () => {
-    expect(sortAdoptedLast(['A', 'B', 'C', 'D'], list)).toEqual(['A', 'C', 'B', 'D'])
+    expect(sorted('A', 'B', 'C', 'D')).toEqual(['A', 'C', 'B', 'D'])
   })
 
   it('🔴 それぞれの組の中では受け取った順のまま（サーバーの並びを崩さない）', () => {
     // 人気順で来ているので、持っていないもの同士の順を入れ替えてはいけない
-    expect(sortAdoptedLast(['C', 'A', 'D', 'B'], list)).toEqual(['C', 'A', 'D', 'B'])
+    expect(sorted('C', 'A', 'D', 'B')).toEqual(['C', 'A', 'D', 'B'])
   })
 
   it('全部持っていても落ちない', () => {
-    expect(sortAdoptedLast(['B', 'D'], list)).toEqual(['B', 'D'])
+    expect(sorted('B', 'D')).toEqual(['B', 'D'])
   })
 
   it('1つも持っていなければそのまま', () => {
-    expect(sortAdoptedLast(['A', 'C'], createEmptyList())).toEqual(['A', 'C'])
+    expect(sortAdoptedLast(rows('A', 'C'), createEmptyList()).map((r) => r.text)).toEqual([
+      'A',
+      'C',
+    ])
   })
 
   it('🔴 渡された配列を書き換えない（React の state をそのまま渡すため）', () => {
-    const texts = ['A', 'B', 'C']
-    sortAdoptedLast(texts, list)
+    const original = rows('A', 'B', 'C')
+    sortAdoptedLast(original, list)
 
-    expect(texts).toEqual(['A', 'B', 'C'])
+    expect(original.map((r) => r.text)).toEqual(['A', 'B', 'C'])
   })
 })
