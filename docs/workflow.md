@@ -126,6 +126,30 @@ await page.screenshot({ path: '/tmp/shot.png' })
 await browser.close()
 ```
 
+#### ログインが要る画面を撮る
+
+編集画面・共有の設定・書き出しはログインしないと開けない。
+**Google の認証をブラウザで通す代わりに、ローカルの D1 にセッションを1つ差し込む**
+（2026-08-10、#240）。組み立て方は `test/helpers.ts` の `signIn` と同じ。
+
+```js
+// 署名は better-auth の makeSignature。**Cookie は `<token>.<署名>`**
+import { makeSignature } from '<repo>/node_modules/better-auth/dist/crypto/index.mjs'
+// insert into sessions (id, token, expires_at, user_id, created_at, updated_at) ...
+//   expires_at は **ミリ秒**（schema が timestamp_ms）
+console.log(`better-auth.session_token=${token}.${await makeSignature(token, secret)}`)
+```
+
+- 🔴 **`.dev.vars` を `split('=')[1]` で読まない。** 秘密鍵は base64 で `=` を含むので、
+  **途中で切れた鍵で署名して延々ハマる**（実際に踏んだ）。`replace(/^[^=]*=/, '')` を使う
+- 署名が合っているかは、`POST /api/auth/sign-in/social` の応答の
+  `set-cookie: better-auth.state=<値>.<署名>` と**同じ値を計算できるか**で確かめられる
+- `lists` には `share_id` が要る（トリガーで弾かれる）
+- `BETTER_AUTH_URL` が別のポートを指していても動く。**合わせなくてよい**
+
+**挙動の確認にも使える。** `page.route()` で API を遅らせれば、
+「先に画面が変わるか」「失敗したら戻るか」を実際に測れる（#244 はこれで確かめた）。
+
 貼り方:
 
 - 画像は **`previews` ブランチ**（`main` から切り離した置き場）に置き、raw URL で参照する。
