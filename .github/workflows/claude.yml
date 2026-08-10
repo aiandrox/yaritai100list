@@ -1,0 +1,76 @@
+name: Claude
+
+# **PC が無くても作業できるようにするための入口**（#259）。
+# イシューや PR のコメントに `@claude ...` と書くと、ここが動いて Claude Code が応答する。
+#
+# ブラウザで腰を据えて対話するのは claude.ai/code 側（`docs/console-settings.md`）。
+# **こちらは「スマホのコメント欄から短い指示を投げる」ため**の経路で、1コメント1往復。
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  # 立てた時点で本文に `@claude` があれば、そのまま着手させる
+  issues:
+    types: [opened]
+
+# 同じイシュー / PR に続けてコメントしても、走るのは1つ。
+#
+# ⚠️ **`cancel-in-progress` にしない。** 途中で切ると、
+# コミットだけ push されて応答コメントが返らない、という追いにくい状態になりうる。
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+# ⚠️ **ここは絞れない。** Claude はこのジョブの中でコードを書き、push し、コメントを返す。
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  # 既定の GitHub App 認証（`github_token` を渡さない形）に要る
+  id-token: write
+  # PR の CI 結果を読ませる
+  actions: read
+
+jobs:
+  claude:
+    # ランナーを起こす前に足切りする。
+    # `issues` イベントには `github.event.comment` が無いので、イベントごとに見る場所を変える。
+    #
+    # 🔴 **これは認可ではない。** 誰が呼べるかは action 側が見ている（下記）。
+    if: >-
+      (github.event_name == 'issues' &&
+        (contains(github.event.issue.body, '@claude') ||
+         contains(github.event.issue.title, '@claude'))) ||
+      (github.event_name != 'issues' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    # 暴走を止める。枠は無制限（public）だが、待たされるのは自分
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          # .node-version を唯一の情報源にする。ここに数字を書かない
+          node-version-file: .node-version
+          cache: npm
+
+      # 画像生成サービス（apps/render）は Deno。入れておかないと、
+      # そこを触らせたときに Claude が自分の変更を確かめられない（#172）
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # 🔴 **`github_token` を渡さない。**
+          # 渡すと Claude の push が `GITHUB_TOKEN` 名義になり、**`ci.yml` が動かない**
+          # （GitHub は `GITHUB_TOKEN` のコミットでワークフローを起動しない仕様）。
+          # 省略すると Claude GitHub App 名義になり、PR で CI が回る。
+          #
+          # 誰が `@claude` を呼べるかは action 側が判定する
+          # （**リポジトリへの write 権限が要る**。bot は既定で拒否）。
+          # このリポジトリは public なので、ここが唯一の壁になる
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
