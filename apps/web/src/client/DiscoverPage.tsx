@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'wouter'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'wouter'
 
 import { api } from './api'
 import { Notice } from './Notice'
-import { hasText, rejectionMessage, type SessionState } from './model'
+import {
+  hasText,
+  rejectionMessage,
+  sortAdoptedLast,
+  type LocalList,
+  type SessionState,
+} from './model'
 import { useList } from './useList'
 
 /**
@@ -25,10 +31,22 @@ import { useList } from './useList'
  * **何人が非公開でその本文を持っているかを問い合わせられる**（#241）。
  */
 
-type PoolState = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; texts: string[] }
+type PoolState =
+  | { status: 'loading' }
+  | { status: 'failed' }
+  | { status: 'ready'; texts: string[]; hasNext: boolean }
 
 export function DiscoverPage({ session }: { session: SessionState }) {
   const [pool, setPool] = useState<PoolState>({ status: 'loading' })
+
+  /**
+   * ページは URL に載せる（`?page=2`）。
+   *
+   * **戻るボタンが効き、渡したリンクが同じところを開く。**
+   * 画面の中の状態にすると、1件取り入れて戻ってきたときに先頭へ飛ぶ。
+   */
+  const [searchParams] = useSearchParams()
+  const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1)
 
   /**
    * 取り入れ先は**トップと同じリスト**（最後に更新したもの。`PRODUCT_SPEC.md` §4.3）。
@@ -43,31 +61,73 @@ export function DiscoverPage({ session }: { session: SessionState }) {
   const controller = useList(session)
   const { screen, rejection } = controller
 
+  /**
+   * 取り入れ先のリスト。**サーバーに渡すと、そこにある本文が後ろへ回る**（#249）。
+   *
+   * 未ログインのときは `null`（保存先が localStorage なので、サーバーは知らない）。
+   */
+  const listId = screen.status === 'ready' && screen.source === 'server' ? screen.key : null
+
+  /**
+   * 並べ替えに使う手元のリスト。**`useEffect` の外から読むので ref に置く。**
+   *
+   * 依存に入れると、**1件取り入れるたびにプールを取り直す**ことになる。
+   */
+  const listRef = useRef<LocalList | null>(null)
+  if (screen.status === 'ready') listRef.current = screen.list
+
+  /**
+   * 🔴 **リストが分かるまで取りに行かない。**
+   *
+   * 先に取ってしまうと、**リストが読めた後にもう一度取り直すことになり、
+   * 並びが目の前で入れ替わる。**
+   */
+  const canLoad = screen.status === 'ready'
+
   useEffect(() => {
+    if (!canLoad) return
+
     const load = async () => {
+      setPool({ status: 'loading' })
+
       try {
-        const res = await api.api.discover.$get()
+        const res = await api.api.discover.$get({
+          query: { page: String(page), ...(listId === null ? {} : { listId }) },
+        })
         if (!res.ok) {
           setPool({ status: 'failed' })
           return
         }
 
-        const { items } = await res.json()
-        setPool({ status: 'ready', texts: items.map((item) => item.text) })
+        const body = await res.json()
+        const texts = body.items.map((item) => item.text)
+        const list = listRef.current
+
+        /**
+         * 🔴 **並びを受け取った時点で決めて、あとは動かさない。**
+         *
+         * 毎回描くたびに並べ替えると、**1件取り入れた瞬間にその行が下へ飛び、
+         * 下にあった行が全部せり上がる。** 押した本人が見失う。
+         *
+         * ⚠️ ログイン中はサーバーが既に並べているので、ここは効かない。
+         * **未ログインのため**に残してある（サーバーは localStorage を知らない）。
+         */
+        setPool({
+          status: 'ready',
+          texts: list === null ? texts : sortAdoptedLast(texts, list),
+          hasNext: body.hasNext,
+        })
       } catch {
         setPool({ status: 'failed' })
       }
     }
 
     void load()
-  }, [])
+  }, [page, listId, canLoad])
 
   return (
     <div>
       <h1 className="text-xl font-bold text-slate-900">みんなのやりたいこと</h1>
-      <p className="mt-1 text-xs text-slate-600">
-        全公開のリストに書かれているものを集めています。よく書かれているものから並びます。
-      </p>
 
       {rejection !== null && (
         <p role="alert" className="mt-3 rounded bg-white px-3 py-2 text-sm text-brand-deep">
@@ -95,6 +155,10 @@ export function DiscoverPage({ session }: { session: SessionState }) {
           )}
 
           <ul className="mt-2">
+            {/*
+              並びは受け取った時点で決まっている（上の `load`）。
+              **ここで並べ替えない。** 取り入れた瞬間に行が飛ぶ
+            */}
             {pool.texts.map((text) => (
               <li
                 key={text}
@@ -112,9 +176,48 @@ export function DiscoverPage({ session }: { session: SessionState }) {
               </li>
             ))}
           </ul>
+
+          <Pager page={page} hasNext={pool.hasNext} />
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * ページ送り。
+ *
+ * ⚠️ **総ページ数を出さない。** 出すには全体を数えることになり、
+ * ページを開くたびに問い合わせが2回になる。**「次があるか」だけで足りる。**
+ */
+function Pager({ page, hasNext }: { page: number; hasNext: boolean }) {
+  if (page === 1 && !hasNext) return null
+
+  const link = 'rounded-md border border-brand-deep px-3 py-1.5 font-bold text-brand-deep'
+
+  return (
+    <nav className="mt-4 flex items-center justify-between text-xs">
+      {page > 1 ? (
+        <Link
+          href={page === 2 ? '/discover' : `/discover?page=${String(page - 1)}`}
+          className={link}
+        >
+          前へ
+        </Link>
+      ) : (
+        <span />
+      )}
+
+      <span className="text-slate-600">{page} ページ目</span>
+
+      {hasNext ? (
+        <Link href={`/discover?page=${String(page + 1)}`} className={link}>
+          次へ
+        </Link>
+      ) : (
+        <span />
+      )}
+    </nav>
   )
 }
 

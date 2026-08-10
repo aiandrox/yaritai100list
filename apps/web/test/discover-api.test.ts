@@ -1,10 +1,10 @@
 import { exports } from 'cloudflare:workers'
-import { DISCOVER_ITEMS_MAX } from '@yaritai100list/shared'
+import { DISCOVER_MAX_PAGE, DISCOVER_PAGE_SIZE } from '@yaritai100list/shared'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
 import { items, lists } from '../src/db/schema'
-import { createTestUser, testBaseUrl, testDb } from './helpers'
+import { createTestUser, signIn, testBaseUrl, testDb } from './helpers'
 
 /**
  * 取り入れ面のプールのテスト（#233 / 親 #10）。
@@ -18,13 +18,19 @@ import { createTestUser, testBaseUrl, testDb } from './helpers'
  * - **並び順が毎回同じこと。** 同数のときに揺れると画面が意味もなく並び替わる
  */
 
-const discover = () => exports.default.fetch(new Request(`${testBaseUrl()}/api/discover`))
+const discover = (query = '', headers?: Headers) =>
+  exports.default.fetch(
+    new Request(
+      `${testBaseUrl()}/api/discover${query}`,
+      headers === undefined ? undefined : { headers: Object.fromEntries(headers) },
+    ),
+  )
 
-async function readPool() {
-  const res = await discover()
-  const body = await res.json<{ items: { text: string }[] }>()
+async function readPool(query = '', headers?: Headers) {
+  const res = await discover(query, headers)
+  const body = await res.json<{ items: { text: string }[]; hasNext: boolean }>()
 
-  return { status: res.status, items: body.items }
+  return { status: res.status, items: body.items, hasNext: body.hasNext }
 }
 
 const texts = (rows: { text: string }[]) => rows.map((row) => row.text)
@@ -192,12 +198,173 @@ describe('GET /api/discover', () => {
     })
   })
 
-  it('出す件数に上限がある', async () => {
-    const many = Array.from({ length: DISCOVER_ITEMS_MAX + 10 }, (_, i) =>
-      String(i).padStart(4, '0'),
-    )
-    await makeList({ id: 'p1', visibility: 'public', texts: many })
+  /**
+   * 取り入れ済みを後ろへ回す（#249）。
+   *
+   * 🔴 見るのは **「他人のリスト ID で並びを変えられないこと」。**
+   * ここが通ると、**並びの変化を読むだけで非公開リストの中身を言い当てられる。**
+   * 読み取り専用の口から中身が漏れるので、この機能で一番危ないところ。
+   */
+  describe('取り入れ済みを後ろへ（#249）', () => {
+    /** 自分のリストを1つ作る（`texts` は既に持っている本文）。 */
+    async function myList(texts: string[]) {
+      const me = await signIn(`me-${crypto.randomUUID()}@example.com`)
+      const id = `mine-${crypto.randomUUID()}`
 
-    expect((await readPool()).items).toHaveLength(DISCOVER_ITEMS_MAX)
+      await testDb()
+        .insert(lists)
+        .values({
+          id,
+          userId: me.userId,
+          title: '自分のリスト',
+          visibility: 'private',
+          shareId: crypto.randomUUID().replaceAll('-', ''),
+        })
+      if (texts.length > 0) {
+        await testDb()
+          .insert(items)
+          .values(
+            texts.map((text, i) => ({ id: `${id}-${String(i)}`, listId: id, text, position: i })),
+          )
+      }
+
+      return { ...me, listId: id }
+    }
+
+    it('持っている本文が後ろへ回る', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B', 'C'] })
+      const me = await myList(['A'])
+
+      const pool = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(pool.items)).toEqual(['B', 'C', 'A'])
+    })
+
+    it('🔴 ページをまたいで効く（1ページ目に持っている本文が残らない）', async () => {
+      // 画面側で並べ替えるだけだと、2ページ目の知らない本文が繰り上がってこない
+      const all = Array.from({ length: DISCOVER_PAGE_SIZE + 3 }, (_, i) =>
+        String(i).padStart(4, '0'),
+      )
+      await makeList({ id: 'p1', visibility: 'public', texts: all })
+      // 1ページ目に入るはずの本文を3つ持っている
+      const me = await myList(['0000', '0001', '0002'])
+
+      const first = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(first.items)).not.toContain('0000')
+      // 押し出された分だけ、2ページ目にあったはずの本文が繰り上がる
+      expect(texts(first.items)).toContain(String(DISCOVER_PAGE_SIZE).padStart(4, '0'))
+    })
+
+    it('持っていないものの間では人気順のまま', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['ひとり', 'みんな', '持っている'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['みんな'] })
+      const me = await myList(['持っている'])
+
+      const pool = await readPool(`?listId=${me.listId}`, me.headers)
+
+      expect(texts(pool.items)).toEqual(['みんな', 'ひとり', '持っている'])
+    })
+
+    describe('断るもの', () => {
+      it('🔴 他人のリスト ID では並べ替えられない', async () => {
+        // 通ると、並びの変化から非公開リストの中身を読める
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+        const owner = await myList(['A'])
+        const stranger = await signIn(`stranger-${crypto.randomUUID()}@example.com`)
+
+        const res = await discover(`?listId=${owner.listId}`, stranger.headers)
+
+        expect(res.status).toBe(404)
+      })
+
+      it('🔴 未ログインでは並べ替えられない', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+        const owner = await myList(['A'])
+
+        expect((await discover(`?listId=${owner.listId}`)).status).toBe(404)
+      })
+
+      it('🔴 存在しない ID と他人の ID で応答が一致する', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['A'] })
+        const owner = await myList(['A'])
+        const stranger = await signIn(`stranger2-${crypto.randomUUID()}@example.com`)
+
+        const other = await discover(`?listId=${owner.listId}`, stranger.headers)
+        const missing = await discover('?listId=no-such-list', stranger.headers)
+
+        expect(other.status).toBe(missing.status)
+        expect(await other.text()).toBe(await missing.text())
+      })
+    })
+
+    it('渡さなければ今まで通り（未ログインでも読める）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+
+      expect(texts((await readPool()).items)).toEqual(['A', 'B'])
+    })
+  })
+
+  describe('ページ送り（#246）', () => {
+    /** 1ページに収まらない数を、本文順が分かる形で用意する。 */
+    const overflow = () =>
+      Array.from({ length: DISCOVER_PAGE_SIZE + 5 }, (_, i) => String(i).padStart(4, '0'))
+
+    it('1ページに出す数に上限がある', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      expect((await readPool()).items).toHaveLength(DISCOVER_PAGE_SIZE)
+    })
+
+    it('🔴 1ページ目で「次がある」と分かる', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      expect((await readPool()).hasNext).toBe(true)
+    })
+
+    it('🔴 収まりきるときは「次がある」と言わない', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+
+      expect((await readPool()).hasNext).toBe(false)
+    })
+
+    it('2ページ目に続きが出る（1ページ目と重ならない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      const first = await readPool()
+      const second = await readPool('?page=2')
+
+      expect(second.items).toHaveLength(5)
+      expect(second.hasNext).toBe(false)
+      // ちょうど境目で1件飛ぶ／重なる、が一番ありがちな間違い
+      expect(texts(second.items)[0]).toBe(String(DISCOVER_PAGE_SIZE).padStart(4, '0'))
+      expect(texts(first.items)).not.toContain(texts(second.items)[0])
+    })
+
+    it('中身が無いページは空になる（落ちない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A'] })
+
+      expect((await readPool('?page=3')).items).toEqual([])
+    })
+
+    describe('断るもの', () => {
+      it('🔴 ページ数に上限がある（飛ばす件数を大きくさせない）', async () => {
+        // 大きい offset はプール全体を走査したうえで0件を返す
+        expect((await discover(`?page=${String(DISCOVER_MAX_PAGE + 1)}`)).status).toBe(400)
+      })
+
+      it('0 以下のページを断る', async () => {
+        expect((await discover('?page=0')).status).toBe(400)
+        expect((await discover('?page=-1')).status).toBe(400)
+      })
+
+      it('数でないページを断る', async () => {
+        expect((await discover('?page=abc')).status).toBe(400)
+      })
+
+      it('小数を断る', async () => {
+        expect((await discover('?page=1.5')).status).toBe(400)
+      })
+    })
   })
 })
