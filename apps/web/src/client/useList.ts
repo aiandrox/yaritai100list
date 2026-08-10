@@ -12,6 +12,7 @@ import {
   removeItem,
   renameList,
   serializeList,
+  setItemCompletedAt,
   toImportBody,
   toLocalList,
   updateItemText,
@@ -278,42 +279,62 @@ export function useList(
     [storage.status, writeStored],
   )
 
-  /**
-   * サーバーへの1操作。**成功したら取り直す。**
-   *
-   * 削除で後ろの並び順が詰まるなど、応答だけでは画面を正しく作れない場合がある。
-   * 往復は増えるが、**表示が DB とずれない**ことを優先する。
-   */
-  const applyServer = useCallback(
-    // Hono RPC が返すのは `Response` そのものではないので、見たい2つだけを型にする
-    async (
-      send: (listId: string) => Promise<{ ok: boolean; status: number }>,
-    ): Promise<boolean> => {
-      const id = listId.current
-      if (id === null) return false
-
-      try {
-        const res = await send(id)
-
-        if (!res.ok) {
-          setRejection(res.status === 409 ? 'list-full' : 'server-error')
-          return false
-        }
-
-        setRejection(null)
-        await loadFromServer()
-
-        return true
-      } catch {
-        setRejection('server-error')
-        return false
-      }
-    },
-    [loadFromServer],
-  )
-
   const onServer = screen.status === 'ready' && screen.source === 'server'
   const list = screen.status === 'ready' ? screen.list : null
+
+  /**
+   * **先に画面を変えてから送る。失敗したときだけ取り直して戻す**（#244）。
+   *
+   * 以前は往復を2回（送る → 取り直す）待ってから画面を変えていたので、
+   * **手を離してから反映されるまで、目に見えて間が空いていた。**
+   *
+   * 手元の純関数（`model.ts`）は**サーバーと同じ結果**を計算できるので、
+   * 待つ理由が無い。先に出して、**駄目だったときだけ取り直す。**
+   * 並べ替え（#204）が先にこの形になっていて、そちらと揃えた。
+   *
+   * 🔴 **項目の集合が変わる操作には使えない。**
+   * 追加はサーバーが ID を決めるので、手元では正しい状態を作れない
+   * （偽の ID を置くと、その行を続けて編集したときに 404 になる）。
+   *
+   * @param resync 送った後にもう一度取り直す。**サーバーが値を決める操作だけ**
+   *   （完了の日時。手元の時計とサーバーの時計は同じとは限らない）。
+   *   画面はもう変わっているので、これを待たせても遅さには見えない
+   */
+  const applyOptimistic = async (
+    result: ListResult,
+    send: (listId: string) => Promise<{ ok: boolean; status: number }>,
+    resync = false,
+  ): Promise<boolean> => {
+    if (!result.ok) {
+      setRejection(result.reason)
+      return false
+    }
+
+    const id = listId.current
+    if (id === null) return false
+
+    setScreen({ status: 'ready', key: id, list: result.list, source: 'server' })
+
+    try {
+      const res = await send(id)
+
+      if (!res.ok) {
+        setRejection(res.status === 409 ? 'list-full' : 'server-error')
+        // 先に画面を変えてあるので、**戻さないとサーバーとずれたままになる**
+        await loadFromServer()
+        return false
+      }
+
+      setRejection(null)
+      if (resync) await loadFromServer()
+
+      return true
+    } catch {
+      setRejection('server-error')
+      await loadFromServer()
+      return false
+    }
+  }
 
   return {
     screen,
@@ -326,40 +347,128 @@ export function useList(
       setScreen({ status: 'ready', key: 'local', list: createEmptyList(), source: 'local' })
     },
 
-    renameList: async (title) =>
-      onServer
-        ? applyServer((id) =>
+    renameList: async (title) => {
+      if (list === null) return false
+
+      return onServer
+        ? applyOptimistic(renameList(list, title), (id) =>
             api.api.lists[':listId'].$patch({ param: { listId: id }, json: { title } }),
           )
-        : list !== null && applyLocal(renameList(list, title)),
+        : applyLocal(renameList(list, title))
+    },
 
-    addItem: async (text) =>
-      onServer
-        ? applyServer((id) =>
-            api.api.lists[':listId'].items.$post({ param: { listId: id }, json: { text } }),
-          )
-        : list !== null && applyLocal(addItem(list, { id: crypto.randomUUID(), text })),
+    /**
+     * 項目を足す（#244）。**先に行を出す。**
+     *
+     * 🔴 **ID を決めるのはサーバー**なので、他の操作のようには書けない。
+     * 手元では**仮の ID**で行を出し、**応答に入っている本物の ID に差し替える。**
+     * 取り直さないのは、`applyOptimistic` と同じ理由（同じものが返るだけ）。
+     *
+     * ⚠️ **仮の ID のまま編集されると 404 になる。** 窓は往復1回分で、
+     * その間カーソルは次の行の入力欄にある（`NextRow`）ので、実際にはまず起きない。
+     * 起きたときは失敗として扱われ、取り直して戻る（項目自体は消えない）。
+     */
+    addItem: async (text) => {
+      if (list === null) return false
 
-    updateItemText: async (itemId, text) =>
-      onServer
-        ? applyServer((id) =>
+      const added = addItem(list, { id: crypto.randomUUID(), text })
+      if (!added.ok) {
+        setRejection(added.reason)
+        return false
+      }
+
+      if (!onServer) return applyLocal(added)
+
+      const id = listId.current
+      if (id === null) return false
+
+      const draftId = added.list.items[added.list.items.length - 1]?.id
+
+      setScreen({ status: 'ready', key: id, list: added.list, source: 'server' })
+
+      try {
+        const res = await api.api.lists[':listId'].items.$post({
+          param: { listId: id },
+          json: { text },
+        })
+
+        if (!res.ok) {
+          setRejection(res.status === 409 ? 'list-full' : 'server-error')
+          await loadFromServer()
+          return false
+        }
+
+        setRejection(null)
+
+        // 仮の ID を本物に替える。**替え損ねたら取り直す**（ずれたままにしない）
+        const body = await res.json()
+        if (!('item' in body) || draftId === undefined) {
+          await loadFromServer()
+          return true
+        }
+
+        const realId = body.item.id
+
+        setScreen((current) =>
+          current.status === 'ready'
+            ? {
+                ...current,
+                list: {
+                  ...current.list,
+                  items: current.list.items.map((item) =>
+                    item.id === draftId ? { ...item, id: realId } : item,
+                  ),
+                },
+              }
+            : current,
+        )
+
+        return true
+      } catch {
+        setRejection('server-error')
+        await loadFromServer()
+        return false
+      }
+    },
+
+    updateItemText: async (itemId, text) => {
+      if (list === null) return false
+
+      return onServer
+        ? applyOptimistic(updateItemText(list, itemId, text), (id) =>
             api.api.lists[':listId'].items[':itemId'].$patch({
               param: { listId: id, itemId },
               json: { text },
             }),
           )
-        : list !== null && applyLocal(updateItemText(list, itemId, text)),
+        : applyLocal(updateItemText(list, itemId, text))
+    },
 
-    toggleItem: async (item) =>
-      onServer
-        ? applyServer((id) =>
+    /**
+     * 完了にする / 取り消す。
+     *
+     * 🔴 **完了日時はサーバーが決める**（`src/index.ts` の `updateItemSchema`）。
+     * 手元では**その端末の時計**で先に描くので、時計が狂っていると日付がずれて見える。
+     * そこで送った後に取り直す（`applyOptimistic` の `resync`）。
+     * 画面はもう変わっているので、**取り直しを待っても遅くは見えない。**
+     */
+    toggleItem: async (item) => {
+      if (list === null) return false
+
+      return (
+        onServer &&
+        applyOptimistic(
+          setItemCompletedAt(list, item.id, item.completedAt === null ? Date.now() : null),
+          (id) =>
             api.api.lists[':listId'].items[':itemId'].$patch({
               param: { listId: id, itemId: item.id },
               json: { completed: item.completedAt === null },
             }),
-          )
-        : // 未ログインでは完了にできない（#77）。ここへは来ない
-          false,
+          true,
+        )
+      )
+      // 未ログインでは完了にできない（#77）。`onServer` が false なのでここへは来ない
+    },
 
     /**
      * 完了日の直し（#207）。
@@ -370,14 +479,21 @@ export function useList(
      * 送るのは ISO の日時。**サーバーが未来を弾く**ので、
      * ここで弾けたつもりにならない（画面側の `max` は親切のためだけ）。
      */
-    changeCompletedAt: async (itemId, completedAt) =>
-      onServer &&
-      applyServer((id) =>
-        api.api.lists[':listId'].items[':itemId'].$patch({
-          param: { listId: id, itemId },
-          json: { completedAt: new Date(completedAt).toISOString() },
-        }),
-      ),
+    changeCompletedAt: async (itemId, completedAt) => {
+      if (list === null) return false
+
+      // ここは**送る値をこちらが決めている**ので、取り直さなくてもずれない。
+      // 未来を弾かれたら失敗になり、そのとき取り直して戻る
+      return (
+        onServer &&
+        applyOptimistic(setItemCompletedAt(list, itemId, completedAt), (id) =>
+          api.api.lists[':listId'].items[':itemId'].$patch({
+            param: { listId: id, itemId },
+            json: { completedAt: new Date(completedAt).toISOString() },
+          }),
+        )
+      )
+    },
 
     /**
      * 並べ替え（#142 / #166）。**離したときに1回だけ送る。**
@@ -451,13 +567,23 @@ export function useList(
       }
     },
 
-    removeItem: async (itemId) =>
-      onServer
-        ? applyServer((id) =>
+    /**
+     * 項目を消す。
+     *
+     * サーバーは消した後に後ろの `position` を詰めるが、**手元の並びは配列の順**で、
+     * 詰め直しに相当するものが要らない（`model.ts` の `removeItem`）。
+     * だから**取り直さなくてもずれない。**
+     */
+    removeItem: async (itemId) => {
+      if (list === null) return false
+
+      return onServer
+        ? applyOptimistic(removeItem(list, itemId), (id) =>
             api.api.lists[':listId'].items[':itemId'].$delete({
               param: { listId: id, itemId },
             }),
           )
-        : list !== null && applyLocal(removeItem(list, itemId)),
+        : applyLocal(removeItem(list, itemId))
+    },
   }
 }
