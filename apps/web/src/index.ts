@@ -32,9 +32,10 @@ import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
+import { judgeUnjudged } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
-import { sentryOptions } from './sentry'
+import { sentryOptions, type SentryEnv } from './sentry'
 
 /**
  * リストの更新で受け付ける内容。**上限は packages/shared の Zod スキーマが唯一の情報源。**
@@ -1012,7 +1013,43 @@ app.onError((error, c) => {
  *
  * `sentryOptions` は DSN が無ければ `undefined` を返し、SDK は初期化されない。
  */
-export default Sentry.withSentry(sentryOptions, app)
+/**
+ * 判定を埋めるバッチ（#253 / 親 #252）。**`wrangler.jsonc` の `triggers` から呼ばれる。**
+ *
+ * 🔴 **プールを作り直すのはここではない**（日次。#254）。
+ * ここは「まだ判定していない本文に判定を付ける」だけ。
+ *
+ * ⚠️ **Free では1実行あたり CPU 10ms・サブリクエスト 50**（2026-08-10 に確認）。
+ * だから**少しずつ**しか処理しない。細かい間隔で回して追いつかせる。
+ *
+ * ⚠️ **例外を外に投げない。** 投げると Cloudflare が再実行するが、
+ * **同じ理由でまた落ちるだけ**で無料枠を削る。何件処理できたかはログに残す。
+ */
+async function judgePool(env: AppEnv['Bindings']): Promise<void> {
+  try {
+    const result = await judgeUnjudged(createDb(env.DB), env.AI)
+    console.log(`pool-judge: judged=${String(result.judged)} failed=${String(result.failed)}`)
+  } catch (error) {
+    Sentry.captureException(error)
+    console.error(`pool-judge: ${String(error)}`)
+  }
+}
+
+/**
+ * ⚠️ **`withSentry` の型は `SentryEnv` しか知らない**（あちらが必要とするのは DSN だけ）。
+ * このアプリの環境はそれより広いので、受け口を `SentryEnv` に合わせて中で絞る。
+ *
+ * `app` をそのまま渡していたときは Hono の `fetch` が緩い型だったので通っていた。
+ * `scheduled` を足すと自分で型を書くことになり、ここが出てくる。
+ */
+const handler: ExportedHandler<SentryEnv> = {
+  fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+  scheduled: (_event, env, ctx) => {
+    ctx.waitUntil(judgePool(env as AppEnv['Bindings']))
+  },
+}
+
+export default Sentry.withSentry(sentryOptions, handler)
 
 /**
  * Hono RPC のクライアント用。包む前の `app` の型を使う。
