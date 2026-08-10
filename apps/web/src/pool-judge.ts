@@ -1,5 +1,6 @@
 import {
   normalizePoolText,
+  POOL_JUDGE_PROMPT_VERSION,
   POOL_VISIBILITIES,
   poolJudgementPrompt,
   toPoolJudgement,
@@ -80,7 +81,8 @@ export function poolJudgeInput(normalized: string) {
 }
 
 /**
- * 判定が要る本文を取る。**まだ判定していないもの、または古いモデルで判定したもの。**
+ * 判定が要る本文を取る。
+ * **まだ判定していないもの、または古いモデル・古いプロンプトで判定したもの。**
  *
  * **全公開リストにある本文だけ**（`POOL_VISIBILITIES`）。
  * 非公開のものまで AI に送ると、**出す予定の無い本文を外に出す**ことになる。
@@ -98,8 +100,20 @@ export function poolJudgeInput(normalized: string) {
  * 判定し直しは**プールに既に出ているもの**の作り直しなので、後回しでよい。
  */
 export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
-  // null（この列より前に入った行）も「古い」として拾う
-  const stale = or(isNull(wishTexts.model), ne(wishTexts.model, POOL_JUDGE_MODEL))
+  /**
+   * 判定し直しが要る行。
+   *
+   * 🔴 **モデルとプロンプトの両方を見る**（#264）。
+   * モデルだけを見ていたときは、**プロンプトを直しても直る本文が1つも無かった。**
+   *
+   * null（それぞれの列より前に入った行）も「古い」として拾う。
+   */
+  const stale = or(
+    isNull(wishTexts.model),
+    ne(wishTexts.model, POOL_JUDGE_MODEL),
+    isNull(wishTexts.promptVersion),
+    ne(wishTexts.promptVersion, POOL_JUDGE_PROMPT_VERSION),
+  )
 
   const rows = await db
     .selectDistinct({
@@ -126,6 +140,9 @@ export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
  * それだと**モデルを変えても古い判定が永久に残る。**
  * 上書きは「AI が答えを返せたとき」しか呼ばれない（`judgeUnjudged`）ので、
  * **失敗が古い判定を壊すことは無い。**
+ *
+ * 🔴 **何で判定したかを必ず一緒に書く**（モデルとプロンプトの版。#264）。
+ * 書き忘れると、次に何を直しても**その行だけ拾い直されない。**
  */
 export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement) {
   const row = {
@@ -133,6 +150,7 @@ export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement)
     canonical: judgement.publishable ? judgement.canonical : null,
     genre: judgement.publishable ? judgement.genre : null,
     model: POOL_JUDGE_MODEL,
+    promptVersion: POOL_JUDGE_PROMPT_VERSION,
     checkedAt: new Date(),
   }
 
