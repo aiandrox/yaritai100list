@@ -56,6 +56,24 @@ export const FALLBACK_GENRE: GenreSlug = 'other'
 export const BROWSABLE_GENRES = GENRES.filter((genre) => genre.slug !== FALLBACK_GENRE)
 
 /**
+ * 取り入れ面で絞り込めるジャンル（#255）。
+ *
+ * 🔴 **`other` を受け付けない。** 入口に出さないものを URL からだけ開けると、
+ * **分類に失敗したものを集めた画面**が生まれる。持ち帰る人はいないし、
+ * 「AI がうまく分類できなかったもの」を並べて見せる意味も無い。
+ *
+ * ⚠️ **ラベルではなくスラッグを受ける。** 日本語を URL に入れない。
+ */
+export const genreSlugSchema = z.enum(
+  BROWSABLE_GENRES.map((genre) => genre.slug) as [string, ...string[]],
+)
+
+/** そのスラッグの表示名。知らないものは `undefined`。 */
+export function genreLabel(slug: string): string | undefined {
+  return GENRES.find((genre) => genre.slug === slug)?.label
+}
+
+/**
  * AI に返させる形。
  *
  * ⚠️ **Workers AI は「スキーマ通りに返る保証はない」と明記している。**
