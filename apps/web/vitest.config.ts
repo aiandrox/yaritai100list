@@ -17,7 +17,12 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig(async () => ({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './wrangler.jsonc' },
+      /**
+       * 🔴 **テスト専用の環境を使う**（#253）。**AI バインディングを避けるため。**
+       * 上の環境には AI があり、`vitest-pool-workers` はそれをリモート扱いにして
+       * `CLOUDFLARE_API_TOKEN` を要求する。CI にはトークンが無いので**1件も起動しない。**
+       */
+      wrangler: { configPath: './wrangler.jsonc', environment: 'test' },
       miniflare: {
         // 🔴 wrangler は `.dev.vars` を読むので、テストも手元では
         // ローカルのシークレットを使ってしまう。**CI には `.dev.vars` が無い**ため、

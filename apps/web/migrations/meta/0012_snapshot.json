@@ -515,8 +515,8 @@
     "wish_texts": {
       "name": "wish_texts",
       "columns": {
-        "normalized": {
-          "name": "normalized",
+        "raw_text": {
+          "name": "raw_text",
           "type": "text",
           "primaryKey": true,
           "notNull": true,

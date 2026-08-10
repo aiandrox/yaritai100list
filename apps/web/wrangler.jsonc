@@ -124,4 +124,49 @@
       "migrations_dir": "migrations",
     },
   ],
+
+  /**
+   * 🔴 **テスト専用の環境。AI バインディングを持たない**（#253）。
+   *
+   * `vitest-pool-workers` は **AI を「ローカル模倣が存在しないバインディング」として
+   * 無条件にリモート扱い**にし、`CLOUDFLARE_API_TOKEN` を要求する
+   * （`pickRemoteBindings`）。opt-out する設定は無い。
+   * **CI にはトークンが無いので、テストが1件も起動しなくなる**（2026-08-10 に踏んだ）。
+   *
+   * ⚠️ **名前付き環境はバインディングを引き継がない。**
+   * ここに書いていないものはテストから見えない。
+   * **上にバインディングを足したら、ここにも足すこと**（足し忘れるとテストが落ちるので気づける）。
+   *
+   * `ratelimits` は**テストが `vitest.config.ts` で上書きする**（枠を小さくしないと
+   * CI で遅すぎる。#215）が、**ここにも書く。** 書かないと wrangler が
+   * 「env.test に足してください」と毎回警告する。
+   */
+  "env": {
+    "test": {
+      "vars": {
+        "BETTER_AUTH_URL": "http://localhost:5173",
+        "RENDER_URL": "https://yaritai100list-render.aiandrox.deno.net",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "yaritai100list",
+          "database_id": "78718e38-9558-416b-b7c2-61b6a00be62d",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "ratelimits": [
+        {
+          "name": "CREATE_RATE_LIMIT",
+          "namespace_id": "1001",
+          "simple": { "limit": 60, "period": 60 },
+        },
+        {
+          "name": "IMAGE_RATE_LIMIT",
+          "namespace_id": "1002",
+          "simple": { "limit": 10, "period": 60 },
+        },
+      ],
+    },
+  },
 }

@@ -5,7 +5,7 @@ import {
   toPoolJudgement,
   type PoolJudgement,
 } from '@yaritai100list/shared'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import type { Db } from './db'
 import { items, lists, wishTexts } from './db/schema'
@@ -79,44 +79,31 @@ export function poolJudgeInput(normalized: string) {
  * **全公開リストにある本文だけ**（`POOL_VISIBILITIES`）。
  * 非公開のものまで AI に送ると、**出す予定の無い本文を外に出す**ことになる。
  *
- * 🔴 **正規化した形で重複を落とす。** `ＹｏｕＴｕｂｅ` と `YouTube` に
- * 2回 AI を使わない。
+ * 🔴 **SQL だけで絞る。** `wish_texts` のキーが「書かれたままの本文」なので、
+ * 突き合わせが `left join` で済む。
+ * **JS が触るのは取ってきた十数件だけ。**
+ *
+ * ⚠️ **正規化した形をキーにしていたときは、全公開項目を全部 JS に読み込んで
+ * 正規化していた。** 項目が増えると**定期実行の CPU 10ms（Free）を超える。**
  */
 export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
-  /**
-   * 🔴 **正規化は JS 側でやる**（`normalizePoolText` が唯一の情報源）。
-   * SQL で同じことを書くと、NFKC の細かい違いで**2箇所がずれる。**
-   *
-   * そのため「まだ判定していないもの」を SQL だけでは絞れない。
-   * **多めに取ってから JS で絞る。** 候補は多くても項目の数なので、これで足りる。
-   */
   const rows = await db
     .selectDistinct({ text: items.text })
     .from(items)
     .innerJoin(lists, eq(lists.id, items.listId))
-    .where(inArray(lists.visibility, [...POOL_VISIBILITIES]))
+    .leftJoin(wishTexts, eq(wishTexts.rawText, items.text))
+    .where(and(inArray(lists.visibility, [...POOL_VISIBILITIES]), isNull(wishTexts.rawText)))
+    .limit(limit)
 
-  const candidates = [...new Set(rows.map((row) => normalizePoolText(row.text)))].filter(
-    (text) => text !== '',
-  )
-  if (candidates.length === 0) return []
-
-  const judged = await db
-    .select({ normalized: wishTexts.normalized })
-    .from(wishTexts)
-    .where(inArray(wishTexts.normalized, candidates))
-
-  const done = new Set(judged.map((row) => row.normalized))
-
-  return candidates.filter((text) => !done.has(text)).slice(0, limit)
+  return rows.map((row) => row.text)
 }
 
-/** 判定を1件保存する。 */
-export function saveJudgement(db: Db, normalized: string, judgement: PoolJudgement) {
+/** 判定を1件保存する。**キーは書かれたままの本文。** */
+export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement) {
   return db
     .insert(wishTexts)
     .values({
-      normalized,
+      rawText,
       verdict: judgement.publishable ? 'ok' : 'ng',
       canonical: judgement.publishable ? judgement.canonical : null,
       genre: judgement.publishable ? judgement.genre : null,
@@ -139,27 +126,32 @@ export async function judgeUnjudged(
   db: Db,
   ai: { run: (model: string, input: unknown) => Promise<unknown> },
   limit = POOL_JUDGE_BATCH_SIZE,
-): Promise<{ judged: number; failed: number }> {
+): Promise<{ judged: number; failed: number; lastError?: unknown }> {
   const targets = await selectUnjudged(db, limit)
   let judged = 0
   let failed = 0
+  let lastError: unknown
 
-  for (const normalized of targets) {
+  for (const rawText of targets) {
+    // 🔴 **AI には正規化したものを見せる。** 保存のキーは書かれたままの本文
+    const normalized = normalizePoolText(rawText)
     let raw: unknown
+
     try {
       raw = await ai.run(POOL_JUDGE_MODEL, poolJudgeInput(normalized))
     } catch (error) {
       // 呼び出せなかっただけ。**除外として保存しない**
       console.error(`pool-judge: ${String(error)}`)
+      lastError = error
       failed += 1
       continue
     }
 
-    await saveJudgement(db, normalized, toPoolJudgement(toResponseObject(raw), normalized))
+    await saveJudgement(db, rawText, toPoolJudgement(toResponseObject(raw), normalized))
     judged += 1
   }
 
-  return { judged, failed }
+  return { judged, failed, ...(lastError === undefined ? {} : { lastError }) }
 }
 
 /**

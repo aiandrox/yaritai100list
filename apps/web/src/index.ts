@@ -32,7 +32,7 @@ import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
-import { judgeUnjudged } from './pool-judge'
+import { judgeUnjudged, POOL_JUDGE_MODEL } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions, type SentryEnv } from './sentry'
@@ -1026,9 +1026,34 @@ app.onError((error, c) => {
  * **同じ理由でまた落ちるだけ**で無料枠を削る。何件処理できたかはログに残す。
  */
 async function judgePool(env: AppEnv['Bindings']): Promise<void> {
+  // テスト用の環境には AI バインディングが無い（`wrangler.jsonc` の `env.test`）
+  if (!env.AI) return
+
   try {
     const result = await judgeUnjudged(createDb(env.DB), env.AI)
     console.log(`pool-judge: judged=${String(result.judged)} failed=${String(result.failed)}`)
+
+    /**
+     * 🔴 **全部落ちたときだけ通知する**（#253）。
+     *
+     * これは「**モデルが無くなった**」の形。実際、最初に選んだモデルは
+     * 非推奨になっていて `AiError 5028` で落ちた（2026-08-10）。
+     * **落ちても保存しないので誤った判定は焼き付かないが、判定が永久に進まない。**
+     * ログは誰も見ないので、気づく手段がこれしかない。
+     *
+     * ⚠️ **1件だけ落ちたときは通知しない。** 一時的な失敗は次のバッチで拾える。
+     * 毎回通知すると、Sentry の無料枠（5,000 errors/月。しかも**他のプロジェクトと共有**）を焼く。
+     *
+     * ⚠️ それでも**直すまで1時間ごとに1件ずつ増える。**
+     * 鳴り始めたら止まらないので、気づいたら直すか Cron を止めること。
+     */
+    if (result.judged === 0 && result.failed > 0) {
+      Sentry.captureException(
+        new Error(
+          `pool-judge: ${String(result.failed)} 件すべて失敗した（model=${POOL_JUDGE_MODEL}）: ${String(result.lastError)}`,
+        ),
+      )
+    }
   } catch (error) {
     Sentry.captureException(error)
     console.error(`pool-judge: ${String(error)}`)

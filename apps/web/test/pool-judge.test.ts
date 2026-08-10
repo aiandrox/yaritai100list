@@ -161,10 +161,11 @@ async function seedPublic(
 }
 
 describe('selectUnjudged', () => {
-  it('全公開リストの本文を、正規化した形で返す', async () => {
+  it('全公開リストの本文を、書かれたまま返す', async () => {
+    // 🔴 正規化した形をキーにすると、SQL だけで差分を取れなくなる
     await seedPublic('p1', ['ＹｏｕＴｕｂｅを始める'])
 
-    expect(await selectUnjudged(testDb(), 10)).toEqual(['YouTubeを始める'])
+    expect(await selectUnjudged(testDb(), 10)).toEqual(['ＹｏｕＴｕｂｅを始める'])
   })
 
   it('🔴 リンク限定公開・非公開の本文は AI に送らない', async () => {
@@ -175,17 +176,20 @@ describe('selectUnjudged', () => {
     expect(await selectUnjudged(testDb(), 10)).toEqual([])
   })
 
-  it('🔴 表記だけ違うものを2回送らない', async () => {
+  it('⚠️ 表記だけ違うものは別々に判定する（引き換えに SQL だけで絞れる）', async () => {
+    // どちらも同じ代表表現に落ちるので、プールでは1つにまとまる
     await seedPublic('p1', ['ＹｏｕＴｕｂｅを始める'])
     await seedPublic('p2', ['YouTubeを始める'])
 
-    expect(await selectUnjudged(testDb(), 10)).toEqual(['YouTubeを始める'])
+    expect((await selectUnjudged(testDb(), 10)).sort()).toEqual(
+      ['YouTubeを始める', 'ＹｏｕＴｕｂｅを始める'].sort(),
+    )
   })
 
   it('判定済みの本文は返さない', async () => {
     await seedPublic('p1', ['富士山に登る', 'オーロラを見る'])
     await testDb().insert(wishTexts).values({
-      normalized: '富士山に登る',
+      rawText: '富士山に登る',
       verdict: 'ok',
       canonical: '富士山に登る',
       genre: 'travel',
@@ -214,7 +218,7 @@ describe('judgeUnjudged', () => {
 
     const [row] = await testDb().select().from(wishTexts)
     expect(row).toMatchObject({
-      normalized: '富士山登頂',
+      rawText: '富士山登頂',
       verdict: 'ok',
       canonical: '富士山に登る',
       genre: 'travel',
@@ -259,8 +263,21 @@ describe('judgeUnjudged', () => {
 
     const result = await judgeUnjudged(testDb(), ai)
 
-    expect(result).toEqual({ judged: 0, failed: 1 })
+    expect(result).toMatchObject({ judged: 0, failed: 1 })
     expect(await testDb().select().from(wishTexts)).toEqual([])
+
+    logged.mockRestore()
+  })
+
+  it('🔴 全部落ちたときに気づけるよう、最後のエラーを持ち帰る', async () => {
+    // 呼び出し側がこれを見て Sentry に送る（モデルが非推奨になったときの唯一の手掛かり）
+    await seedPublic('p1', ['なにか'])
+    const ai = { run: vi.fn().mockRejectedValue(new Error('5028: deprecated')) }
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const result = await judgeUnjudged(testDb(), ai)
+
+    expect(String(result.lastError)).toContain('5028')
 
     logged.mockRestore()
   })
@@ -275,7 +292,7 @@ describe('judgeUnjudged', () => {
 
     const result = await judgeUnjudged(testDb(), { run })
 
-    expect(result).toEqual({ judged: 1, failed: 1 })
+    expect(result).toMatchObject({ judged: 1, failed: 1 })
 
     logged.mockRestore()
   })
