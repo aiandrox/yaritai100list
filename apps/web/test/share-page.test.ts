@@ -37,7 +37,10 @@ async function createList(options: {
   return { id, shareId, userId }
 }
 
-async function addItems(listId: string, rows: { text: string; completedAt?: Date }[]) {
+async function addItems(
+  listId: string,
+  rows: { text: string; completedAt?: Date; hiddenInShare?: boolean }[],
+) {
   await testDb()
     .insert(items)
     .values(
@@ -47,6 +50,7 @@ async function addItems(listId: string, rows: { text: string; completedAt?: Date
         text: row.text,
         position,
         completedAt: row.completedAt ?? null,
+        hiddenInShare: row.hiddenInShare ?? false,
       })),
     )
 }
@@ -292,5 +296,92 @@ describe('見えてはいけないもの', () => {
     const list = await createList({ visibility: 'public' })
 
     expect((await request(`/share/${list.id}`)).status).toBe(404)
+  })
+
+  /**
+   * 項目ごとに本文を伏せる（#237）。
+   *
+   * 🔴 見るのは**本文が HTML に一切乗らないこと**。CSS で隠しているだけなら
+   * ページのソースを見れば読めてしまうので、`renderSharePage` に渡す前に
+   * 本文そのものを落としていることをここで固定する。
+   */
+  describe('項目ごとに本文を伏せる（#237）', () => {
+    it('隠した項目の本文は HTML に含まれず、代わりにプレースホルダーが出る', async () => {
+      const list = await createList({ visibility: 'public' })
+      await addItems(list.id, [
+        { text: '転職する', hiddenInShare: true },
+        { text: 'オーロラを見る' },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).not.toContain('転職する')
+      expect(body).toContain('（非公開）')
+      expect(body).toContain('オーロラを見る')
+    })
+
+    it('番号は詰めない。隠した項目もその位置に出る', async () => {
+      const list = await createList({ visibility: 'public' })
+      await addItems(list.id, [
+        { text: '1つ目' },
+        { text: '2つ目（隠す）', hiddenInShare: true },
+        { text: '3つ目' },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('001')
+      expect(body).toContain('002')
+      expect(body).toContain('003')
+      // 隠した項目の番号（002）の直後にプレースホルダーが来ることを見て、
+      // 「隠した項目が消えて番号が詰まった」のではないことを確かめる
+      expect(body.indexOf('002')).toBeLessThan(body.indexOf('（非公開）'))
+    })
+
+    it('隠していても、達成していれば達成数に入り「done」の見た目も出る', async () => {
+      const list = await createList({ visibility: 'public' })
+      await addItems(list.id, [
+        {
+          text: '隠して達成',
+          completedAt: new Date('2026-05-01T00:00:00.000Z'),
+          hiddenInShare: true,
+        },
+        { text: '未達成' },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('1 / 2 達成')
+      expect(body).toContain('done')
+    })
+
+    it('隠した項目の完了日時は出ない', async () => {
+      // 🔴 既定のタイトル（'2026年の目標'）自体に年が入るので、日付の有無だけを見られるよう
+      // タイトルを変えておく
+      const list = await createList({ visibility: 'public', title: 'テスト用のリスト' })
+      await addItems(list.id, [
+        {
+          text: '隠して達成',
+          completedAt: new Date('2026-05-01T00:00:00.000Z'),
+          hiddenInShare: true,
+        },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).not.toContain('2026')
+    })
+
+    it('隠していない項目は今までどおり本文と完了日時が出る（回帰確認）', async () => {
+      const list = await createList({ visibility: 'public' })
+      await addItems(list.id, [
+        { text: '隠さない達成', completedAt: new Date('2026-05-01T00:00:00.000Z') },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('隠さない達成')
+      expect(body).toContain('2026')
+    })
   })
 })

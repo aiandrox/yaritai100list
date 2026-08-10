@@ -75,8 +75,19 @@ const PAGE_STYLE = `
 `
 
 export interface SharedItem {
+  /**
+   * **すでに見せてよい形になった本文。** 伏せる項目（#237）は、
+   * ここに実本文ではなく `SHARE_HIDDEN_ITEM_LABEL` が入った状態で渡ってくる
+   * （呼び出し側の `src/index.ts` が詰め替える。ここでは判定しない）。
+   */
   text: string
-  /** 完了日時（epoch ms）。未完了なら `null` */
+  /**
+   * 達成しているか。打ち消し線・番号の色・達成数のカウントに使う（#237）。
+   * 🔴 **`completedAt` とは独立させてある。** 伏せた項目は達成していても
+   * `completedAt` が `null` になるため、見た目とカウントは `completedAt` では判定できない。
+   */
+  completed: boolean
+  /** 表示する完了日時（epoch ms）。未完了、または伏せた項目なら `null` */
   completedAt: number | null
 }
 
@@ -170,7 +181,9 @@ function layout(options: {
  * （100行の空欄を人に見せる意味がない。マークダウン #124 と同じ判断）。
  */
 export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<HtmlEscapedString> {
-  const completed = list.items.filter((item) => item.completedAt !== null).length
+  // 🔴 **達成数は `completed` から数える**（#237）。伏せた項目も `completedAt` は `null` に
+  // なるが、達成しているかどうかは見せてよいので、そちらまで数から落とさない
+  const completed = list.items.filter((item) => item.completed).length
   const description = `${String(completed)} / ${String(list.items.length)} 達成`
 
   return layout({
@@ -184,7 +197,7 @@ export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<H
       <ol>
         ${list.items.map(
           (item, index) => html`
-            <li class="${item.completedAt === null ? '' : 'done'}">
+            <li class="${item.completed ? 'done' : ''}">
               <span class="number">${String(index + 1).padStart(3, '0')}</span>
               <span class="text">${item.text}</span>
               ${

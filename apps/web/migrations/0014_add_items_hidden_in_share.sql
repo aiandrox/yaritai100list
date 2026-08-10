@@ -1,0 +1,1 @@
+ALTER TABLE `items` ADD `hidden_in_share` integer DEFAULT false NOT NULL;

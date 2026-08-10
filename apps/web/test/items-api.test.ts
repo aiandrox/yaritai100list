@@ -181,6 +181,60 @@ describe('項目の変更', () => {
     expect(row?.text).toBe('北極に行く')
   })
 
+  /** 共有で見せない設定（#237）。 */
+  describe('共有で見せない設定', () => {
+    it('隠せる・戻せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '転職する')
+
+      const hidden = await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { hiddenInShare: true }),
+      )
+      expect(hidden.status).toBe(200)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.hiddenInShare).toBe(true)
+
+      await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { hiddenInShare: false }),
+      )
+      const [back] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(back?.hiddenInShare).toBe(false)
+    })
+
+    it('🔴 他人の項目は隠せない', async () => {
+      const { me, other } = await twoUsers()
+      const theirs = await addItem(other.headers, 'other-list', '他人の項目')
+
+      const res = await request(
+        `/api/lists/other-list/items/${theirs}`,
+        json(me.headers, 'PATCH', { hiddenInShare: true }),
+      )
+
+      expect(res.status).toBe(404)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, theirs))
+      expect(row?.hiddenInShare).toBe(false)
+    })
+
+    it('🔴 自分のリストの URL に他人の項目 ID を混ぜても隠せない', async () => {
+      const { me, other } = await twoUsers()
+      const theirs = await addItem(other.headers, 'other-list', '他人の項目')
+
+      const res = await request(
+        `/api/lists/my-list/items/${theirs}`,
+        json(me.headers, 'PATCH', { hiddenInShare: true }),
+      )
+
+      expect(res.status).toBe(404)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, theirs))
+      expect(row?.hiddenInShare).toBe(false)
+    })
+  })
+
   it('完了にすると日時が入り、取り消すと消える', async () => {
     const { me } = await twoUsers()
     const id = await addItem(me.headers, 'my-list', '南極に行く')

@@ -53,6 +53,18 @@ export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインなしで始�
 export const DEFAULT_LIST_TITLE = '人生でやりたいことリスト'
 
 /**
+ * 共有ページで、本文を伏せた項目に出すプレースホルダー（#237）。
+ *
+ * 🔴 **`（非公開）`。** 意図的に隠していると伝わる表現を選んでいる
+ * （固定長の伏字案もあったが、記号だけでは何を意味するか伝わらない）。
+ *
+ * サーバー側（`src/index.ts` が共有ページ用データを組み立てる箇所）と、
+ * クライアント側（`src/client/SharePage.tsx` の説明文）の両方から読む。
+ * 値を2箇所に書くと必ずずれる（`DEFAULT_LIST_TITLE` などと同じ理由）。
+ */
+export const SHARE_HIDDEN_ITEM_LABEL = '（非公開）'
+
+/**
  * 一覧から**2つ目以降を作った**ときの既定タイトル（2026-08-07 決定、#110）。
  *
  * `DEFAULT_LIST_TITLE` と分けているのは、**使う場面が違う**ため。
