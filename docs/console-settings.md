@@ -22,7 +22,8 @@
 | Actions の無料枠 | **無制限**（public） | private だと月2,000分だった |
 | ルールセット（`main`） | **設定済み**。PR 必須 / CI 必須 / force push 禁止 | 詳細は下記。bypass は設けていない |
 | Dependabot | `.github/dependabot.yml` で管理 | コード側なのでコンソール作業は不要 |
-| Actions のシークレット | **`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`** | 自動デプロイ（#117）に使う。下記 |
+| Actions のシークレット | **`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `CLAUDE_CODE_OAUTH_TOKEN`** | 前2つは自動デプロイ（#117）。最後は `@claude`（#259）。下記 |
+| インストールしている GitHub App | **Claude**（#259） | ブラウザから作業するための経路。下記 |
 
 ### Actions のシークレット（自動デプロイ）
 
@@ -91,6 +92,120 @@ gh api -X PUT repos/aiandrox/yaritai100list/rulesets/20485718 --input <file>
 
 **public にしたので、コミットする内容は誰でも読める。**
 シークレットを絶対に入れないという方針の重要性が上がった。
+
+---
+
+## Claude Code（ブラウザから作業する経路）
+
+**PC が無くても指示と対話ができるようにするための設定**（#259、2026-08-10）。
+進め方の側は `docs/workflow.md` §9。
+
+経路は2つあり、**必要なコンソール作業が違う。**
+
+| | Claude Code on the web | `@claude`（GitHub Action） |
+|---|---|---|
+| 触る場所 | claude.ai/code / Claude モバイルアプリ | イシュー・PR のコメント欄 |
+| 向く用途 | **腰を据えた対話。** 途中で方針を変えられる | **短い指示。** 1コメント1往復 |
+| コードが動く場所 | Anthropic のクラウド VM | GitHub のホストランナー |
+| リポジトリ側 | 不要 | `.github/workflows/claude.yml` |
+| コンソール側 | GitHub App + **クラウド環境の setup script** | GitHub App + `CLAUDE_CODE_OAUTH_TOKEN` |
+
+⚠️ **どちらも `main` のルールセットは同じように効く。**
+PR 必須 / `check` 必須 / bypass なしなので、**ブラウザから直接 `main` を進めることはできない。**
+スマホから最後にやるのは「CI が緑になった PR をマージする」だけ。
+
+### 1. Claude GitHub App
+
+https://github.com/apps/claude を `aiandrox/yaritai100list` にインストールする。
+**両方の経路が同じ App を使う。**
+
+権限は App 側で決まっていて**部分的に許可することはできない**
+（Actions / Checks / Contents / Discussions / Issues / Members / Metadata /
+Pull requests / Repository hooks / Workflows / Statuses）。
+
+### 2. `CLAUDE_CODE_OAUTH_TOKEN`（`@claude` に使う）
+
+**値はここに書かない。** サブスクリプション（Pro / Max）で認証するトークン。
+
+```sh
+claude setup-token          # 対話。出てきた値をコピーする
+gh secret set CLAUDE_CODE_OAUTH_TOKEN
+```
+
+- **API キー（`ANTHROPIC_API_KEY`）は使わない。** 従量課金になる。
+  サブスクのトークンなら消費するのはレート制限で、月額は増えない
+- ⚠️ **`claude setup-token` を実行した人のサブスクに紐づく。** 期限が切れたら同じ手順で入れ直す
+- ⚠️ **リポジトリは public。** `issue_comment` のシークレットは fork の PR でも読める文脈で走るため、
+  **「誰が呼べるか」は action 側の判定に頼っている**（リポジトリへの write 権限が要る。bot は既定で拒否）。
+  `claude.yml` の `if:` は**ランナーを起こさないための足切りで、認可ではない**
+
+### 3. claude.ai/code のクラウド環境（web に使う）
+
+claude.ai/code の入力欄の上にある雲アイコン → 環境の歯車 → 編集。
+**設定ページや直リンクは無い。**
+
+| 項目 | 値 |
+|---|---|
+| 名前 | `Default`（オンボーディングが作るもので足りる） |
+| ネットワークアクセス | **`Trusted` のまま。** 下記のとおり必要な配布元は既定の許可リストに入っている |
+| 環境変数 | **空にする。** 下記 |
+| Setup script | 下記 |
+
+#### Setup script
+
+VM は Ubuntu 24.04、root で実行、**5分以内に終わって exit 0 する必要がある**
+（非ゼロで終わるとセッションが起動しない）。1度成功するとスナップショットが再利用され、
+以降のセッションでは走らない。
+
+```bash
+#!/bin/bash
+set -eu
+
+# 1. Node 24。VM の既定は 22 で、root の package.json は engines: ">=24"。
+#    ⚠️ 落ちてもセッションは止めない。engines は npm の警告どまりで、22 でも
+#    typecheck もテストも通る。揃えられたら揃える程度のもの
+( npm install -g n && n 24 ) || true
+
+# 2. Deno（apps/render）。VM に入っていない。
+#    🔴 公式の install.sh を使わない。あれは deno.land を叩くが、
+#    deno.land は Trusted の許可リストに無い。npm 版なら registry.npmjs.org だけで済む
+npm install -g deno
+
+# 3. gh（docs/workflow.md がイシュー操作に使う）。VM に入っていない。
+#    認証は要らない（GitHub プロキシが実際の資格情報を差し込む）
+apt-get update && apt-get install -y gh || true
+```
+
+**最初のセッションで確かめること**（Claude に走らせる）:
+
+```sh
+node -v && deno --version && gh --version
+```
+
+`node -v` が 22 のままなら `n` の入れ先と `PATH` の優先順がずれている。
+**22 でも作業はできる**ので、そこで止まらずに進めてよい。
+
+#### 環境変数を入れてはいけない
+
+**クラウド環境に秘密の値の置き場所は無い。** その環境を使う人が誰でも読める。
+`GOOGLE_CLIENT_SECRET` も `RENDER_HMAC_SECRET` も**ここには入れない。**
+
+結果として、クラウドセッションでできないことがある:
+
+- **Google ログインを通した動作確認**（`.dev.vars` が無い）。
+  `docs/workflow.md` の「ログインが要る画面を撮る」はクラウドからはできない
+- **本番へのデプロイ**（`CLOUDFLARE_API_TOKEN` が無い）。
+  そもそもデプロイは `main` へのマージで走るので、要らない
+
+**ローカル D1 を使う Vitest / Miniflare は動く**（秘密の値を要求しない）。
+
+#### GitHub の扱いが普通と違う
+
+- `GH_TOKEN` は `proxy-injected` という**プレースホルダ**。
+  `gh` は通るが、**その値を直接読むスクリプトは動かない**
+- **`git push` は、そのセッションのブランチにしか通らない**（プロキシの制限）
+- **GraphQL は絞られている。** PR 関連の決まった問い合わせ以外は 403。
+  `docs/workflow.md` §4 のサブイシュー紐付けは `gh api repos/{owner}/{repo}/...`（REST）なので通る
 
 ---
 
@@ -332,6 +447,73 @@ Deno Deploy 側が例外として許されているのは、**あれが Cookie �
 | Spike Protection | **有効**（`yaritai100list-workers`） | |
 | アラート | 作成時の既定ルール（新規イシューでメール通知） | **消さないこと。これが「壊れたことを知る手段」そのもの** |
 | DSN の置き場所 | `SENTRY_DSN`（シークレット扱い） | 値はここに書かない |
+
+## Workers AI（#253）
+
+取り入れ面に出してよいかの判定に使う。**コンソールでの設定は要らない**
+（`wrangler.jsonc` の `"ai": { "binding": "AI" }` だけ）。ここに書くのは**枠と落とし穴。**
+
+| | 2026-08-10 に確認した値 |
+|---|---|
+| 無料枠 | **10,000 Neurons/日** |
+| 使っているモデル | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| 1回の判定 | **約 20 Neurons**（入力 26,668/M・出力 204,805/M） |
+| 1日に判定できる数 | **約 500 件** |
+
+🔴 **モデルは非推奨になる。**
+最初に選んだ `@cf/meta/llama-3.1-8b-instruct` は **2026-05-30 に非推奨**で、
+呼ぶと `AiError 5028` で落ちた（2026-08-10 に踏んだ）。
+
+- **落ちても「出さない」として保存はしない**ので、誤った判定が焼き付くことはない
+- ただし**判定が全く進まなくなる。** `pool-judge: failed=` がログに出続ける
+
+⚠️ **Cron の間隔は Neurons の枠から決めている**（1時間ごと × 15件 = 360件/日）。
+短くすると、溜まっているときに**半日で枠を焼く。**
+
+### モデルを変えるとき（#254）
+
+🔴 **`src/pool-judge.ts` の `POOL_JUDGE_MODEL` を書き換えるだけ。他は何もしない。**
+
+`wish_texts.model` に判定したモデルが入っているので、バッチが
+**古いモデルの行を少しずつ拾い直す**（1時間に 15 件）。
+**上書きされるまで古い判定が使われる**ので、入れ替えの最中もプールは埋まったまま。
+
+⚠️ **拾い直しはまだ判定していない本文の後回しになる**（そちらが先）。
+1万件あれば入れ替わりきるのに 28 日かかるが、**その間も取り入れ面は動いている。**
+
+### 🔴 `wish_texts` を一括で消さないこと
+
+**やってはいけない。**
+
+```sh
+# 🔴 これをやると取り入れ面が空になる
+wrangler d1 execute DB --remote --command "delete from wish_texts"
+```
+
+プールは `wish_texts` から作り直すので、消すと**次のバッチでプールが空になる。**
+判定は**1日 360 件**しか進まないので、1万件あれば**28日間、取り入れ面が空**のまま。
+
+モデルを変えたいだけなら上の「モデルを変えるとき」。消す必要は無い。
+
+### 出してはいけないものが出てしまったとき
+
+AI の判定をすり抜けることはある。**2箇所直す。片方だけでは直らない。**
+
+```sh
+# 1. いま出ているものを消す（即座に効く）
+wrangler d1 execute DB --remote --command \
+  "delete from pool where canonical = '...'"
+
+# 2. 次のバッチで戻ってこないようにする
+wrangler d1 execute DB --remote --command \
+  "update wish_texts set verdict='ng', canonical=null, genre=null where raw_text = '...'"
+```
+
+- **1 だけ**だと、次のバッチ（最大1時間後）で戻ってくる
+- **2 だけ**だと、消えるまで最大1時間かかる
+
+⚠️ **`raw_text` は書かれたままの本文**（正規化前）。同じ意味でも表記が違えば別の行なので、
+`like` で拾うか、`pool` の `canonical` から辿って該当する `wish_texts` を全部直す。
 
 ### ⚠️ 無料枠の 5,000 errors/月は**プロジェクト間で共有**
 

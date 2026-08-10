@@ -1,14 +1,15 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
+  BROWSABLE_GENRES,
   buildExportFile,
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
+  genreSlugSchema,
   DISCOVER_MAX_PAGE,
   DISCOVER_PAGE_SIZE,
   hasFutureCompletedAt,
   isFutureCompletedAt,
-  POOL_VISIBILITIES,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   SHARED_VISIBILITIES,
@@ -20,21 +21,22 @@ import {
 } from '@yaritai100list/shared'
 import { zValidator } from '@hono/zod-validator'
 import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/sqlite-core'
 import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { items, lists } from './db/schema'
+import { items, lists, pool, wishTexts } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
+import { rebuildPool } from './pool'
+import { judgeUnjudged, POOL_JUDGE_MODEL } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
-import { sentryOptions } from './sentry'
+import { sentryOptions, type SentryEnv } from './sentry'
 
 /**
  * リストの更新で受け付ける内容。**上限は packages/shared の Zod スキーマが唯一の情報源。**
@@ -77,6 +79,15 @@ const discoverQuerySchema = z.object({
    * 省略できる（未ログインは localStorage にリストがあり、サーバーは知らない）。
    */
   listId: z.string().optional(),
+
+  /**
+   * ジャンルで絞る（#255）。省略すると全部。
+   *
+   * 🔴 **スラッグだけを受ける**（`genreSlugSchema`）。日本語のラベルを URL に入れない。
+   * 🔴 **`other` は受け付けない。** 入口に出さないものを URL からだけ開けると、
+   * **分類に失敗したものを集めた画面**が生まれる。
+   */
+  genre: genreSlugSchema.optional(),
 })
 
 /** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
@@ -867,14 +878,24 @@ const app = new Hono<AppEnv>()
    * 🔴 **本文でまとめる**（2026-08-09 の利用者の判断）。
    * 3人が「富士山に登る」と書いていても1行。項目ごとに出すと、
    * **同じ本文が並び、数も分散する。**
+   * まとめる単位は**代表表現**（#254）。「富士山登頂」も同じ1行に入る。
    *
-   * 🔴 **返すのは本文だけ。** 作者・完了状態・完了日時・リスト ID を返さない。
+   * 🔴 **`pool` を読むだけ**（#254）。集計も公開範囲の判定もバッチが済ませてある
+   * （`src/pool.ts`）。**ここで `items` を触らない。**
+   * 触ると、要求のたびに全項目を走査することになる。
+   *
+   * ⚠️ **リアルタイムではない。** 全公開をやめた本文は次のバッチまで残る。
+   * 「おおまかにどんなことが書かれているかを知る場所」なので、これでよい
+   * （2026-08-10 の利用者の判断）。個人名などは判定で落としてある（#253）。
+   *
+   * 🔴 **返すのは本文と「もう持っているか」だけ。**
+   * 作者・完了状態・完了日時・リスト ID・人数を返さない。
    * アイデアそのものを探す場なので、叶えたかどうかは削ぎ落とす。
    * **元のリストへ辿れる値も返さない**（2つの公開面を経路として交わらせない）。
    */
   .get('/api/discover', zValidator('query', discoverQuerySchema), async (c) => {
     const db = createDb(c.env.DB)
-    const { page = 1, listId } = c.req.valid('query')
+    const { page = 1, listId, genre } = c.req.valid('query')
 
     /**
      * 🔴 **渡されたリストが本当に自分のものか確かめる**（#249）。
@@ -907,60 +928,68 @@ const app = new Hono<AppEnv>()
     }
 
     /**
-     * 取り入れ先のリストにある本文かどうか。**後ろへ回すためだけに使う。**
+     * 取り入れ先のリストに**もうあるか**（#254）。
      *
-     * 🔴 **ページの中だけで並べ替えても足りない**（#249 で直した）。
+     * 🔴 **完全一致では足りない。** プールに出るのは代表表現なので、
+     * 代表が `富士山に登る`・自分が持っているのが `富士山登頂` だと
+     * 完全一致では「持っていない」と出る。取り入れると**同じことが2行**になる。
+     * だから**自分の本文も `wish_texts` を通して代表表現に寄せてから**突き合わせる。
+     *
+     * ⚠️ **完全一致も残す**（`or`）。自分の項目は非公開リストにあることが多く、
+     * その場合 `wish_texts` に判定が無い（判定するのは全公開リストの本文だけ）。
+     * 寄せられないぶんは、せめて字面が同じものを拾う。
+     *
+     * 🔴 **並べ替えとページ送りの両方に効かせる。**
      * 画面側で並べ替えると、**1ページ目に自分の項目が固まっていたときに
-     * 2ページ目の知らない項目が繰り上がってこない。**
+     * 2ページ目の知らない項目が繰り上がってこない**（#249 で直した）。
      *
      * `adopterListId` が無いとき（未ログイン・省略）は `''` と突き合わせる。
      * **どの行にも当たらない**ので、全部「持っていない」扱いになる。
      */
-    const mine = alias(items, 'mine')
-    const adopted = sql<number>`max(case when ${mine.id} is null then 0 else 1 end)`
+    /**
+     * 🔴 **表名を自分で書く。`${pool.canonical}` を使わない。**
+     *
+     * drizzle は**選択リストの中では列名を修飾しない**（`"canonical"` とだけ出す）。
+     * それを相関副問い合わせに埋めると、SQLite は**内側の `wish_texts.canonical`**
+     * として解決する。`mine_judged.canonical = canonical` は
+     * **判定がある限り必ず真**になり、**全部「持っている」ことになる**（実際に踏んだ）。
+     */
+    const poolCanonical = sql.raw('"pool"."canonical"')
+
+    const adopted = sql<number>`exists (
+      select 1
+        from ${items} as mine
+        left join ${wishTexts} as mine_judged on mine_judged.raw_text = mine.text
+       where mine.list_id = ${adopterListId ?? ''}
+         and (mine.text = ${poolCanonical} or mine_judged.canonical = ${poolCanonical})
+    )`
 
     /**
-     * 🔴 **出す本文と、数える範囲が違う**（2026-08-10 の利用者の判断）。
+     * 🔴 **プールを読むだけ。結合も集計もしない**（#254）。
      *
-     * | | 範囲 |
-     * |---|---|
-     * | プールに**出す**本文 | 全公開リストにあるものだけ（`POOL_VISIBILITIES`） |
-     * | 並べるための**人数** | **全リスト。非公開・リンク限定公開も含む** |
+     * 以前はここで `items` を `group by text` して人数を数えていた。
+     * **開くたびに全項目を走査する**ので、項目が増えるほど重くなる。
+     * 数えるのはバッチの仕事になった（`src/pool.ts`）。
      *
-     * 数える範囲を全公開だけにすると、**公開リストが少ないうちは全部1人**で
-     * 順序が付かない。非公開まで含めると初日から意味のある順になる。
-     *
-     * ⚠️ **だから人数を応答に入れない。**
-     * 出すと「知りたい本文を自分の全公開リストに書く → プールに出る →
-     * 表示された人数を読む」で、**何人が非公開でそれを持っているかを問い合わせられる。**
+     * 🔴 **人数（`pool.writers`）を応答に入れない。** 数えているのは
+     * **非公開リストも含めた全リスト**なので、出すと「知りたい本文を自分の
+     * 全公開リストに書く → プールに出る → 人数を読む」で、
+     * **何人が非公開でそれを持っているかを問い合わせられる。**
      * 並びに効かせるだけなら、順位からしか推測できず精度が大きく落ちる。
      * 丸めて出すかどうかは #241。
      *
      * 最後に本文で並べるのは、**同数のときに応答が毎回変わらないようにする**ため。
      */
     const rows = await db
-      .select({ text: items.text, writers: sql<number>`count(distinct ${lists.userId})` })
-      .from(items)
-      .innerJoin(lists, eq(lists.id, items.listId))
-      .leftJoin(mine, and(eq(mine.text, items.text), eq(mine.listId, adopterListId ?? '')))
-      .where(
-        // 🔴 **ここでは公開範囲を絞らない**（人数は全リストで数えるため）。
-        // 絞るのは「プールに出す本文か」の方
-        inArray(
-          items.text,
-          db
-            .select({ text: items.text })
-            .from(items)
-            .innerJoin(lists, eq(lists.id, items.listId))
-            .where(inArray(lists.visibility, [...POOL_VISIBILITIES])),
-        ),
-      )
-      .groupBy(items.text)
+      .select({ text: pool.canonical, adopted })
+      .from(pool)
+      // ジャンルを指定されたらそれだけ（#255）。指定が無ければ全部
+      .where(genre === undefined ? undefined : eq(pool.genre, genre))
       .orderBy(
         // **既に持っているものを後ろへ**（#249）。探しに来た人にとって選択肢ではない
         asc(adopted),
-        desc(sql`count(distinct ${lists.userId})`),
-        asc(items.text),
+        desc(pool.writers),
+        asc(pool.canonical),
       )
       /**
        * 🔴 **1件多く取る。**
@@ -971,10 +1000,37 @@ const app = new Hono<AppEnv>()
       .limit(DISCOVER_PAGE_SIZE + 1)
       .offset((page - 1) * DISCOVER_PAGE_SIZE)
 
-    // **人数は返さない**（上の注意書き）
+    /**
+     * 入口に出すジャンル（#255）。**1件も無いジャンルは返さない。**
+     *
+     * 押しても空になる空振りが無いようにするため。
+     * 貯まっていないうちは数個しか並ばないので、横スクロールも要らなくなる。
+     *
+     * 🔴 **件数は返さない**（#241 と同じ理由）。
+     * 数えるのは非公開リストも含めた人数ではないが、
+     * **「そのジャンルに何件あるか」も本文の分布を漏らす。** 空かどうかだけで足りる。
+     *
+     * 🔴 **ジャンルごとに1回ずつ数えない。** `group by` の1文で済ませる。
+     *
+     * ⚠️ **ページを送っても毎回返す。** 返さないと2ページ目で入口が消える。
+     * `pool` は高々数千行なので、`group by genre` は索引を引くだけで終わる。
+     */
+    const present = await db.selectDistinct({ genre: pool.genre }).from(pool)
+    const filled = new Set(present.map((row) => row.genre))
+
+    /**
+     * **人数は返さない**（上の注意書き）。返すのは本文と「もう持っているか」だけ。
+     *
+     * `adopted` は**自分のリストのことしか言っていない**ので、出しても漏れない
+     * （持ち主であることは上で確かめてある）。
+     */
     return c.json({
-      items: rows.slice(0, DISCOVER_PAGE_SIZE).map(({ text }) => ({ text })),
+      items: rows
+        .slice(0, DISCOVER_PAGE_SIZE)
+        .map(({ text, adopted }) => ({ text, adopted: adopted === 1 })),
       hasNext: rows.length > DISCOVER_PAGE_SIZE,
+      // 並びは `BROWSABLE_GENRES` の順（毎回同じ）。`other` は入口に出さない
+      genres: BROWSABLE_GENRES.filter((entry) => filled.has(entry.slug)),
     })
   })
 
@@ -1012,7 +1068,92 @@ app.onError((error, c) => {
  *
  * `sentryOptions` は DSN が無ければ `undefined` を返し、SDK は初期化されない。
  */
-export default Sentry.withSentry(sentryOptions, app)
+/**
+ * 取り入れ面のプールを保つバッチ（#253 / #254、親 #252）。
+ * **`wrangler.jsonc` の `triggers` から呼ばれる。**
+ *
+ * 1. まだ判定していない本文に AI の判定を付ける（`judgeUnjudged`）
+ * 2. プールを総入れ替えする（`rebuildPool`）
+ *
+ * 🔴 **2 は 1 が失敗しても必ず動かす。** 判定が進まない日でも、
+ * **全公開をやめた本文はプールから消えなければならない。**
+ * 1 と 2 を同じ `try` に入れると、AI が落ちた日にプールが更新されなくなる。
+ *
+ * ⚠️ **プールの作り直しは毎回やる**（#254 は「日次」で起票したが、毎時にした）。
+ * 作り直しは SQL 1文で、**CPU も無料枠もほとんど使わない。**
+ * 日次にすると、**デプロイ直後やプールを消した直後に丸1日空になる**うえ、
+ * 全公開をやめた本文が最大1日残る。頻度を上げて困ることが無い。
+ *
+ * ⚠️ **Free では1実行あたり CPU 10ms・サブリクエスト 50**（2026-08-10 に確認）。
+ * だから判定は**少しずつ**しか進めない。細かい間隔で回して追いつかせる。
+ *
+ * ⚠️ **例外を外に投げない。** 投げると Cloudflare が再実行するが、
+ * **同じ理由でまた落ちるだけ**で無料枠を削る。結果はログと Sentry に残す。
+ */
+async function runPoolBatch(env: AppEnv['Bindings']): Promise<void> {
+  const db = createDb(env.DB)
+
+  // テスト用の環境には AI バインディングが無い（`wrangler.jsonc` の `env.test`）
+  if (env.AI) await judgePool(db, env.AI)
+
+  try {
+    const rows = await rebuildPool(db)
+    console.log(`pool-build: rows=${String(rows)}`)
+  } catch (error) {
+    // 🔴 **黙って戻らない。** 気づかないとプールが古いまま何日も残る
+    Sentry.captureException(error)
+    console.error(`pool-build: ${String(error)}`)
+  }
+}
+
+/** 判定を少しずつ埋める（#253）。**プールを作り直すのはここではない。** */
+async function judgePool(db: Db, ai: Ai): Promise<void> {
+  try {
+    const result = await judgeUnjudged(db, ai)
+    console.log(`pool-judge: judged=${String(result.judged)} failed=${String(result.failed)}`)
+
+    /**
+     * 🔴 **全部落ちたときだけ通知する**（#253）。
+     *
+     * これは「**モデルが無くなった**」の形。実際、最初に選んだモデルは
+     * 非推奨になっていて `AiError 5028` で落ちた（2026-08-10）。
+     * **落ちても保存しないので誤った判定は焼き付かないが、判定が永久に進まない。**
+     * ログは誰も見ないので、気づく手段がこれしかない。
+     *
+     * ⚠️ **1件だけ落ちたときは通知しない。** 一時的な失敗は次のバッチで拾える。
+     * 毎回通知すると、Sentry の無料枠（5,000 errors/月。しかも**他のプロジェクトと共有**）を焼く。
+     *
+     * ⚠️ それでも**直すまで1時間ごとに1件ずつ増える。**
+     * 鳴り始めたら止まらないので、気づいたら直すか Cron を止めること。
+     */
+    if (result.judged === 0 && result.failed > 0) {
+      Sentry.captureException(
+        new Error(
+          `pool-judge: ${String(result.failed)} 件すべて失敗した（model=${POOL_JUDGE_MODEL}）: ${String(result.lastError)}`,
+        ),
+      )
+    }
+  } catch (error) {
+    Sentry.captureException(error)
+    console.error(`pool-judge: ${String(error)}`)
+  }
+}
+
+/**
+ * ⚠️ **`withSentry` の型は `SentryEnv` しか知らない**（あちらが必要とするのは DSN だけ）。
+ * このアプリの環境はそれより広いので、受け口を `SentryEnv` に合わせて中で絞る。
+ *
+ * `app` をそのまま渡していたときは Hono の `fetch` が緩い型だったので通っていた。
+ * `scheduled` を足すと自分で型を書くことになり、ここが出てくる。
+ */
+const handler: ExportedHandler<SentryEnv> = {
+  fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+  scheduled: (_event, env, ctx) => {
+    ctx.waitUntil(runPoolBatch(env as AppEnv['Bindings']))
+  },
+}
+
+export default Sentry.withSentry(sentryOptions, handler)
 
 /**
  * Hono RPC のクライアント用。包む前の `app` の型を使う。
