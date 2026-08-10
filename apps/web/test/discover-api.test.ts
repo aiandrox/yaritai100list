@@ -1,5 +1,5 @@
 import { exports } from 'cloudflare:workers'
-import { DISCOVER_ITEMS_MAX } from '@yaritai100list/shared'
+import { DISCOVER_MAX_PAGE, DISCOVER_PAGE_SIZE } from '@yaritai100list/shared'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -18,13 +18,14 @@ import { createTestUser, testBaseUrl, testDb } from './helpers'
  * - **並び順が毎回同じこと。** 同数のときに揺れると画面が意味もなく並び替わる
  */
 
-const discover = () => exports.default.fetch(new Request(`${testBaseUrl()}/api/discover`))
+const discover = (query = '') =>
+  exports.default.fetch(new Request(`${testBaseUrl()}/api/discover${query}`))
 
-async function readPool() {
-  const res = await discover()
-  const body = await res.json<{ items: { text: string }[] }>()
+async function readPool(query = '') {
+  const res = await discover(query)
+  const body = await res.json<{ items: { text: string }[]; hasNext: boolean }>()
 
-  return { status: res.status, items: body.items }
+  return { status: res.status, items: body.items, hasNext: body.hasNext }
 }
 
 const texts = (rows: { text: string }[]) => rows.map((row) => row.text)
@@ -192,12 +193,66 @@ describe('GET /api/discover', () => {
     })
   })
 
-  it('出す件数に上限がある', async () => {
-    const many = Array.from({ length: DISCOVER_ITEMS_MAX + 10 }, (_, i) =>
-      String(i).padStart(4, '0'),
-    )
-    await makeList({ id: 'p1', visibility: 'public', texts: many })
+  describe('ページ送り（#246）', () => {
+    /** 1ページに収まらない数を、本文順が分かる形で用意する。 */
+    const overflow = () =>
+      Array.from({ length: DISCOVER_PAGE_SIZE + 5 }, (_, i) => String(i).padStart(4, '0'))
 
-    expect((await readPool()).items).toHaveLength(DISCOVER_ITEMS_MAX)
+    it('1ページに出す数に上限がある', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      expect((await readPool()).items).toHaveLength(DISCOVER_PAGE_SIZE)
+    })
+
+    it('🔴 1ページ目で「次がある」と分かる', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      expect((await readPool()).hasNext).toBe(true)
+    })
+
+    it('🔴 収まりきるときは「次がある」と言わない', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
+
+      expect((await readPool()).hasNext).toBe(false)
+    })
+
+    it('2ページ目に続きが出る（1ページ目と重ならない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: overflow() })
+
+      const first = await readPool()
+      const second = await readPool('?page=2')
+
+      expect(second.items).toHaveLength(5)
+      expect(second.hasNext).toBe(false)
+      // ちょうど境目で1件飛ぶ／重なる、が一番ありがちな間違い
+      expect(texts(second.items)[0]).toBe(String(DISCOVER_PAGE_SIZE).padStart(4, '0'))
+      expect(texts(first.items)).not.toContain(texts(second.items)[0])
+    })
+
+    it('中身が無いページは空になる（落ちない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['A'] })
+
+      expect((await readPool('?page=3')).items).toEqual([])
+    })
+
+    describe('断るもの', () => {
+      it('🔴 ページ数に上限がある（飛ばす件数を大きくさせない）', async () => {
+        // 大きい offset はプール全体を走査したうえで0件を返す
+        expect((await discover(`?page=${String(DISCOVER_MAX_PAGE + 1)}`)).status).toBe(400)
+      })
+
+      it('0 以下のページを断る', async () => {
+        expect((await discover('?page=0')).status).toBe(400)
+        expect((await discover('?page=-1')).status).toBe(400)
+      })
+
+      it('数でないページを断る', async () => {
+        expect((await discover('?page=abc')).status).toBe(400)
+      })
+
+      it('小数を断る', async () => {
+        expect((await discover('?page=1.5')).status).toBe(400)
+      })
+    })
   })
 })

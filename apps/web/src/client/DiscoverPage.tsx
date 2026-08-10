@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'wouter'
+import { Link, useSearchParams } from 'wouter'
 
 import { api } from './api'
 import { Notice } from './Notice'
-import { hasText, rejectionMessage, type SessionState } from './model'
+import { hasText, rejectionMessage, sortAdoptedLast, type SessionState } from './model'
 import { useList } from './useList'
 
 /**
@@ -25,10 +25,22 @@ import { useList } from './useList'
  * **何人が非公開でその本文を持っているかを問い合わせられる**（#241）。
  */
 
-type PoolState = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; texts: string[] }
+type PoolState =
+  | { status: 'loading' }
+  | { status: 'failed' }
+  | { status: 'ready'; texts: string[]; hasNext: boolean }
 
 export function DiscoverPage({ session }: { session: SessionState }) {
   const [pool, setPool] = useState<PoolState>({ status: 'loading' })
+
+  /**
+   * ページは URL に載せる（`?page=2`）。
+   *
+   * **戻るボタンが効き、渡したリンクが同じところを開く。**
+   * 画面の中の状態にすると、1件取り入れて戻ってきたときに先頭へ飛ぶ。
+   */
+  const [searchParams] = useSearchParams()
+  const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1)
 
   /**
    * 取り入れ先は**トップと同じリスト**（最後に更新したもの。`PRODUCT_SPEC.md` §4.3）。
@@ -45,29 +57,32 @@ export function DiscoverPage({ session }: { session: SessionState }) {
 
   useEffect(() => {
     const load = async () => {
+      setPool({ status: 'loading' })
+
       try {
-        const res = await api.api.discover.$get()
+        const res = await api.api.discover.$get({ query: { page: String(page) } })
         if (!res.ok) {
           setPool({ status: 'failed' })
           return
         }
 
-        const { items } = await res.json()
-        setPool({ status: 'ready', texts: items.map((item) => item.text) })
+        const body = await res.json()
+        setPool({
+          status: 'ready',
+          texts: body.items.map((item) => item.text),
+          hasNext: body.hasNext,
+        })
       } catch {
         setPool({ status: 'failed' })
       }
     }
 
     void load()
-  }, [])
+  }, [page])
 
   return (
     <div>
       <h1 className="text-xl font-bold text-slate-900">みんなのやりたいこと</h1>
-      <p className="mt-1 text-xs text-slate-600">
-        全公開のリストに書かれているものを集めています。よく書かれているものから並びます。
-      </p>
 
       {rejection !== null && (
         <p role="alert" className="mt-3 rounded bg-white px-3 py-2 text-sm text-brand-deep">
@@ -95,7 +110,15 @@ export function DiscoverPage({ session }: { session: SessionState }) {
           )}
 
           <ul className="mt-2">
-            {pool.texts.map((text) => (
+            {/*
+              🔴 **既に持っているものを後ろへ回す**（#246）。
+              探しに来た人にとって、もう持っているものは選択肢ではない。
+              **消さない**のは「取り入れ済み」だと分かることに意味があるため
+            */}
+            {(screen.status === 'ready'
+              ? sortAdoptedLast(pool.texts, screen.list)
+              : pool.texts
+            ).map((text) => (
               <li
                 key={text}
                 className="flex items-center gap-2 border-b border-brand/40 py-2.5 text-sm"
@@ -112,9 +135,48 @@ export function DiscoverPage({ session }: { session: SessionState }) {
               </li>
             ))}
           </ul>
+
+          <Pager page={page} hasNext={pool.hasNext} />
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * ページ送り。
+ *
+ * ⚠️ **総ページ数を出さない。** 出すには全体を数えることになり、
+ * ページを開くたびに問い合わせが2回になる。**「次があるか」だけで足りる。**
+ */
+function Pager({ page, hasNext }: { page: number; hasNext: boolean }) {
+  if (page === 1 && !hasNext) return null
+
+  const link = 'rounded-md border border-brand-deep px-3 py-1.5 font-bold text-brand-deep'
+
+  return (
+    <nav className="mt-4 flex items-center justify-between text-xs">
+      {page > 1 ? (
+        <Link
+          href={page === 2 ? '/discover' : `/discover?page=${String(page - 1)}`}
+          className={link}
+        >
+          前へ
+        </Link>
+      ) : (
+        <span />
+      )}
+
+      <span className="text-slate-600">{page} ページ目</span>
+
+      {hasNext ? (
+        <Link href={`/discover?page=${String(page + 1)}`} className={link}>
+          次へ
+        </Link>
+      ) : (
+        <span />
+      )}
+    </nav>
   )
 }
 
