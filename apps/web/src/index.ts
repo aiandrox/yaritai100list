@@ -1,9 +1,11 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
+  BROWSABLE_GENRES,
   buildExportFile,
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
+  genreSlugSchema,
   DISCOVER_MAX_PAGE,
   DISCOVER_PAGE_SIZE,
   hasFutureCompletedAt,
@@ -77,6 +79,15 @@ const discoverQuerySchema = z.object({
    * 省略できる（未ログインは localStorage にリストがあり、サーバーは知らない）。
    */
   listId: z.string().optional(),
+
+  /**
+   * ジャンルで絞る（#255）。省略すると全部。
+   *
+   * 🔴 **スラッグだけを受ける**（`genreSlugSchema`）。日本語のラベルを URL に入れない。
+   * 🔴 **`other` は受け付けない。** 入口に出さないものを URL からだけ開けると、
+   * **分類に失敗したものを集めた画面**が生まれる。
+   */
+  genre: genreSlugSchema.optional(),
 })
 
 /** 項目の作成。本文だけ受け取る。**並び順は末尾で、クライアントには決めさせない。** */
@@ -884,7 +895,7 @@ const app = new Hono<AppEnv>()
    */
   .get('/api/discover', zValidator('query', discoverQuerySchema), async (c) => {
     const db = createDb(c.env.DB)
-    const { page = 1, listId } = c.req.valid('query')
+    const { page = 1, listId, genre } = c.req.valid('query')
 
     /**
      * 🔴 **渡されたリストが本当に自分のものか確かめる**（#249）。
@@ -972,6 +983,8 @@ const app = new Hono<AppEnv>()
     const rows = await db
       .select({ text: pool.canonical, adopted })
       .from(pool)
+      // ジャンルを指定されたらそれだけ（#255）。指定が無ければ全部
+      .where(genre === undefined ? undefined : eq(pool.genre, genre))
       .orderBy(
         // **既に持っているものを後ろへ**（#249）。探しに来た人にとって選択肢ではない
         asc(adopted),
@@ -988,6 +1001,24 @@ const app = new Hono<AppEnv>()
       .offset((page - 1) * DISCOVER_PAGE_SIZE)
 
     /**
+     * 入口に出すジャンル（#255）。**1件も無いジャンルは返さない。**
+     *
+     * 押しても空になる空振りが無いようにするため。
+     * 貯まっていないうちは数個しか並ばないので、横スクロールも要らなくなる。
+     *
+     * 🔴 **件数は返さない**（#241 と同じ理由）。
+     * 数えるのは非公開リストも含めた人数ではないが、
+     * **「そのジャンルに何件あるか」も本文の分布を漏らす。** 空かどうかだけで足りる。
+     *
+     * 🔴 **ジャンルごとに1回ずつ数えない。** `group by` の1文で済ませる。
+     *
+     * ⚠️ **ページを送っても毎回返す。** 返さないと2ページ目で入口が消える。
+     * `pool` は高々数千行なので、`group by genre` は索引を引くだけで終わる。
+     */
+    const present = await db.selectDistinct({ genre: pool.genre }).from(pool)
+    const filled = new Set(present.map((row) => row.genre))
+
+    /**
      * **人数は返さない**（上の注意書き）。返すのは本文と「もう持っているか」だけ。
      *
      * `adopted` は**自分のリストのことしか言っていない**ので、出しても漏れない
@@ -998,6 +1029,8 @@ const app = new Hono<AppEnv>()
         .slice(0, DISCOVER_PAGE_SIZE)
         .map(({ text, adopted }) => ({ text, adopted: adopted === 1 })),
       hasNext: rows.length > DISCOVER_PAGE_SIZE,
+      // 並びは `BROWSABLE_GENRES` の順（毎回同じ）。`other` は入口に出さない
+      genres: BROWSABLE_GENRES.filter((entry) => filled.has(entry.slug)),
     })
   })
 

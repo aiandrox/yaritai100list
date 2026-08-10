@@ -36,10 +36,19 @@ const discover = (query = '', headers?: Headers) =>
 async function readPool(query = '', headers?: Headers) {
   await runBatch()
 
-  const res = await discover(query, headers)
-  const body = await res.json<{ items: { text: string }[]; hasNext: boolean }>()
+  return await read(query, headers)
+}
 
-  return { status: res.status, items: body.items, hasNext: body.hasNext }
+/** 作り直さずに読む。 */
+async function read(query = '', headers?: Headers) {
+  const res = await discover(query, headers)
+  const body = await res.json<{
+    items: { text: string; adopted: boolean }[]
+    hasNext: boolean
+    genres: { slug: string; label: string }[]
+  }>()
+
+  return { status: res.status, ...body }
 }
 
 const texts = (rows: { text: string }[]) => rows.map((row) => row.text)
@@ -417,6 +426,141 @@ describe('GET /api/discover', () => {
       await makeList({ id: 'p1', visibility: 'public', texts: ['A', 'B'] })
 
       expect(texts((await readPool()).items)).toEqual(['A', 'B'])
+    })
+  })
+
+  /**
+   * ジャンル別の入口（#255）。
+   *
+   * 🔴 見るのは **「絞ったときも、出してはいけない本文が出ないこと」。**
+   * 絞り込みを別の経路として足すと、**認可を通していない道が1本増える**のが
+   * 一番ありがちな壊れ方。ここは `pool` を読むだけなので構造的に起きないが、
+   * その前提が崩れたら気づけるようにしておく。
+   */
+  describe('ジャンル別（#255）', () => {
+    /** ジャンルを散らした全公開リストを1つ作って、バッチをまわす。 */
+    async function seedGenres() {
+      await makeList({
+        id: 'p1',
+        visibility: 'public',
+        texts: ['オーロラを見る', '南極に行く', 'ラーメンを食べる', '分類できないもの'],
+      })
+      await runBatch({
+        オーロラを見る: { genre: 'travel' },
+        南極に行く: { genre: 'travel' },
+        ラーメンを食べる: { genre: 'food' },
+        分類できないもの: { genre: 'other' },
+      })
+    }
+
+    it('🔴 指定したジャンル以外が含まれない', async () => {
+      await seedGenres()
+
+      expect(texts((await read('?genre=food')).items)).toEqual(['ラーメンを食べる'])
+    })
+
+    it('指定しなければ全部出る（その他も含む）', async () => {
+      // 入口には出さないが、**プールからは消さない**。眺めている人には見えてよい
+      await seedGenres()
+
+      expect(texts((await read()).items)).toHaveLength(4)
+    })
+
+    describe('入口に出すジャンル', () => {
+      it('1件でもあるジャンルを返す', async () => {
+        await seedGenres()
+
+        expect((await read()).genres).toEqual([
+          { slug: 'travel', label: '旅行' },
+          { slug: 'food', label: '食' },
+        ])
+      })
+
+      it('🔴 1件も無いジャンルは返さない（押しても空、が起きない）', async () => {
+        await seedGenres()
+
+        expect((await read()).genres.map((g) => g.slug)).not.toContain('money')
+      })
+
+      it('🔴 その他は入口に出さない（分類の失敗を見せる場所ではない）', async () => {
+        await seedGenres()
+
+        expect((await read()).genres.map((g) => g.slug)).not.toContain('other')
+      })
+
+      it('🔴 件数を返さない（#241 と同じ理由）', async () => {
+        await seedGenres()
+
+        expect(Object.keys((await read()).genres[0] ?? {})).toEqual(['slug', 'label'])
+      })
+
+      it('ジャンルを指定しても入口の一覧は変わらない（2ページ目で消えない）', async () => {
+        await seedGenres()
+
+        expect((await read('?genre=food')).genres).toEqual((await read()).genres)
+      })
+
+      it('プールが空なら1つも返さない', async () => {
+        expect((await readPool()).genres).toEqual([])
+      })
+    })
+
+    describe('出してよい本文', () => {
+      it('🔴 リンク限定公開・非公開の本文は、ジャンルを指定しても出ない', async () => {
+        await makeList({ id: 'u1', visibility: 'unlisted', texts: ['リンク限定の旅'] })
+        await makeList({ id: 's1', visibility: 'private', texts: ['非公開の旅'] })
+        await runBatch({
+          リンク限定の旅: { genre: 'travel' },
+          非公開の旅: { genre: 'travel' },
+        })
+
+        expect((await read('?genre=travel')).items).toEqual([])
+      })
+
+      it('🔴 判定に落ちた本文は、ジャンルを指定しても出ない', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['田中太郎と旅する'] })
+        await runBatch({ 田中太郎と旅する: { verdict: 'ng' } })
+
+        expect((await read('?genre=travel')).items).toEqual([])
+      })
+
+      it('🔴 作者・完了状態・人数・元リストへの経路を返さない', async () => {
+        await makeList({ id: 'p1', visibility: 'public', texts: ['オーロラを見る'] })
+        await testDb().update(items).set({ completedAt: new Date() })
+        await runBatch({ オーロラを見る: { genre: 'travel' } })
+
+        expect((await read('?genre=travel')).items).toEqual([
+          { text: 'オーロラを見る', adopted: false },
+        ])
+      })
+    })
+
+    it('ページ送りと一緒に使える', async () => {
+      const many = Array.from({ length: DISCOVER_PAGE_SIZE + 2 }, (_, i) =>
+        String(i).padStart(4, '0'),
+      )
+      await makeList({ id: 'p1', visibility: 'public', texts: [...many, 'ラーメンを食べる'] })
+      await runBatch({ ラーメンを食べる: { genre: 'food' } })
+
+      const second = await read('?genre=travel&page=2')
+
+      // travel は1件も無いので2ページ目は空。**food が混ざらない**のが見たいこと
+      expect(second.status).toBe(200)
+      expect(second.items).toEqual([])
+    })
+
+    describe('断るもの', () => {
+      it('🔴 知らないジャンルを断る', async () => {
+        expect((await discover('?genre=uchuu')).status).toBe(400)
+      })
+
+      it('🔴 その他は指定できない（分類に失敗したものだけの画面を作らない）', async () => {
+        expect((await discover('?genre=other')).status).toBe(400)
+      })
+
+      it('🔴 日本語のラベルでは絞れない（URL に入れるのはスラッグ）', async () => {
+        expect((await discover(`?genre=${encodeURIComponent('旅行')}`)).status).toBe(400)
+      })
     })
   })
 
