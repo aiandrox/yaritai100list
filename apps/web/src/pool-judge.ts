@@ -1,5 +1,6 @@
 import {
   normalizePoolText,
+  POOL_JUDGE_PROMPT_VERSION,
   POOL_VISIBILITIES,
   poolJudgementPrompt,
   toPoolJudgement,
@@ -25,10 +26,32 @@ import { items, lists, wishTexts } from './db/schema'
 /**
  * 1回のバッチで判定する本文の数。
  *
- * ⚠️ **サブリクエストの上限（50/実行）から決めている。**
- * 増やすと途中で打ち切られ、**何件処理できたのか分からないまま失敗する。**
+ * 🔴 **Neurons の1日の枠から決めている**（2026-08-11 に実測）。
+ * 1時間ごとに動くので **× 24 が1日の消費**になる。
+ *
+ * 実測値（`@cf/meta/llama-3.3-70b-instruct-fp8-fast`、いまのプロンプト）:
+ * **入力 917 トークン・出力 25 トークン = 1件あたり 約 30 Neurons。**
+ *
+ * | 件数 | 1日 | Neurons/日 |
+ * |---|---|---|
+ * | 6 | 144 | 4,300 |
+ * | **12** | **288** | **8,500** … 無料枠 10,000 の内側 |
+ * | 15 | 360 | 10,600 … 🔴 超える |
+ *
+ * ⚠️ **無料枠は 10,000 Neurons/日。** 超えると `AiError 4006` で
+ * **その日はもう1件も判定できない**（2026-08-10 に踏んだ）。
+ * 判定が止まってもプールは古い判定で埋まったままなので画面は壊れないが、
+ * **新しく書かれた本文がいつまでも出てこない。**
+ *
+ * 🔴 **プロンプトを長くしたら、ここも見直すこと。** 精度と件数は同じ枠を取り合う。
+ * ⚠️ **見積もりで決めない。** 応答の `usage.neurons` に実測値が入っている。
+ * 文字数から見積もったときは 6 割も外した。
+ *
+ * ⚠️ **有料プランでも 12 のままにする**（2026-08-11 に一時的に Workers Paid にした）。
+ * 15 に上げると、**無料へ戻したとたんにまた枠を焼く。**
+ * 有料は «余裕» であって «前提» ではない。
  */
-export const POOL_JUDGE_BATCH_SIZE = 15
+export const POOL_JUDGE_BATCH_SIZE = 12
 
 /**
  * Workers AI のモデル。
@@ -80,7 +103,8 @@ export function poolJudgeInput(normalized: string) {
 }
 
 /**
- * 判定が要る本文を取る。**まだ判定していないもの、または古いモデルで判定したもの。**
+ * 判定が要る本文を取る。
+ * **まだ判定していないもの、または古いモデル・古いプロンプトで判定したもの。**
  *
  * **全公開リストにある本文だけ**（`POOL_VISIBILITIES`）。
  * 非公開のものまで AI に送ると、**出す予定の無い本文を外に出す**ことになる。
@@ -98,8 +122,20 @@ export function poolJudgeInput(normalized: string) {
  * 判定し直しは**プールに既に出ているもの**の作り直しなので、後回しでよい。
  */
 export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
-  // null（この列より前に入った行）も「古い」として拾う
-  const stale = or(isNull(wishTexts.model), ne(wishTexts.model, POOL_JUDGE_MODEL))
+  /**
+   * 判定し直しが要る行。
+   *
+   * 🔴 **モデルとプロンプトの両方を見る**（#264）。
+   * モデルだけを見ていたときは、**プロンプトを直しても直る本文が1つも無かった。**
+   *
+   * null（それぞれの列より前に入った行）も「古い」として拾う。
+   */
+  const stale = or(
+    isNull(wishTexts.model),
+    ne(wishTexts.model, POOL_JUDGE_MODEL),
+    isNull(wishTexts.promptVersion),
+    ne(wishTexts.promptVersion, POOL_JUDGE_PROMPT_VERSION),
+  )
 
   const rows = await db
     .selectDistinct({
@@ -126,6 +162,9 @@ export async function selectUnjudged(db: Db, limit: number): Promise<string[]> {
  * それだと**モデルを変えても古い判定が永久に残る。**
  * 上書きは「AI が答えを返せたとき」しか呼ばれない（`judgeUnjudged`）ので、
  * **失敗が古い判定を壊すことは無い。**
+ *
+ * 🔴 **何で判定したかを必ず一緒に書く**（モデルとプロンプトの版。#264）。
+ * 書き忘れると、次に何を直しても**その行だけ拾い直されない。**
  */
 export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement) {
   const row = {
@@ -133,6 +172,7 @@ export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement)
     canonical: judgement.publishable ? judgement.canonical : null,
     genre: judgement.publishable ? judgement.genre : null,
     model: POOL_JUDGE_MODEL,
+    promptVersion: POOL_JUDGE_PROMPT_VERSION,
     checkedAt: new Date(),
   }
 

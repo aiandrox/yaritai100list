@@ -106,6 +106,13 @@
       "when": 1786372012019,
       "tag": "0014_add_items_hidden_in_share",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1786397737159,
+      "tag": "0015_add_prompt_version",
+      "breakpoints": true
     }
   ]
 }

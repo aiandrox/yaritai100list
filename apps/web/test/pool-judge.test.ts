@@ -3,6 +3,7 @@ import {
   GENRES,
   ITEM_TEXT_MAX_LENGTH,
   normalizePoolText,
+  POOL_JUDGE_PROMPT_VERSION,
   poolJudgementPrompt,
   toPoolJudgement,
 } from '@yaritai100list/shared'
@@ -101,6 +102,106 @@ describe('toPoolJudgement', () => {
         { canonical: 'YouTubeを始める' },
       )
     })
+
+    /**
+     * 言葉を削っただけの代表表現を止める（#264）。
+     *
+     * 🔴 **プロンプトだけでは足りない。** 同じプロンプトでも呼び出しごとに答えが揺れる
+     * （2026-08-10 に実測）。機械的に分かるものはここで止める。
+     */
+    describe('🔴 元の文から削っただけなら使わない', () => {
+      const keeps = (canonical: string, normalized: string) =>
+        toPoolJudgement({ ...ok, canonical }, normalized)
+
+      it.each([
+        ['数が消えた', '都道府県を旅する', '47都道府県を旅する'],
+        ['誰と、が消えた', 'ハワイに行く', '家族とハワイに行く'],
+        ['条件が消えた', 'どこかに行く', '1日スマホなしでどこかに行く'],
+        ['後ろが消えた', '本を読む', '本を読む習慣をつける'],
+      ])('%s なら元の文に戻す', (_name, canonical, normalized) => {
+        expect(keeps(canonical, normalized)).toMatchObject({ canonical: normalized })
+      })
+
+      it('🔴 正しい名寄せは通す（語尾が書き換わっているので部分文字列にならない）', () => {
+        expect(keeps('富士山に登る', '富士山に登りたい')).toMatchObject({
+          canonical: '富士山に登る',
+        })
+      })
+
+      it('元の文と同じものはそのまま通す', () => {
+        expect(keeps('富士山に登る', '富士山に登る')).toMatchObject({ canonical: '富士山に登る' })
+      })
+
+      it('言葉が増えているものは通す', () => {
+        expect(keeps('富士山に登る', '富士山登頂')).toMatchObject({ canonical: '富士山に登る' })
+      })
+    })
+
+    /**
+     * 「身につける・続ける」が消えたら使わない（#264）。
+     *
+     * 🔴 **1回やることとは別のこと。** 部分文字列にならないので上の判定では拾えない。
+     * 利用者が最初に挙げた3件のうち2件がこの形だった。
+     */
+    describe('🔴 身につける・続ける の言い方が消えたら使わない', () => {
+      const keeps = (canonical: string, normalized: string) =>
+        toPoolJudgement({ ...ok, canonical }, normalized)
+
+      it.each([
+        ['できるようになる', '開脚する', '180度開脚できるようになる'],
+        ['話せるようになる', '英語を話す', '英語を話せるようになる'],
+        ['マスターする', 'だし巻き卵を作る', 'だし巻き卵をマスターする'],
+        ['上手くなる', '料理する', '料理が上手くなる'],
+        ['得意になる', '人前で話す', '人前で話すのが得意になる'],
+        ['習慣をつける', '早起きする', '早起きの習慣をつける'],
+        ['続ける', '毎日走る', '毎日走り続ける'],
+      ])('%s が消えたら元の文に戻す', (_name, canonical, normalized) => {
+        expect(keeps(canonical, normalized)).toMatchObject({ canonical: normalized })
+      })
+
+      it('どちらにも残っていれば正しい名寄せとして通す', () => {
+        expect(keeps('英語を話せるようになる', '英語が話せるようになりたい')).toMatchObject({
+          canonical: '英語を話せるようになる',
+        })
+      })
+
+      it('元の文に無ければ何も止めない', () => {
+        expect(keeps('富士山に登る', '富士山登頂')).toMatchObject({ canonical: '富士山に登る' })
+      })
+    })
+
+    /**
+     * 別のものにすり替えたら使わない（#264）。
+     *
+     * 🔴 **知らない言葉を、知っている別の言葉に置き換えることがある。**
+     * 実データで「とみたに行く」（つけ麺屋）が `富士山に登る` になり、
+     * **`富士山に登る` の組に混ざった。** 別のやりたいことが1行に同居する。
+     */
+    describe('🔴 元の文とまったく重ならないなら使わない', () => {
+      const keeps = (canonical: string, normalized: string) =>
+        toPoolJudgement({ ...ok, canonical }, normalized)
+
+      it('知らない店名を別の場所にすり替えたら元の文に戻す', () => {
+        expect(keeps('富士山に登る', 'とみたに行く')).toMatchObject({ canonical: 'とみたに行く' })
+      })
+
+      it('🔴 正しい名寄せは通す（元の言葉がどこかに残る）', () => {
+        expect(keeps('富士山に登る', '富士山登頂')).toMatchObject({ canonical: '富士山に登る' })
+      })
+
+      it('体言止めに動詞を足すのは通す（足すだけで削っていない）', () => {
+        expect(keeps('ピラミッドに行く', 'ピラミッド')).toMatchObject({
+          canonical: 'ピラミッドに行く',
+        })
+        expect(keeps('グランピングをする', 'グランピング')).toMatchObject({
+          canonical: 'グランピングをする',
+        })
+      })
+
+      it('1文字の本文では何も止めない（2文字の並びを作れない）', () => {
+        expect(keeps('本を読む', '本')).toMatchObject({ canonical: '本を読む' })
+      })
+    })
   })
 
   describe('ジャンル', () => {
@@ -188,7 +289,7 @@ describe('selectUnjudged', () => {
 
   it('判定済みの本文は返さない', async () => {
     await seedPublic('p1', ['富士山に登る', 'オーロラを見る'])
-    await judged('富士山に登る', POOL_JUDGE_MODEL)
+    await judged('富士山に登る', {})
 
     expect(await selectUnjudged(testDb(), 10)).toEqual(['オーロラを見る'])
   })
@@ -200,43 +301,83 @@ describe('selectUnjudged', () => {
   })
 
   /**
-   * モデルを変えたときの拾い直し（#254）。
+   * モデルやプロンプトを変えたときの拾い直し（#254 / #264）。
    *
    * 🔴 **一括で消さずに済ませるための仕組み。** 消すとプールが空になり、
    * 戻るのに何日もかかる（判定は1日 360 件しか進まない）。
    */
-  describe('モデルを変えたとき', () => {
+  describe('判定のやり直し', () => {
     it('🔴 古いモデルで判定した本文を拾い直す', async () => {
       await seedPublic('p1', ['富士山に登る'])
-      await judged('富士山に登る', '@cf/meta/llama-3.1-8b-instruct')
+      await judged('富士山に登る', { model: '@cf/meta/llama-3.1-8b-instruct' })
 
       expect(await selectUnjudged(testDb(), 10)).toEqual(['富士山に登る'])
     })
 
-    it('モデルが記録されていない行も拾い直す（この列より前に入った行）', async () => {
+    it('🔴 古いプロンプトで判定した本文を拾い直す（#264）', async () => {
+      // モデルだけを見ていたときは、プロンプトを直しても直る本文が1つも無かった
       await seedPublic('p1', ['富士山に登る'])
-      await judged('富士山に登る', null)
+      await judged('富士山に登る', { promptVersion: POOL_JUDGE_PROMPT_VERSION - 1 })
 
       expect(await selectUnjudged(testDb(), 10)).toEqual(['富士山に登る'])
+    })
+
+    it.each([
+      ['モデル', { model: null }],
+      ['プロンプトの版', { promptVersion: null }],
+    ])('%s が記録されていない行も拾い直す（その列より前に入った行）', async (_name, patch) => {
+      await seedPublic('p1', ['富士山に登る'])
+      await judged('富士山に登る', patch)
+
+      expect(await selectUnjudged(testDb(), 10)).toEqual(['富士山に登る'])
+    })
+
+    it('モデルもプロンプトも今のものなら拾わない', async () => {
+      await seedPublic('p1', ['富士山に登る'])
+      await judged('富士山に登る', {})
+
+      expect(await selectUnjudged(testDb(), 10)).toEqual([])
     })
 
     it('🔴 まだ判定していない本文を先に処理する', async () => {
       // 入れ替えの最中に、その日書かれた本文が何日も出てこないのを避ける。
       // 拾い直しは「もうプールに出ているもの」の作り直しなので後回しでよい
       await seedPublic('p1', ['古い判定がある'])
-      await judged('古い判定がある', '@cf/meta/llama-3.1-8b-instruct')
+      await judged('古い判定がある', { promptVersion: POOL_JUDGE_PROMPT_VERSION - 1 })
       await seedPublic('p2', ['まだ判定していない'])
 
       expect(await selectUnjudged(testDb(), 1)).toEqual(['まだ判定していない'])
     })
+
+    it('🔴 拾い直すまで古い判定が残る（プールが空にならない）', async () => {
+      await seedPublic('p1', ['富士山に登る'])
+      await judged('富士山に登る', { promptVersion: POOL_JUDGE_PROMPT_VERSION - 1 })
+
+      // 拾い直しの対象になっていても、行は消えない
+      expect((await testDb().select().from(wishTexts))[0]).toMatchObject({
+        verdict: 'ok',
+        canonical: '富士山に登る',
+      })
+    })
   })
 })
 
-/** 判定済みの行を1つ作る。`model` を渡し分けて「古い判定」を作れるようにしてある。 */
-async function judged(rawText: string, model: string | null) {
+/** 判定済みの行を1つ作る。既定は「今のモデル・今のプロンプト」。 */
+async function judged(
+  rawText: string,
+  patch: { model?: string | null; promptVersion?: number | null },
+) {
   await testDb()
     .insert(wishTexts)
-    .values({ rawText, verdict: 'ok', canonical: rawText, genre: 'travel', model })
+    .values({
+      rawText,
+      verdict: 'ok',
+      canonical: rawText,
+      genre: 'travel',
+      model: POOL_JUDGE_MODEL,
+      promptVersion: POOL_JUDGE_PROMPT_VERSION,
+      ...patch,
+    })
 }
 
 describe('judgeUnjudged', () => {
