@@ -169,6 +169,39 @@ describe('toPoolJudgement', () => {
         expect(keeps('富士山に登る', '富士山登頂')).toMatchObject({ canonical: '富士山に登る' })
       })
     })
+
+    /**
+     * 別のものにすり替えたら使わない（#264）。
+     *
+     * 🔴 **知らない言葉を、知っている別の言葉に置き換えることがある。**
+     * 実データで「とみたに行く」（つけ麺屋）が `富士山に登る` になり、
+     * **`富士山に登る` の組に混ざった。** 別のやりたいことが1行に同居する。
+     */
+    describe('🔴 元の文とまったく重ならないなら使わない', () => {
+      const keeps = (canonical: string, normalized: string) =>
+        toPoolJudgement({ ...ok, canonical }, normalized)
+
+      it('知らない店名を別の場所にすり替えたら元の文に戻す', () => {
+        expect(keeps('富士山に登る', 'とみたに行く')).toMatchObject({ canonical: 'とみたに行く' })
+      })
+
+      it('🔴 正しい名寄せは通す（元の言葉がどこかに残る）', () => {
+        expect(keeps('富士山に登る', '富士山登頂')).toMatchObject({ canonical: '富士山に登る' })
+      })
+
+      it('体言止めに動詞を足すのは通す（足すだけで削っていない）', () => {
+        expect(keeps('ピラミッドに行く', 'ピラミッド')).toMatchObject({
+          canonical: 'ピラミッドに行く',
+        })
+        expect(keeps('グランピングをする', 'グランピング')).toMatchObject({
+          canonical: 'グランピングをする',
+        })
+      })
+
+      it('1文字の本文では何も止めない（2文字の並びを作れない）', () => {
+        expect(keeps('本を読む', '本')).toMatchObject({ canonical: '本を読む' })
+      })
+    })
   })
 
   describe('ジャンル', () => {
