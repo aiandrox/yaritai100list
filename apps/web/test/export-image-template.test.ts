@@ -14,6 +14,7 @@ import {
   SERVICE_OG_ITEM_COUNT,
   SERVICE_OG_TEXT_WIDTH,
   SERVICE_TAGLINE,
+  SERVICE_URL,
   type ExportImagePayload,
   type OgElement,
 } from '@yaritai100list/shared'
@@ -142,6 +143,39 @@ describe('buildExportImageTemplate', () => {
     expect(found).toContain('南極に行く')
   })
 
+  /**
+   * 🔴 **貼られた画像から戻ってくる唯一の道**（#274）。
+   * 共有ページは `noindex` なので、これが落ちると経路が完全に切れる。
+   */
+  it('🔴 URL が載る（画像から戻ってこられる）', () => {
+    const found = texts(buildExportImageTemplate(payload()))
+
+    expect(found).toContain(SERVICE_URL)
+  })
+
+  it('🔴 URL は定数から来ている（画像にべた書きしない）', () => {
+    const found = texts(buildExportImageTemplate(payload()))
+
+    // ホスト名を手で書いた文字列が混ざっていないこと。
+    // 定数を変えたときに**画像だけ古いまま**になるのを防ぐ
+    const hosts = found.filter((value) => value.includes('workers.dev'))
+
+    expect(hosts).toEqual([SERVICE_URL])
+  })
+
+  it('🔴 長い見出しでも、右上のサービス名と URL に重ならない', () => {
+    // 見出しに使える幅は「中身の幅 − 右上のかたまり」。
+    // **URL の方が名前より横に長い**ので、そちらで空けていないと重なる
+    const longest = 'あ'.repeat(LIST_TITLE_MAX_LENGTH)
+    const fitted = fitTitle(longest)
+    const contentWidth = EXPORT_IMAGE_WIDTH - 72 * 2
+    const urlWidth = (displayWidth(SERVICE_URL) * 18) / 2
+
+    expect((displayWidth(fitted.text) * fitted.fontSize) / 2).toBeLessThanOrEqual(
+      contentWidth - urlWidth,
+    )
+  })
+
   it('🔴 番号が 001 から 100 まで全部ある（未入力でも出す）', () => {
     const found = texts(buildExportImageTemplate(payload({ items: [] })))
 
@@ -195,10 +229,27 @@ describe('buildExportImageTemplate', () => {
   })
 
   it('🔴 作者が載る余地が無い', () => {
-    // そもそも ExportImagePayload に入っていないので、書こうと思っても書けない
-    const found = texts(buildExportImageTemplate(payload()))
+    /*
+     * そもそも `ExportImagePayload` に入っていないので、書こうと思っても書けない。
+     *
+     * ⚠️ **`aiandrox` が含まれないこと、では見張れなくなった**（#274）。
+     * サービスの URL（`yaritai100list.aiandrox.workers.dev`）に入っている文字列で、
+     * これは**開発者のアカウント名であって、リストの持ち主ではない。**
+     * 代わりに「**渡したもの以外は1文字も出ない**」を見る。こちらの方が強い
+     */
+    const found = texts(
+      buildExportImageTemplate(
+        payload({ title: 'ぼくのリスト', items: [{ text: '南極に行く', completed: true }] }),
+      ),
+    )
+    const allowed = new Set(['ぼくのリスト', '南極に行く', SERVICE_NAME, SERVICE_URL])
 
-    expect(found.join('')).not.toContain('aiandrox')
+    // 空文字は未入力の枠（番号だけ出す。`PRODUCT_SPEC.md` §5.3）
+    const leaked = found.filter(
+      (value) => value !== '' && !allowed.has(value) && !/^\d{3}$/.test(value),
+    )
+
+    expect(leaked).toEqual([])
   })
 
   it('項目の上限（22文字）でも列からはみ出さない', () => {
