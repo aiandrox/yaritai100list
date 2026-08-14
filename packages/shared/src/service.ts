@@ -12,9 +12,6 @@
  */
 export const SERVICE_NAME = 'やりたいことリスト100'
 
-/** 英語名。リポジトリ名とホスト名に対応する。 */
-export const SERVICE_NAME_EN = 'yaritai100list'
-
 /**
  * 見せる用の URL。**書き出し画像に入れる**（#274）。
  *
@@ -64,7 +61,7 @@ export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインなしで始�
  * サービス名「やりたいことリスト100」と紛れないよう、頭に「人生で」を付けている
  * （`PRODUCT_SPEC.md` §7 未決 #10 への対応）。
  *
- * 12文字あり `LIST_TITLE_MAX_LENGTH`（15）に収まっているが余裕は3文字。
+ * 12文字あり `LIST_TITLE_MAX_LENGTH`（30）に収まっている。
  * 上限を下げるときはここが先に破れる（テストで固定してある）。
  */
 export const DEFAULT_LIST_TITLE = '人生でやりたいことリスト'
@@ -89,6 +86,6 @@ export const SHARE_HIDDEN_ITEM_LABEL = '（非公開）'
  * 一生分のリストという意味を持たせている。こちらは用途別に増やす2つ目以降なので、
  * **中身が決まっていないことが分かる名前**にする。
  *
- * 12文字。`LIST_TITLE_MAX_LENGTH`（15）に収まることはテストで固定してある。
+ * 12文字。`LIST_TITLE_MAX_LENGTH`（30）に収まることはテストで固定してある。
  */
 export const NEW_LIST_TITLE = '新しいやりたいことリスト'
