@@ -49,6 +49,7 @@ async function addItems(
     completedAt?: Date
     completedPrecision?: CompletedPrecision
     hiddenInShare?: boolean
+    memo?: string
   }[],
 ) {
   await testDb()
@@ -63,6 +64,7 @@ async function addItems(
         completedPrecision:
           row.completedPrecision ?? (row.completedAt === undefined ? null : 'day'),
         hiddenInShare: row.hiddenInShare ?? false,
+        memo: row.memo ?? null,
       })),
     )
 }
@@ -299,6 +301,34 @@ describe('公開されているリスト', () => {
 })
 
 describe('見えてはいけないもの', () => {
+  /**
+   * 🔴 **メモは自分だけが読むもの**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
+   *
+   * 共有ページの `SharedItem` は本文と完了だけを持つ形なので構造上載らないが、
+   * **「載せてもよいもの」を後から足すときにここが歯止めになる。**
+   */
+  it('🔴 メモは共有ページに出ない', async () => {
+    const list = await createList({ visibility: 'public' })
+    await addItems(list.id, [{ text: '南極に行く', memo: 'ここは自分だけのメモ' }])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('南極に行く')
+    expect(body).not.toContain('ここは自分だけのメモ')
+  })
+
+  it('🔴 完了した項目でもメモは出ない（叶えたときのことを書く場所なので）', async () => {
+    const list = await createList({ visibility: 'unlisted' })
+    await addItems(list.id, [
+      { text: '富士山に登る', completedAt: new Date('2026-08-01T00:00:00.000Z'), memo: 'ご来光が見えた' },
+    ])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('富士山に登る')
+    expect(body).not.toContain('ご来光が見えた')
+  })
+
   it('🔴 非公開は share_id を知っていても見えない', async () => {
     const list = await createList({ visibility: 'private' })
     await addItems(list.id, [{ text: '見えてはいけない' }])

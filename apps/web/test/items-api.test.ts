@@ -1,6 +1,7 @@
 import { exports } from 'cloudflare:workers'
 import {
   COMPLETED_ON_TIME_ZONE_OFFSET_MS,
+  ITEM_MEMO_MAX_LENGTH,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   toCompletedOn,
@@ -184,6 +185,78 @@ describe('項目の変更', () => {
 
     const [row] = await testDb().select().from(items).where(eq(items.id, id))
     expect(row?.text).toBe('北極に行く')
+  })
+
+  /** メモ（#294）。**理由・補足・叶えたときのこと。** */
+  describe('メモ', () => {
+    const patchMemo = (headers: Headers, id: string, memo: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { memo }))
+
+    const memoOf = async (id: string) => {
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+
+      return row?.memo
+    }
+
+    it('書ける・読み戻せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, '大学の頃から登りたかった')).status).toBe(200)
+      expect(await memoOf(id)).toBe('大学の頃から登りたかった')
+    })
+
+    it('本文と一緒に送れる（別の操作にしない）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      const res = await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { text: '富士山に登頂する', memo: 'ご来光が見たい' }),
+      )
+
+      expect(res.status).toBe(200)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.text).toBe('富士山に登頂する')
+      expect(row?.memo).toBe('ご来光が見たい')
+    })
+
+    it('null で消せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, null)).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 空文字は null に寄せる（「書いていない」の表し方を1つにする）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, '   ')).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 上限を超えたら断る', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH))).status).toBe(200)
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH + 1))).status).toBe(
+        400,
+      )
+    })
+
+    it('🔴 他人の項目のメモは書き換えられない', async () => {
+      const { me, other } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(other.headers, id, '書き換え')).status).toBe(404)
+      expect(await memoOf(id)).toBeNull()
+    })
   })
 
   /** 共有で見せない設定（#237）。 */

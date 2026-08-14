@@ -7,7 +7,12 @@ import {
   isCompleted,
 } from './completion'
 import { ITEMS_PER_LIST_MAX } from './limits'
-import { isFutureCompletedAt, itemTextSchema, listTitleSchema } from './validation'
+import {
+  isFutureCompletedAt,
+  itemMemoSchema,
+  itemTextSchema,
+  listTitleSchema,
+} from './validation'
 
 /**
  * リストを持ち出すときの形式（#115）。
@@ -60,6 +65,20 @@ export const exportedItemSchema = z
      * 版で断る理由が無い。
      */
     completedPrecision: completedPrecisionSchema.nullable().optional(),
+
+    /**
+     * メモ（#294）。書いていなければ `null`。
+     *
+     * 🔴 **省略できる。版（`EXPORT_VERSION`）は上げていない**（#279 と同じ判断）。
+     * 上げると**メモを持たない既存のファイルが読めなくなる**（版が違えば断る作り）。
+     * 足したのは省略可能な1項目だけで、**古いファイルの意味は変わらない。**
+     *
+     * ⚠️ **マークダウン（`buildMarkdown`）には出さない。** あちらは人に見せるためのもので、
+     * メモは自分だけが読むもの（`PRODUCT_SPEC.md` §4.4 の表）。
+     * 🔴 **JSON にだけ入れるのは、書いたものを取り戻せるようにするため。**
+     * ここに入れないと、書き出して取り込んだときにメモだけが消える。
+     */
+    memo: itemMemoSchema.optional(),
   })
   .strict()
   /**
@@ -120,6 +139,7 @@ export function buildExportFile(
       text: string
       completedAt: Date | null
       completedPrecision: CompletedPrecision | null
+      memo: string | null
     }[]
   },
   exportedAt: Date,
@@ -135,6 +155,8 @@ export function buildExportFile(
         // 🔴 **粒度も書き出す**（#279）。落とすと、日付なしの完了が
         // **読み込んだ先で未完了になる**（`completed_at` が無いため）
         completedPrecision: item.completedPrecision,
+        // 🔴 **メモも書き出す**（#294）。落とすと、往復でメモだけ消える
+        memo: item.memo,
       })),
     },
   }

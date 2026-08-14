@@ -37,6 +37,20 @@ function payload(overrides: Partial<ExportImagePayload> = {}): ExportImagePayloa
 }
 
 describe('exportImagePayloadSchema', () => {
+  /**
+   * 🔴 **メモは画像に出さない**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
+   * 4列×25行の枡に入らないうえ、**人に渡す1枚**なので自分だけのメモを載せない。
+   * スキーマが `.strict()` なので、渡そうとした時点で断られる。
+   */
+  it('🔴 メモを渡せない（画像に出さない）', () => {
+    const withMemo = {
+      ...payload(),
+      items: [{ text: '南極に行く', completed: true, memo: 'ここは自分だけのメモ' }],
+    }
+
+    expect(exportImagePayloadSchema.safeParse(withMemo).success).toBe(false)
+  })
+
   it('入力と同じ上限を使う（画像の都合で入力を狭めない）', () => {
     const ok = exportImagePayloadSchema.safeParse(
       payload({ title: 'あ'.repeat(LIST_TITLE_MAX_LENGTH) }),
