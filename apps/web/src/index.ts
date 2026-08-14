@@ -480,9 +480,9 @@ const app = new Hono<AppEnv>()
    * 形は `packages/shared` の `buildExportFile`。**版を持たせてある**ので、
    * 形を変えたら上げること（読み込み側が断れる）。
    *
-   * ⚠️ **形式は後から増える。** ブログへの転載用にマークダウンでも書き出す予定がある
-   * （#124）。そのときは**このルートの隣に足す**（`/export/markdown` など）。
-   * ここで分岐を増やして1本にまとめない。中身の作り方が違いすぎる
+   * ⚠️ **マークダウン（#124）のためのルートは無い。**
+   * あちらはこの JSON から**画面側で組み立てている**（`buildMarkdown`）ので、
+   * ここに分岐を増やさない。中身の作り方が違いすぎる
    * （あちらは人が読むもので、読み込まない）。
    */
   .get('/api/lists/:listId/export', requireUser, requireOwnedList, async (c) => {
