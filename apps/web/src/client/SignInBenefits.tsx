@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 
+import { Modal } from './Modal'
 import { signInBenefits, type SignInBenefit } from './model'
 
 /**
@@ -14,13 +15,8 @@ import { signInBenefits, type SignInBenefit } from './model'
  */
 
 /**
- * `<dialog>` を使う。**自前で作らない。**
- *
- * Esc で閉じる・背景を押せなくする・フォーカスを閉じ込める・
- * 背景に `inert` を効かせる、を**ブラウザがやってくれる**
- * （`TECH_STACK.md` §1 の「概念の数が少ないか」）。
- *
- * ⚠️ **背景のスクロールだけは止めてくれない。** そこは自分で止める。
+ * 枠は `Modal.tsx`（#282）。**`<dialog>` の作法はそちらに寄せてある。**
+ * ここが決めるのは中身と、開くきっかけだけ。
  */
 export function SignInBenefits({ label = 'ほかにできること' }: { label?: string }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -43,6 +39,26 @@ export function SignInBenefits({ label = 'ほかにできること' }: { label?:
       <Dialog ref={dialog} />
     </>
   )
+}
+
+/**
+ * 未ログインで**100個すべて書き終えた**ときに出す（#284）。
+ *
+ * #276 のお誘い（共有）はログイン中だけだった。誘う先がログインの向こう側にあるため。
+ * しかし**100個書き終えるのは一番大きな節目**で、そこで何も起きないのはもったいない。
+ * 未ログインの人にとっての次の一歩は共有ではなく、**まずログイン**（`PRODUCT_SPEC.md` §2）。
+ *
+ * 🔴 **中身は「ログインすると、できること」と同じものを使う**（#204 の決定）。
+ * **変えるのは見出しだけ。** 書き分けると必ずずれる。
+ */
+export function WroteAllInvite({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    if (open) dialog.current?.showModal()
+  }, [open])
+
+  return <Dialog ref={dialog} title="100個、書き終わりました！" onClose={onClose} />
 }
 
 /**
@@ -138,74 +154,45 @@ function GoogleLogo() {
   )
 }
 
-function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
-  /**
-   * 開いている間は背景を動かさない。**`<dialog>` はここまで面倒を見てくれない。**
-   *
-   * 閉じたときは `onToggle` で戻すが、**開いたまま画面が消える**こともある
-   * （ログインへ飛ぶなど）。そのときのために片付けも置く。
-   */
-  useEffect(() => () => void (document.body.style.overflow = ''), [])
-
+function Dialog({
+  ref,
+  title = 'ログインすると、できること',
+  onClose,
+}: {
+  ref: React.RefObject<HTMLDialogElement | null>
+  /** 🔴 **見出しだけを差し替える**（#284）。中身は書き分けない */
+  title?: string
+  onClose?: () => void
+}) {
   return (
-    <dialog
-      ref={ref}
-      aria-labelledby="sign-in-benefits-title"
-      onClick={(event) => {
-        // 背景を押したら閉じる。`<dialog>` 自身の矩形は背景を含むので、
-        // **中身の外側を押したかどうか**で判断する
-        if (event.target === event.currentTarget) event.currentTarget.close()
-      }}
-      onToggle={(event) => {
-        document.body.style.overflow = event.currentTarget.open ? 'hidden' : ''
-      }}
-      className="m-auto w-[calc(100%-2rem)] max-w-(--page-max-width) rounded-xl bg-white p-0 text-slate-900 backdrop:bg-slate-900/50"
-    >
-      <div className="max-h-[85dvh] overflow-auto px-5 pt-5 pb-6">
-        {/* 閉じるを右上に置く。**読み終わる前でも抜けられる場所が要る** */}
-        <button
-          type="button"
-          aria-label="閉じる"
-          onClick={() => {
-            ref.current?.close()
-          }}
-          className="float-right -mt-1 -mr-1 px-2 py-1 text-lg text-slate-400"
-        >
-          ×
-        </button>
+    <Modal ref={ref} title={title} onClose={onClose}>
+      {/*
+        🔴 **1つずつ札に分ける**（#213）。
+        文だけを縦に並べると、**どこからどこまでが1つの話か分からず読む気にならない。**
+        目印（絵文字）・余白・背景の3つで区切りを作る。文面そのものは変えない
+      */}
+      <ul className="mt-4 flex flex-col gap-2">
+        {/* 年を含む文言があるので、**開くたびに今の年で作る**（`signInBenefits`） */}
+        {signInBenefits(new Date()).map((benefit) => (
+          <li
+            key={benefit.text}
+            className="flex items-start gap-3 rounded-lg bg-brand-soft px-3 py-3"
+          >
+            <BenefitIcon name={benefit.icon} />
+            <span className="flex-1 text-sm leading-6">{benefit.text}</span>
+          </li>
+        ))}
+      </ul>
 
-        <h2 id="sign-in-benefits-title" className="text-center text-lg font-bold">
-          ログインすると、できること
-        </h2>
-
-        {/*
-          🔴 **1つずつ札に分ける**（#213）。
-          文だけを縦に並べると、**どこからどこまでが1つの話か分からず読む気にならない。**
-          目印（絵文字）・余白・背景の3つで区切りを作る。文面そのものは変えない
-        */}
-        <ul className="mt-4 flex flex-col gap-2">
-          {/* 年を含む文言があるので、**開くたびに今の年で作る**（`signInBenefits`） */}
-          {signInBenefits(new Date()).map((benefit) => (
-            <li
-              key={benefit.text}
-              className="flex items-start gap-3 rounded-lg bg-brand-soft px-3 py-3"
-            >
-              <BenefitIcon name={benefit.icon} />
-              <span className="flex-1 text-sm leading-6">{benefit.text}</span>
-            </li>
-          ))}
-        </ul>
-
-        {/*
-          🔴 **この中にもログインの入口を置く。**
-          読んで「したくなった」ときに、閉じて探し直させない。
-          ログインの開始は POST なので <a> から叩けない（GET の入口はサーバー側）
-        */}
-        <a href="/api/login/google" className={GOOGLE_BUTTON}>
-          <GoogleLogo />
-          Googleでログイン
-        </a>
-      </div>
-    </dialog>
+      {/*
+        🔴 **この中にもログインの入口を置く。**
+        読んで「したくなった」ときに、閉じて探し直させない。
+        ログインの開始は POST なので <a> から叩けない（GET の入口はサーバー側）
+      */}
+      <a href="/api/login/google" className={GOOGLE_BUTTON}>
+        <GoogleLogo />
+        Googleでログイン
+      </a>
+    </Modal>
   )
 }

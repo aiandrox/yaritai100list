@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { scrubEvent, sentryOptions } from '../src/sentry'
+import {
+  RENDER_FAILURE_COOLDOWN_MS,
+  scrubEvent,
+  sentryOptions,
+  shouldReportRenderFailure,
+} from '../src/sentry'
 
 describe('sentryOptions', () => {
   it('DSN が無ければ undefined を返す（＝SDK を初期化しない）', () => {
@@ -100,5 +105,32 @@ describe('scrubEvent', () => {
 
   it('request が無いイベントでも壊れない', () => {
     expect(() => scrubEvent({})).not.toThrow()
+  })
+})
+
+/**
+ * 画像を出せなかったことの通知（#290）。
+ *
+ * 🔴 **枠を焼かないことがこの判断の目的。** 無料枠は 5,000 errors/月で、
+ * しかも他のプロジェクトと共有している。OGP は公開のルートなので、
+ * 毎回送ると**1回の障害で枠を使い切る。**
+ */
+describe('shouldReportRenderFailure', () => {
+  const now = Date.parse('2026-08-14T00:00:00.000Z')
+
+  it('一度も送っていなければ送る', () => {
+    expect(shouldReportRenderFailure(now, null)).toBe(true)
+  })
+
+  it('🔴 直後には送らない（落ちている間ずっと鳴らさない）', () => {
+    expect(shouldReportRenderFailure(now, now - 1000)).toBe(false)
+  })
+
+  it('間隔が空いていればまた送る', () => {
+    expect(shouldReportRenderFailure(now, now - RENDER_FAILURE_COOLDOWN_MS)).toBe(true)
+  })
+
+  it('ちょうど手前では送らない', () => {
+    expect(shouldReportRenderFailure(now, now - RENDER_FAILURE_COOLDOWN_MS + 1)).toBe(false)
   })
 })

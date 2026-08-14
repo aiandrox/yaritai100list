@@ -42,7 +42,7 @@ import { rebuildPool } from './pool'
 import { judgeUnjudged, POOL_JUDGE_MODEL } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
-import { sentryOptions, type SentryEnv } from './sentry'
+import { sentryOptions, shouldReportRenderFailure, type SentryEnv } from './sentry'
 
 /**
  * リストの更新で受け付ける内容。**上限は packages/shared の Zod スキーマが唯一の情報源。**
@@ -189,6 +189,36 @@ const importListSchema = z
  * 分けても `batch` に渡せば1トランザクションのまま。
  */
 const INSERT_CHUNK = 14
+
+/**
+ * 画像を出せなかったことを最後に通知した時刻（#290）。
+ *
+ * ⚠️ **isolate ごとに持つ。** Cloudflare は同じワーカーを複数の isolate で走らせるので、
+ * **1回の障害で isolate の数だけ通知が出うる。** それでも、
+ * 押されるたびに送るのに比べれば桁が違う（`shouldReportRenderFailure`）。
+ */
+let lastRenderFailureAt: number | null = null
+
+/**
+ * 画像を出せなかったことを通知する（#290）。
+ *
+ * 🔴 **`console.error` は Sentry に届かない。** SDK が拾うのは例外と明示的な通知だけで、
+ * ログは Cloudflare の中に流れて消える。**誰も見ないので、気づく手段がこれしか無い。**
+ *
+ * ⚠️ **画面は壊れて見えない。** 画像が出ないだけなので、
+ * これが無いと**利用者が言ってくるまで気づけない**（#290 で実際にそうなっていた）。
+ *
+ * 🔴 **生成サービス側には Sentry を入れていない。**
+ * こちら（呼ぶ側）で捕まえるのは、**繋がらないときも拾える**ため。
+ * 落ちている相手は自分の障害を報せられない。
+ */
+function reportRenderFailure(reason: string): void {
+  const now = Date.now()
+  if (!shouldReportRenderFailure(now, lastRenderFailureAt)) return
+
+  lastRenderFailureAt = now
+  Sentry.captureException(new Error(`画像を出せなかった: ${reason}`))
+}
 
 /** そのリストの項目を並び順で取る。 */
 function selectItems(db: Db, listId: string) {
@@ -493,9 +523,9 @@ const app = new Hono<AppEnv>()
    * 形は `packages/shared` の `buildExportFile`。**版を持たせてある**ので、
    * 形を変えたら上げること（読み込み側が断れる）。
    *
-   * ⚠️ **形式は後から増える。** ブログへの転載用にマークダウンでも書き出す予定がある
-   * （#124）。そのときは**このルートの隣に足す**（`/export/markdown` など）。
-   * ここで分岐を増やして1本にまとめない。中身の作り方が違いすぎる
+   * ⚠️ **マークダウン（#124）のためのルートは無い。**
+   * あちらはこの JSON から**画面側で組み立てている**（`buildMarkdown`）ので、
+   * ここに分岐を増やさない。中身の作り方が違いすぎる
    * （あちらは人が読むもので、読み込まない）。
    */
   .get('/api/lists/:listId/export', requireUser, requireOwnedList, async (c) => {
@@ -525,6 +555,8 @@ const app = new Hono<AppEnv>()
     /** 出せないときの返し。**理由は利用者に見せず、ログに残す**（#180 と同じ）。 */
     const unavailable = (reason: string) => {
       console.error(`export: ${reason}`)
+      // 🔴 ログだけでは誰も気づかない（#290）
+      reportRenderFailure(`export: ${reason}`)
       return c.json({ error: 'Image Not Available' } as const, 503)
     }
 
@@ -889,6 +921,8 @@ const app = new Hono<AppEnv>()
      */
     const unavailable = (reason: string) => {
       console.error(`og: ${reason}`)
+      // 🔴 ログだけでは誰も気づかない（#290）。**公開のルートなので間隔を空けて送る**
+      reportRenderFailure(`og: ${reason}`)
       return c.json({ error: 'Image Not Available' } as const, 503)
     }
 

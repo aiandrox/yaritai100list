@@ -472,11 +472,131 @@ Deno Deploy 側が例外として許されているのは、**あれが Cookie �
 | organization | **既存のものを流用**（`match-party` と同じ org） | 下記の枠の注意を参照 |
 | プラン | Developer（無料） | **5,000 errors/月・1ユーザー・保持30日**（2026-08-06 時点） |
 | Workers 用プロジェクト | **`yaritai100list-workers`** | プラットフォームは `Cloudflare Workers`（`@sentry/cloudflare`） |
-| Deno 用プロジェクト | **未作成。#8 で作る** | プラットフォームは `Deno`（`@sentry/deno`） |
+| Deno 用プロジェクト | **作らない**（2026-08-14 決定、#290） | 代わりに**呼ぶ側の Workers から通知する**。下記 |
 | SPA（ブラウザ）用プロジェクト | **作らない（未決）** | 下記 |
 | Spike Protection | **有効**（`yaritai100list-workers`） | |
 | アラート | 作成時の既定ルール（新規イシューでメール通知） | **消さないこと。これが「壊れたことを知る手段」そのもの** |
 | DSN の置き場所 | `SENTRY_DSN`（シークレット扱い） | 値はここに書かない |
+
+### 画像生成のエラーは、呼ぶ側の Workers から通知する（2026-08-14 決定、#290）
+
+**`apps/render`（Deno Deploy）に Sentry を入れない。** 代わりに、
+呼び出し側の Workers が「画像を出せなかった」ことを通知する
+（`src/index.ts` の `reportRenderFailure`）。
+
+🔴 **落ちている相手は、自分の障害を報せられない。**
+生成サービス側に入れても、**繋がらないとき**（デプロイ失敗、枠切れ、URL の間違い）は
+何も飛ばない。呼ぶ側なら、繋がらない・403・500 のどれも同じ場所で拾える。
+
+⚠️ **`console.error` は Sentry に届かない。** SDK が拾うのは例外と明示的な通知だけ。
+#290 の時点では両方のルートがログに書くだけで、**誰も見ないまま消えていた。**
+
+⚠️ **通知には間隔を空けている**（`RENDER_FAILURE_COOLDOWN_MS`、10分）。
+OGP（`/og/:shareId`）は**公開のルート**なので、落ちている間にクローラが叩くと
+**1回の障害でこの枠を焼き切る。** Sentry がまとめてくれるのは表示だけで、
+**枠を数えるのはイベントの数。**
+
+**入れることになったら**（生成サービスの中のスタックトレースが要る、など）、
+DSN は Deno Deploy 側の環境変数に置く。上の「Deno Deploy 側に置いてよいものの境界」に触れる話なので、
+そのときに読み直すこと。
+
+### ⚠️ 無料枠の 5,000 errors/月は**プロジェクト間で共有**
+
+**同じ organization に無関係のプロジェクト `match-party` がある。**
+枠はプロジェクト単位ではなく organization 単位なので、
+**`match-party` がエラーを吐くと `yaritai100list-workers` の通知が死ぬ。逆も同じ。**
+
+プロジェクトを分けても枠は増えない。**エラーループが起きると1日で枠を焼き切って、
+以降の障害に気づけなくなる。**「壊れたことを知る手段」が目的なので、ここが潰れると本末転倒。
+
+対策:
+
+- **Spike Protection を有効にした**（設定済み）
+- 枠が足りなくなったら、organization を分けるか、クライアントキーごとのレート制限を設定する
+
+### DSN をシークレット扱いにする理由
+
+DSN はブラウザに埋め込む前提の値なので一般には秘密ではない。
+ただし**このリポジトリは public** で、かつ**無料枠が 5,000 errors/月しかない**。
+DSN が漏れると第三者にイベントを送り込まれて枠を焼かれ、
+**通知が目的なのに通知が死ぬ**状態になる。
+
+そのため `wrangler.jsonc` の `vars`（＝コミットされる）ではなく、
+**`wrangler secret put SENTRY_DSN` で入れる。**
+
+### SPA（ブラウザ側）のエラーは送らない（2026-08-06 決定、#18）
+
+ブラウザのエラーは拡張機能やネットワーク起因のノイズが多く、**5,000 の枠を食い潰しやすい**。
+枠を焼くと以降の障害に気づけなくなるため、**サーバー側だけで運用する。**
+
+再考する条件: 利用者から「動かない」と言われたのに Workers 側に何も記録が無い、
+という状況が実際に起きたとき。そのときは SPA 用のプロジェクトを別に作り、
+`ignoreErrors` でノイズを削ってから入れる。
+
+### 到達確認の結果（2026-08-06、本番で実施）
+
+**届いた。** 一時的に例外を投げるルートを本番に出して確認し、確認後すぐ削除した。
+
+| 確認項目 | 結果 |
+|---|---|
+| イベントの到達 | ✅ `YARITAI100LIST-WORKERS-1` として2件。**叩いた回数と一致（重複なし）** |
+| environment | ✅ `production` |
+| transaction | ✅ `GET /api/dev/boom` |
+| url | ✅ 送られている（`shareId` を隠さない方針どおり） |
+| リクエストボディ・Cookie | ✅ 含まれていない |
+
+**このとき `withSentry` だけでは通知が飛ばない可能性に気づいた。**
+Hono は例外を自前で捕まえて 500 を返すため、Sentry から見ると「成功したリクエスト」になる。
+`app.onError` で明示的に `captureException` する形に直してから確認した（#47）。
+
+#### `user` に IP が入る（実害なし）
+
+イベントの `user` に `2a06:98c0:3600::103` が入っていた。これは **Cloudflare のエッジ自身の
+IPv6**（`2a06:98c0::/29` は Cloudflare の範囲）で、**利用者の IP ではない。**
+Worker から Sentry へ送信するため、Sentry が送信元 IP を推測して埋めたもの。
+
+`dataCollection.userInfo: false` と `beforeSend` のユーザー情報の除去は効いており、
+SDK 側は何も送っていない。消したい場合は
+**Settings → Security & Privacy → Prevent Storing of IP Addresses** で止められる（未設定）。
+
+### `user.id` が届くかの確認結果（2026-08-06、本番で実施。#52 / #64）
+
+**届いた。** `dataCollection.userInfo: false` は、**明示的な `Sentry.setUser({ id })` は落とさない。**
+自動で集めるユーザー情報を止めるだけで、こちらが入れた値は残る。
+
+| 経路 | イベント | `user.id` |
+|---|---|---|
+| `requireUser` を通った実ログイン（`authorization.ts` の `setUser`） | `YARITAI100LIST-WORKERS-2` | ✅ Better Auth の実 ID |
+| 認証なしの確認用ルート（合成 ID を直接 `setUser`） | `YARITAI100LIST-WORKERS-1` | ✅ 合成 ID |
+
+- **名前・メールは付いていない**（`scrubEvent` が `id` 以外を落とす方針どおり）
+- `user` に IP と geo が付くのは上記のとおり Cloudflare エッジの IP。利用者のものではない
+- 確認に使った `/api/dev/sentry-check` は**確認後に削除した。**
+  `requireUser` の後ろに置いた版は、**本番のセッション Cookie を AI 側では作れない**ため
+  （`BETTER_AUTH_SECRET` を持っていない）叩けず、利用者に叩いてもらう必要があった。
+  同種の確認をするなら、認証を外した合成 ID の版の方が AI だけで完結する
+
+### 通知が実際に届くかの確認手順（再確認したいとき）
+
+**この確認には DSN が必要なので、コードだけでは完結しない。**
+自動テストで検証しているのは「DSN が無ければ SDK を初期化しない」「送る前に
+ボディ・Cookie・ヘッダ・ユーザー情報を落とす」までで、**到達の確認は手作業。**
+
+1. `apps/web/.dev.vars.example` を `.dev.vars` にコピーし、`SENTRY_DSN` に値を入れる
+   （`SENTRY_ENVIRONMENT=local` も入れて本番のイベントと混ざらないようにする）
+2. `apps/web/src/index.ts` に**一時的に**例外を投げるルートを足す
+   ```ts
+   .get('/api/dev/boom', () => {
+     throw new Error('Sentry の動作確認')
+   })
+   ```
+   （恒久的に置かない。公開されたエラー発生器になり、無料枠を焼かれる）
+3. `npm run dev` → `curl http://localhost:5173/api/dev/boom`
+4. Sentry の `yaritai100list-workers` にイベントが届くこと、
+   **リクエストボディと Cookie が含まれていないこと**を目で確認する
+5. 一時的なルートと `.dev.vars` の DSN を消す
+
+---
 
 ## Workers AI（#253）
 
@@ -590,7 +710,7 @@ wrangler d1 execute DB --remote --command "delete from wish_texts"
 ```
 
 プールは `wish_texts` から作り直すので、消すと**次のバッチでプールが空になる。**
-判定は**1日 360 件**しか進まないので、1万件あれば**28日間、取り入れ面が空**のまま。
+判定は**1日 288 件**しか進まないので、1万件あれば**35日間、取り入れ面が空**のまま。
 
 モデルやプロンプトを変えたいだけなら上の節。消す必要は無い。
 
@@ -613,102 +733,6 @@ wrangler d1 execute DB --remote --command \
 
 ⚠️ **`raw_text` は書かれたままの本文**（正規化前）。同じ意味でも表記が違えば別の行なので、
 `like` で拾うか、`pool` の `canonical` から辿って該当する `wish_texts` を全部直す。
-
-### ⚠️ 無料枠の 5,000 errors/月は**プロジェクト間で共有**
-
-**同じ organization に無関係のプロジェクト `match-party` がある。**
-枠はプロジェクト単位ではなく organization 単位なので、
-**`match-party` がエラーを吐くと `yaritai100list-workers` の通知が死ぬ。逆も同じ。**
-
-プロジェクトを分けても枠は増えない。**エラーループが起きると1日で枠を焼き切って、
-以降の障害に気づけなくなる。**「壊れたことを知る手段」が目的なので、ここが潰れると本末転倒。
-
-対策:
-
-- **Spike Protection を有効にした**（設定済み）
-- 枠が足りなくなったら、organization を分けるか、クライアントキーごとのレート制限を設定する
-
-### DSN をシークレット扱いにする理由
-
-DSN はブラウザに埋め込む前提の値なので一般には秘密ではない。
-ただし**このリポジトリは public** で、かつ**無料枠が 5,000 errors/月しかない**。
-DSN が漏れると第三者にイベントを送り込まれて枠を焼かれ、
-**通知が目的なのに通知が死ぬ**状態になる。
-
-そのため `wrangler.jsonc` の `vars`（＝コミットされる）ではなく、
-**`wrangler secret put SENTRY_DSN` で入れる。**
-
-### SPA（ブラウザ側）のエラーは送らない（2026-08-06 決定、#18）
-
-ブラウザのエラーは拡張機能やネットワーク起因のノイズが多く、**5,000 の枠を食い潰しやすい**。
-枠を焼くと以降の障害に気づけなくなるため、**サーバー側だけで運用する。**
-
-再考する条件: 利用者から「動かない」と言われたのに Workers 側に何も記録が無い、
-という状況が実際に起きたとき。そのときは SPA 用のプロジェクトを別に作り、
-`ignoreErrors` でノイズを削ってから入れる。
-
-### 到達確認の結果（2026-08-06、本番で実施）
-
-**届いた。** 一時的に例外を投げるルートを本番に出して確認し、確認後すぐ削除した。
-
-| 確認項目 | 結果 |
-|---|---|
-| イベントの到達 | ✅ `YARITAI100LIST-WORKERS-1` として2件。**叩いた回数と一致（重複なし）** |
-| environment | ✅ `production` |
-| transaction | ✅ `GET /api/dev/boom` |
-| url | ✅ 送られている（`shareId` を隠さない方針どおり） |
-| リクエストボディ・Cookie | ✅ 含まれていない |
-
-**このとき `withSentry` だけでは通知が飛ばない可能性に気づいた。**
-Hono は例外を自前で捕まえて 500 を返すため、Sentry から見ると「成功したリクエスト」になる。
-`app.onError` で明示的に `captureException` する形に直してから確認した（#47）。
-
-#### `user` に IP が入る（実害なし）
-
-イベントの `user` に `2a06:98c0:3600::103` が入っていた。これは **Cloudflare のエッジ自身の
-IPv6**（`2a06:98c0::/29` は Cloudflare の範囲）で、**利用者の IP ではない。**
-Worker から Sentry へ送信するため、Sentry が送信元 IP を推測して埋めたもの。
-
-`dataCollection.userInfo: false` と `beforeSend` のユーザー情報の除去は効いており、
-SDK 側は何も送っていない。消したい場合は
-**Settings → Security & Privacy → Prevent Storing of IP Addresses** で止められる（未設定）。
-
-### `user.id` が届くかの確認結果（2026-08-06、本番で実施。#52 / #64）
-
-**届いた。** `dataCollection.userInfo: false` は、**明示的な `Sentry.setUser({ id })` は落とさない。**
-自動で集めるユーザー情報を止めるだけで、こちらが入れた値は残る。
-
-| 経路 | イベント | `user.id` |
-|---|---|---|
-| `requireUser` を通った実ログイン（`authorization.ts` の `setUser`） | `YARITAI100LIST-WORKERS-2` | ✅ Better Auth の実 ID |
-| 認証なしの確認用ルート（合成 ID を直接 `setUser`） | `YARITAI100LIST-WORKERS-1` | ✅ 合成 ID |
-
-- **名前・メールは付いていない**（`scrubEvent` が `id` 以外を落とす方針どおり）
-- `user` に IP と geo が付くのは上記のとおり Cloudflare エッジの IP。利用者のものではない
-- 確認に使った `/api/dev/sentry-check` は**確認後に削除した。**
-  `requireUser` の後ろに置いた版は、**本番のセッション Cookie を AI 側では作れない**ため
-  （`BETTER_AUTH_SECRET` を持っていない）叩けず、利用者に叩いてもらう必要があった。
-  同種の確認をするなら、認証を外した合成 ID の版の方が AI だけで完結する
-
-### 通知が実際に届くかの確認手順（再確認したいとき）
-
-**この確認には DSN が必要なので、コードだけでは完結しない。**
-自動テストで検証しているのは「DSN が無ければ SDK を初期化しない」「送る前に
-ボディ・Cookie・ヘッダ・ユーザー情報を落とす」までで、**到達の確認は手作業。**
-
-1. `apps/web/.dev.vars.example` を `.dev.vars` にコピーし、`SENTRY_DSN` に値を入れる
-   （`SENTRY_ENVIRONMENT=local` も入れて本番のイベントと混ざらないようにする）
-2. `apps/web/src/index.ts` に**一時的に**例外を投げるルートを足す
-   ```ts
-   .get('/api/dev/boom', () => {
-     throw new Error('Sentry の動作確認')
-   })
-   ```
-   （恒久的に置かない。公開されたエラー発生器になり、無料枠を焼かれる）
-3. `npm run dev` → `curl http://localhost:5173/api/dev/boom`
-4. Sentry の `yaritai100list-workers` にイベントが届くこと、
-   **リクエストボディと Cookie が含まれていないこと**を目で確認する
-5. 一時的なルートと `.dev.vars` の DSN を消す
 
 ---
 

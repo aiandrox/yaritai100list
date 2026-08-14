@@ -67,6 +67,8 @@ gh api repos/aiandrox/yaritai100list/issues/2/sub_issues -F sub_issue_id=$CHILD_
 
 ## 5. 1サブイシューあたりの流れ
 
+🔴 **作業は worktree の中でやる**（下記）。
+
 ```sh
 git switch -c 12-vitest-miniflare              # <イシュー番号>-<英小文字の slug>
 
@@ -80,8 +82,28 @@ gh pr create --fill --body "Closes #12"         # 🔴 日本語にしない。�
 until gh pr checks 2>/dev/null | grep -qE '^check\s+(pass|fail)'; do sleep 10; done
 
 gh pr update-branch                             # main が進んでいたら追随させる
-gh pr merge --squash --delete-branch
+gh pr merge --squash                            # ⚠️ --delete-branch は付けない（下記）
+git push origin --delete 12-vitest-miniflare
 ```
+
+### 🔴 メインのチェックアウトでブランチを切らない
+
+**利用者は同じチェックアウトで複数のセッションを並行して走らせている。**
+2026-08-10 に、メインのワークツリーでブランチを切ったところ、
+**別のセッションが残していた未コミットの変更を巻き込みかけた。**
+HEAD を動かすと、相手のセッションのコミット先まで変わる。
+
+作業を始めるときは **worktree を切る**（Claude Code なら `EnterWorktree`、
+手で切るなら `git worktree add`）。ブランチ名を `<イシュー番号>-<slug>` にしたい場合は、
+worktree に入ってから `git branch -m` する。
+
+⚠️ **worktree からは `gh pr merge --delete-branch` が落ちる。**
+`fatal: 'main' is already checked out at ...`（メイン側が `main` を持っているため）。
+**マージ自体は成功しているので慌てて叩き直さないこと。**
+残ったブランチは `git push origin --delete <branch>` で消す。
+
+⚠️ **stash はチェックアウト間で共有される。** 素の `git stash` / `git stash pop` を使うと
+**他のセッションの退避を取り出してしまう。** 退避したいときは WIP コミットにする。
 
 ⚠️ **`gh pr checks --watch` で待ち続けない。** 出しっぱなしにして別の作業に移り、
 上のような形で様子を見る。`--watch` は**直前の実行結果を拾って即座に返ることもある**ので、

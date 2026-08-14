@@ -68,11 +68,6 @@ export const genreSlugSchema = z.enum(
   BROWSABLE_GENRES.map((genre) => genre.slug) as [string, ...string[]],
 )
 
-/** そのスラッグの表示名。知らないものは `undefined`。 */
-export function genreLabel(slug: string): string | undefined {
-  return GENRES.find((genre) => genre.slug === slug)?.label
-}
-
 /**
  * AI に返させる形。
  *

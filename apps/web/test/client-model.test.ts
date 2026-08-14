@@ -11,6 +11,7 @@ import {
   canInviteToShare,
   canUseShareSheet,
   createEmptyList,
+  inviteKind,
   isShareCancelled,
   parseInvitedAt,
   SHARE_INVITE_INTERVAL_MS,
@@ -527,6 +528,23 @@ describe('shareInviteTrigger', () => {
 
   it('何も変わっていなければ誘わない', () => {
     expect(shareInviteTrigger(at(2, 50), at(2, 50))).toBeNull()
+  })
+})
+
+describe('inviteKind', () => {
+  it('ログイン中は共有へ誘う', () => {
+    expect(inviteKind('completed', true)).toBe('share')
+    expect(inviteKind('filled', true)).toBe('share')
+  })
+
+  it('🔴 未ログインで書き終えたら、共有ではなくログインへ誘う', () => {
+    // 共有設定はログインの向こう側にあるので、共有へ送っても何もできない
+    expect(inviteKind('filled', false)).toBe('sign-in')
+  })
+
+  it('🔴 未ログインで「やった」が増えても誘わない', () => {
+    // そもそも未ログインでは完了にできない（#77）。条件が変わっても勝手に増えないように
+    expect(inviteKind('completed', false)).toBeNull()
   })
 })
 

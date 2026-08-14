@@ -484,6 +484,32 @@ export function shareInviteTrigger(
 }
 
 /**
+ * 節目に出すお誘いの種類。**ログインしているかで次の一歩が違う。**
+ *
+ * | | 次の一歩 |
+ * |---|---|
+ * | `share` | 共有する（#276） |
+ * | `sign-in` | まずログインする（#284） |
+ */
+export type InviteKind = 'share' | 'sign-in'
+
+/**
+ * どちらのお誘いを出すか（#284）。**出さないなら `null`。**
+ *
+ * 🔴 **未ログインは「書き終えたとき」だけ。**
+ * 共有設定はログインの向こう側にあるので、共有へ誘っても**その場では何もできない。**
+ * 一方 100個書き終えるのは一番大きな節目なので、そこは**ログインへ誘う**。
+ *
+ * ⚠️ 未ログインでは完了にできない（#77）ので `completed` は本来来ないが、
+ * **来ても誘わない**と書いておく（完了の条件が変わったときに勝手に増えないように）。
+ */
+export function inviteKind(trigger: ShareInviteTrigger, shared: boolean): InviteKind | null {
+  if (shared) return 'share'
+
+  return trigger === 'filled' ? 'sign-in' : null
+}
+
+/**
  * 同じリストで続けて出さない間隔。**30日**（2026-08-14 の利用者の指示）。
  *
  * 🔴 **「1回きり」にしない。** そのとき断っただけの人を、一生誘わないのはやりすぎ。
