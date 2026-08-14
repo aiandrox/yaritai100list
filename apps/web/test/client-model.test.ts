@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   addItem,
+  canUseShareSheet,
   createEmptyList,
+  isShareCancelled,
   completedCount,
   filledCount,
   formatItemNumber,
@@ -474,6 +476,45 @@ describe('shareUrl', () => {
   it('組み立ては1箇所（画面で書き分けない）', () => {
     // 複数箇所で組み立てると、/share/ を書き間違えたときに片方だけ直る
     expect(shareUrl('http://localhost:5173', 'x')).toContain('/share/')
+  })
+})
+
+/**
+ * 共有シート（#275）。
+ *
+ * **押せるのに何も起きないボタンを作らない**ためと、
+ * **やめた人にエラーを見せない**ため。どちらも見た目ではなく判断なので、ここで固定できる。
+ */
+describe('canUseShareSheet', () => {
+  it('使える環境では true', () => {
+    expect(canUseShareSheet({ share: () => Promise.resolve() })).toBe(true)
+  })
+
+  it('🔴 無い環境では false（ボタンを出さない）', () => {
+    expect(canUseShareSheet({})).toBe(false)
+  })
+
+  it('🔴 関数でないものが入っていても false', () => {
+    // 「鍵があるか」で見ると、別物が入っている環境で押せるボタンが出る
+    expect(canUseShareSheet({ share: true })).toBe(false)
+  })
+})
+
+describe('isShareCancelled', () => {
+  it('🔴 閉じただけ（AbortError）は失敗ではない', () => {
+    const aborted = new Error('canceled')
+    aborted.name = 'AbortError'
+
+    expect(isShareCancelled(aborted)).toBe(true)
+  })
+
+  it('ほかの失敗は失敗として扱う', () => {
+    expect(isShareCancelled(new Error('NotAllowedError'))).toBe(false)
+  })
+
+  it('Error でないものが飛んできても落ちない', () => {
+    expect(isShareCancelled('AbortError')).toBe(false)
+    expect(isShareCancelled(undefined)).toBe(false)
   })
 })
 

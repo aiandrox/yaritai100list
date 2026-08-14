@@ -5,7 +5,7 @@ import { Link } from 'wouter'
 import { api } from './api'
 import { Notice } from './Notice'
 import { SignInBenefits } from './SignInBenefits'
-import { shareUrl, type SessionState } from './model'
+import { canUseShareSheet, isShareCancelled, shareUrl, type SessionState } from './model'
 
 /**
  * リストの共有設定（#138）。
@@ -239,6 +239,27 @@ function SharePageBody({ listId }: { listId: string }) {
     }
   }
 
+  /**
+   * 端末の共有シートに渡す（#275）。
+   *
+   * **主対象はモバイルの縦1カラム**（`PRODUCT_SPEC.md` §4.5）。
+   * コピーだけだと LINE に送るのに「コピー → アプリを切り替え → 貼り付け」の3手が要る。
+   *
+   * ⚠️ **渡すのは URL とタイトルだけ。** 画像は渡さない（別の作業）。
+   */
+  const share = async () => {
+    setMessage(null)
+
+    try {
+      await navigator.share({ title: list.title, url })
+    } catch (error) {
+      // 🔴 **閉じただけなら何も出さない**（`isShareCancelled`）
+      if (isShareCancelled(error)) return
+
+      setMessage('共有できませんでした。URL をコピーして渡してください')
+    }
+  }
+
   return (
     <div>
       {/*
@@ -322,10 +343,32 @@ function SharePageBody({ listId }: { listId: string }) {
             押すと、渡した相手に見える画面が別のタブで開きます
           </p>
 
+          {/*
+            🔴 **共有シートが使えるときだけ出す**（#275）。
+            出せない環境（デスクトップの Firefox など）で並べると、
+            **押せるのに何も起きないボタン**になる。
+
+            使えるときはこちらを主にする。**渡す相手を選ぶところまで1タップ**で行けるので、
+            コピーして貼り付けるより短い
+          */}
+          {canUseShareSheet(navigator) && (
+            <button
+              type="button"
+              onClick={() => void share()}
+              className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
+            >
+              共有する
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => void copy()}
-            className="mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white"
+            className={
+              canUseShareSheet(navigator)
+                ? 'mt-2 w-full rounded border border-brand-deep px-3 py-2 font-bold text-brand-deep'
+                : 'mt-3 w-full rounded bg-brand-deep px-3 py-2 text-white'
+            }
           >
             {copied ? 'コピーしました' : 'URL をコピー'}
           </button>
