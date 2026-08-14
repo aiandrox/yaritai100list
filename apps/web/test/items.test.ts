@@ -67,16 +67,14 @@ describe('items テーブル', () => {
 
     // 🔴 **粒度も一緒に入れる**（#279）。日時だけを入れる行は DB が拒否する
     // （下の「完了日の粒度」のテスト）
-    await db
-      .insert(items)
-      .values({
-        id: 'item-1',
-        listId,
-        text: 'x',
-        position: 0,
-        completedAt,
-        completedPrecision: 'day',
-      })
+    await db.insert(items).values({
+      id: 'item-1',
+      listId,
+      text: 'x',
+      position: 0,
+      completedAt,
+      completedPrecision: 'day',
+    })
 
     const [row] = await db.select().from(items)
 
