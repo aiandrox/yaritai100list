@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { Modal, ModalDecline } from './Modal'
+import { Modal } from './Modal'
 import { signInBenefits, type SignInBenefit } from './model'
 
 /**
@@ -58,15 +58,7 @@ export function WroteAllInvite({ open, onClose }: { open: boolean; onClose: () =
     if (open) dialog.current?.showModal()
   }, [open])
 
-  return (
-    <Dialog
-      ref={dialog}
-      title="100個、書き終わりました！"
-      onClose={onClose}
-      // 押していないのに出てくるので、断る場所を本文の側にも置く
-      onDecline={() => dialog.current?.close()}
-    />
-  )
+  return <Dialog ref={dialog} title="100個、書き終わりました！" onClose={onClose} />
 }
 
 /**
@@ -166,14 +158,11 @@ function Dialog({
   ref,
   title = 'ログインすると、できること',
   onClose,
-  onDecline,
 }: {
   ref: React.RefObject<HTMLDialogElement | null>
   /** 🔴 **見出しだけを差し替える**（#284）。中身は書き分けない */
   title?: string
   onClose?: () => void
-  /** 渡すと「閉じる」が出る。**こちらから声をかけたときだけ**（`ModalDecline`） */
-  onDecline?: () => void
 }) {
   return (
     <Modal ref={ref} title={title} onClose={onClose}>
@@ -204,8 +193,6 @@ function Dialog({
         <GoogleLogo />
         Googleでログイン
       </a>
-
-      {onDecline !== undefined && <ModalDecline onClose={onDecline} />}
     </Modal>
   )
 }

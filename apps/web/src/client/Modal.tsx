@@ -84,18 +84,3 @@ export function Modal({
     </dialog>
   )
 }
-
-/**
- * 断る側のボタン。**こちらから声をかけたモーダルにだけ置く**（#276 / #284）。
- *
- * 右上の × でも閉じられるが、**押していないのに出てきたもの**は
- * 本文の側にも「要らない」と言える場所が要る。
- * 🔴 **主のボタンと同じ強さにしない。**
- */
-export function ModalDecline({ onClose }: { onClose: () => void }) {
-  return (
-    <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-sm text-slate-500">
-      閉じる
-    </button>
-  )
-}
