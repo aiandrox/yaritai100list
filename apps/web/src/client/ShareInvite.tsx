@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 
-import { Modal, ModalDecline } from './Modal'
+import { Modal } from './Modal'
 import { canUseShareSheet, isShareCancelled, shareUrl } from './model'
 import type { ShareState } from './useList'
 
@@ -56,7 +56,7 @@ export function ShareInvite({
       {share.visibility === 'private' ? (
         <NotSharedYet listId={listId} onClose={close} />
       ) : (
-        <AlreadyShared shareId={share.shareId} onClose={close} />
+        <AlreadyShared shareId={share.shareId} />
       )}
     </Modal>
   )
@@ -85,8 +85,6 @@ function NotSharedYet({ listId, onClose }: { listId: string; onClose: () => void
       >
         共有の設定を開く
       </Link>
-
-      <ModalDecline onClose={onClose} />
     </>
   )
 }
@@ -95,7 +93,7 @@ function NotSharedYet({ listId, onClose }: { listId: string; onClose: () => void
  * もう公開しているとき。**設定画面へ回さず、その場で送れるようにする**
  * （2026-08-14 の利用者の指示）。
  */
-function AlreadyShared({ shareId, onClose }: { shareId: string; onClose: () => void }) {
+function AlreadyShared({ shareId }: { shareId: string }) {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const url = shareUrl(window.location.origin, shareId)
@@ -158,8 +156,6 @@ function AlreadyShared({ shareId, onClose }: { shareId: string; onClose: () => v
       >
         {copied ? 'コピーしました' : 'URL をコピー'}
       </button>
-
-      <ModalDecline onClose={onClose} />
     </>
   )
 }
