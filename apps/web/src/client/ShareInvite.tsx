@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 
+import { Modal } from './Modal'
 import { canUseShareSheet, isShareCancelled, shareUrl } from './model'
 import type { ShareState } from './useList'
 
@@ -25,10 +26,8 @@ import type { ShareState } from './useList'
  */
 
 /**
- * `<dialog>` を使う。**自前で作らない**（`SignInBenefits.tsx` と同じ理由）。
- *
- * Esc で閉じる・背景を押せなくする・フォーカスを閉じ込める、を
- * ブラウザがやってくれる。**背景のスクロールだけは自分で止める。**
+ * 枠は `Modal.tsx`（#282）。**`<dialog>` の作法はそちらに寄せてある。**
+ * ここが決めるのは中身と、開くきっかけだけ。
  */
 export function ShareInvite({
   listId,
@@ -42,58 +41,39 @@ export function ShareInvite({
   onClose: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const close = () => dialog.current?.close()
 
   useEffect(() => {
     if (open) dialog.current?.showModal()
   }, [open])
 
-  // 開いたまま画面が消えることがある（共有の設定へ移るなど）。そのときの片付け
-  useEffect(() => () => void (document.body.style.overflow = ''), [])
-
   return (
-    <dialog
+    <Modal
       ref={dialog}
-      aria-labelledby="share-invite-title"
-      onClick={(event) => {
-        // 背景を押したら閉じる。`<dialog>` 自身の矩形は背景を含むので、
-        // **中身の外側を押したかどうか**で判断する
-        if (event.target === event.currentTarget) event.currentTarget.close()
-      }}
-      onToggle={(event) => {
-        document.body.style.overflow = event.currentTarget.open ? 'hidden' : ''
-      }}
+      title={share.visibility === 'private' ? INVITE_TITLE : SHARE_TITLE}
       onClose={onClose}
-      className="m-auto w-[calc(100%-2rem)] max-w-(--page-max-width) rounded-xl bg-white p-0 text-slate-900 backdrop:bg-slate-900/50"
     >
-      {/*
-        ⚠️ **右上の × は置かない**（`SignInBenefits` とは違う）。
-        こちらは下に「閉じる」があるので**抜け道が2つになる**うえ、
-        見出しが長いので × を避けると「か？」だけが2行目に落ちた。
-        Esc と背景押しは `<dialog>` が面倒を見ている
-      */}
-      <div className="px-5 pt-5 pb-6">
-        {share.visibility === 'private' ? (
-          <NotSharedYet listId={listId} onClose={() => dialog.current?.close()} />
-        ) : (
-          <AlreadyShared shareId={share.shareId} onClose={() => dialog.current?.close()} />
-        )}
-      </div>
-    </dialog>
+      {share.visibility === 'private' ? (
+        <NotSharedYet listId={listId} onClose={close} />
+      ) : (
+        <AlreadyShared shareId={share.shareId} onClose={close} />
+      )}
+    </Modal>
   )
 }
 
 /**
+ * 見出し。🔴 **利用者が書いた文をそのまま使う**（2026-08-14）。言い換えない。
+ */
+const INVITE_TITLE = 'みんなにもリストを見せませんか？'
+const SHARE_TITLE = 'SNSでみんなに見せませんか？'
+
+/**
  * まだ非公開のとき。**渡す先が無いので、まず公開範囲を決めてもらう。**
- *
- * 🔴 **文言は利用者が書いたもの**（2026-08-14）。言い換えない。
  */
 function NotSharedYet({ listId, onClose }: { listId: string; onClose: () => void }) {
   return (
     <>
-      <h2 id="share-invite-title" className="text-center text-lg font-bold">
-        みんなにもリストを見せませんか？
-      </h2>
-
       <p className="mt-3 text-sm leading-6 text-slate-600">
         いまは自分だけが見られる状態です。公開すると、リンクを渡した人に見てもらえます。
       </p>
@@ -146,10 +126,6 @@ function AlreadyShared({ shareId, onClose }: { shareId: string; onClose: () => v
 
   return (
     <>
-      <h2 id="share-invite-title" className="text-center text-lg font-bold">
-        SNSでみんなに見せませんか？
-      </h2>
-
       <p className="mt-3 text-sm leading-6 text-slate-600">
         このリストは、リンクを渡した人が見られる状態です。
       </p>
