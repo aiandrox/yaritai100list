@@ -72,6 +72,28 @@ export function scrubEvent<T extends { request?: unknown; user?: unknown }>(even
 }
 
 /**
+ * 画像を出せなかったことを通知する間隔（#290）。
+ *
+ * 🔴 **毎回は送れない。** 無料枠は 5,000 errors/月で、しかも**他のプロジェクトと共有**
+ * （`docs/console-settings.md`）。OGP（`/og/:shareId`）は**公開のルート**なので、
+ * 生成サービスが落ちている間にクローラが叩くと、**1回の障害で枠を焼き切る。**
+ *
+ * ⚠️ **Sentry がまとめてくれるのは «表示» だけ。** 枠を数えるのはイベントの数なので、
+ * 同じ内容でも送った分だけ減る。
+ */
+export const RENDER_FAILURE_COOLDOWN_MS = 10 * 60 * 1000
+
+/**
+ * いま通知してよいか（#290）。
+ *
+ * **一度も送っていない**か、**前に送ってから間隔が空いている**なら送る。
+ * 落ちている間ずっと鳴らす必要は無い。**気づければ十分。**
+ */
+export function shouldReportRenderFailure(now: number, lastReportedAt: number | null): boolean {
+  return lastReportedAt === null || now - lastReportedAt >= RENDER_FAILURE_COOLDOWN_MS
+}
+
+/**
  * Sentry の設定。`withSentry` に渡す。
  *
  * **DSN が無ければ `undefined` を返して SDK を初期化しない。**
