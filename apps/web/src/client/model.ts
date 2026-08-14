@@ -598,6 +598,30 @@ export function shareUrl(origin: string, shareId: string): string {
 }
 
 /**
+ * 共有シート（`navigator.share`）が使えるか（#275）。
+ *
+ * 🔴 **使えない環境がある。** デスクトップの Firefox など。
+ * 見て判断してから出す。**押せるのに何も起きないボタンを作らない。**
+ *
+ * `navigator` を引数で受け取るのは、`window` を `model.ts` に持ち込まないため
+ * （`shareUrl` と同じ理由。`TECH_STACK.md` §10）。
+ */
+export function canUseShareSheet(target: { share?: unknown }): boolean {
+  return typeof target.share === 'function'
+}
+
+/**
+ * 共有シートを**閉じただけ**か（#275）。
+ *
+ * 🔴 **これは失敗ではない。** 開いてやめた人にエラーを見せない。
+ * `navigator.share` は取り消しでも拒否されるので、区別しないと
+ * **やめた人全員に「共有できませんでした」が出る。**
+ */
+export function isShareCancelled(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+/**
  * 取り込み（`POST /api/lists/import`）に送る内容。
  *
  * **完了の状態は送らない。** 未ログインでは印を付けられないので（#77）
