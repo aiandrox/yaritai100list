@@ -452,6 +452,94 @@ export function completedCount(list: LocalList): number {
   return list.items.filter((item) => item.completedAt !== null).length
 }
 
+// --- 共有のお誘い（#276） ---------------------------------------------------
+
+/**
+ * 何をきっかけに誘うか（#276）。
+ *
+ * **人が貼りたくなるのは、空のリストではなく達成したとき。**
+ * それまでの導線は「共有の設定を開く → 公開範囲を変える → URL をコピー」だけで、
+ * **一番気分が乗っている瞬間には何も起きなかった。**
+ */
+export type ShareInviteTrigger =
+  /** 「やった」印を1つ増やした */
+  | 'completed'
+  /** 100個すべて埋まった。**書き上げた瞬間で、見せるものが揃った瞬間** */
+  | 'filled'
+
+/** 誘うかどうかの判定に使う分だけの進み具合。 */
+export interface ListProgress {
+  completed: number
+  filled: number
+}
+
+export function listProgress(list: LocalList): ListProgress {
+  return { completed: completedCount(list), filled: filledCount(list) }
+}
+
+/**
+ * 進み具合の変化から、誘うきっかけを決める（#276）。
+ *
+ * 🔴 **増えたときだけ。** 減ったとき（完了の取り消し、項目の削除）には出さない。
+ * ⚠️ **100個目を消して書き直すたびに出さない**のは、ここでは止めきれない
+ * （また `filled` が上限に達するため）。**間隔の方で吸収する**（`canInviteToShare`）。
+ *
+ * 両方が同時に起きたら `filled` を選ぶ。**100個書き上げた方が大きな節目。**
+ */
+export function shareInviteTrigger(
+  before: ListProgress,
+  after: ListProgress,
+): ShareInviteTrigger | null {
+  if (after.filled >= ITEMS_PER_LIST_MAX && before.filled < ITEMS_PER_LIST_MAX) return 'filled'
+  if (after.completed > before.completed) return 'completed'
+
+  return null
+}
+
+/**
+ * 同じリストで続けて出さない間隔。**30日**（2026-08-14 の利用者の指示）。
+ *
+ * 🔴 **「1回きり」にしない。** そのとき断っただけの人を、一生誘わないのはやりすぎ。
+ * ⚠️ **きっかけごとに分けない。** リスト単位で「最後に出した日」を1つ持つ。
+ * 分けると、叶えた直後に100個目を書いた人に**続けて2回出る。**
+ */
+export const SHARE_INVITE_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * いま誘ってよいか（#276）。
+ *
+ * `invitedAt` は**そのリストで最後に出した時刻**。まだ一度も出していなければ `null`。
+ */
+export function canInviteToShare({
+  invitedAt,
+  now,
+}: {
+  invitedAt: number | null
+  now: number
+}): boolean {
+  return invitedAt === null || now - invitedAt >= SHARE_INVITE_INTERVAL_MS
+}
+
+/**
+ * 最後に誘った時刻の保存先。**読み書きそのものは `*.tsx` 側**（`LIST_STORAGE_KEY` と同じ）。
+ *
+ * 🔴 **リストごとに分ける。** 1つにまとめると、リストを5つ持っている人は
+ * **どれか1つで断ったら全部で30日出なくなる。**
+ */
+export function shareInviteStorageKey(listId: string): string {
+  return `yaritai100list:share-invite:v1:${listId}`
+}
+
+/** 保存されていなければ `null` を渡す（`getItem` の戻り値をそのまま）。 */
+export function parseInvitedAt(raw: string | null): number | null {
+  if (raw === null) return null
+
+  const value = Number(raw)
+
+  // 壊れていたら「出したことが無い」に倒す。**誘いを1回多く出すだけ**で害が無い
+  return Number.isFinite(value) ? value : null
+}
+
 // --- 保存 -------------------------------------------------------------------
 
 /**
