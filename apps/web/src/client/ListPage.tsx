@@ -1,9 +1,21 @@
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 
 import { ListEditor } from './ListEditor'
 import { Notice } from './Notice'
+import { ShareInvite } from './ShareInvite'
 import { SignInBenefits } from './SignInBenefits'
-import { rejectionMessage, toCompletionPermission, type SessionState } from './model'
+import {
+  canInviteToShare,
+  listProgress,
+  parseInvitedAt,
+  rejectionMessage,
+  shareInviteStorageKey,
+  shareInviteTrigger,
+  toCompletionPermission,
+  type ListProgress,
+  type SessionState,
+} from './model'
 import { useList, type ImportOutcome, type ListController } from './useList'
 
 /**
@@ -54,6 +66,71 @@ function SignInRequired({ session }: { session: SessionState }) {
   )
 }
 
+/**
+ * 共有のお誘いを出すかどうかを決める（#276）。
+ *
+ * 🔴 **操作の側に手を入れない。** 「✓ を押したとき」「項目を足したとき」に
+ * 呼び出しを足す形にすると、**足し忘れた経路から出なくなる**し、
+ * 楽観更新の巻き戻しまで拾ってしまう。
+ * ここでは**進み具合の変化だけを見る**（増えたときだけ誘う）。
+ *
+ * ⚠️ **別のリストに切り替わった直後は比べない。** 数が飛ぶので、
+ * 開いただけで誘いが出る。
+ */
+function useShareInvite(screen: ListController['screen']): {
+  open: boolean
+  close: () => void
+} {
+  const [open, setOpen] = useState(false)
+  const previous = useRef<{ key: string; progress: ListProgress } | null>(null)
+
+  const key = screen.status === 'ready' ? screen.key : null
+  const list = screen.status === 'ready' ? screen.list : null
+  // 未ログイン（`share` が null）では誘わない。渡す先がログインの向こう側にある
+  const shared = screen.status === 'ready' && screen.share !== null
+
+  useEffect(() => {
+    if (key === null || list === null || !shared) {
+      previous.current = null
+      return
+    }
+
+    const progress = listProgress(list)
+    const before = previous.current
+    previous.current = { key, progress }
+
+    if (before?.key !== key) return
+    if (shareInviteTrigger(before.progress, progress) === null) return
+
+    /*
+     * 🔴 **間隔を守る**（同じリストでは30日に1回）。
+     *
+     * ⚠️ **localStorage が使えないときは出さない。** 出した記録を残せないので、
+     * **叶えるたびに毎回出る**ことになる。静かな方に倒す
+     */
+    try {
+      const storageKey = shareInviteStorageKey(key)
+      const now = Date.now()
+
+      if (!canInviteToShare({ invitedAt: parseInvitedAt(localStorage.getItem(storageKey)), now })) {
+        return
+      }
+
+      localStorage.setItem(storageKey, String(now))
+      setOpen(true)
+    } catch {
+      // 記録できない環境。**黙って出さない**（利用者に伝えることが無い）
+    }
+  }, [key, list, shared])
+
+  return {
+    open,
+    close: () => {
+      setOpen(false)
+    },
+  }
+}
+
 function ListPageBody({
   session,
   listId,
@@ -64,6 +141,7 @@ function ListPageBody({
 }) {
   const controller = useList(session, listId ?? null)
   const { screen, rejection } = controller
+  const invite = useShareInvite(screen)
 
   return (
     <>
@@ -132,6 +210,19 @@ function ListPageBody({
             onRemoveItem={controller.removeItem}
             onMoveItem={controller.moveItem}
           />
+
+          {/*
+            叶えたとき・100個書き終えたときのお誘い（#276）。
+            **出すかどうかは `useShareInvite`。** ここは置き場所だけ
+          */}
+          {screen.share !== null && (
+            <ShareInvite
+              listId={screen.key}
+              share={screen.share}
+              open={invite.open}
+              onClose={invite.close}
+            />
+          )}
         </>
       )}
     </>

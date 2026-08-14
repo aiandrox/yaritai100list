@@ -1,3 +1,4 @@
+import type { Visibility } from '@yaritai100list/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from './api'
@@ -51,7 +52,36 @@ export type ListScreen =
    * **別のリストに切り替わったら入力欄の下書きを作り直す。**
    * 無いと、ログアウトしたのに前のタイトルが入力欄に残る（#102 で踏んだ）。
    */
-  | { status: 'ready'; key: string; list: LocalList; source: ListSource }
+  | (ReadyScreen & {
+      /**
+       * 共有の状態（#276）。**未ログイン（`source === 'local'`）では `null`。**
+       *
+       * 編集画面が持つのは**誘い方を決めるため**だけ
+       * （非公開なら設定へ、公開済みならその場で送れる）。
+       * ⚠️ **ここで公開範囲を変えない。** 変えるのは共有の設定の画面1箇所。
+       */
+      share: ShareState | null
+    })
+
+/** 共有の状態。**サーバーから取ったリストにだけ付く。** */
+export interface ShareState {
+  visibility: Visibility
+  shareId: string
+}
+
+/**
+ * `useList` の中で持っている形。**`share` を含まない。**
+ *
+ * 🔴 **画面の状態を作り直す場所が9箇所ある**（楽観更新のたびに作り直す）。
+ * `share` をそこに混ぜると、**1箇所でも書き忘れたら共有の状態が消える。**
+ * 別に持って、外に出すときに1回だけ足す。
+ */
+interface ReadyScreen {
+  status: 'ready'
+  key: string
+  list: LocalList
+  source: ListSource
+}
 
 /**
  * ブラウザの保存を取り込めたか。
@@ -93,7 +123,17 @@ export function useList(
   session: SessionState,
   requestedListId: string | null = null,
 ): ListController {
-  const [screen, setScreen] = useState<ListScreen>({ status: 'loading' })
+  const [screen, setScreen] = useState<Exclude<ListScreen, { status: 'ready' }> | ReadyScreen>({
+    status: 'loading',
+  })
+
+  /**
+   * 共有の状態（#276）。**サーバーから取り直したときだけ入れ替える。**
+   *
+   * 🔴 **公開範囲はこの画面から変わらない**（変えるのは共有の設定の画面）ので、
+   * 楽観更新のたびに持ち回らなくてよい。
+   */
+  const [share, setShare] = useState<ShareState | null>(null)
   const [storage, setStorage] = useState<LocalStorage>({ status: 'ok' })
   const [importOutcome, setImportOutcome] = useState<ImportOutcome>('none')
   const [rejection, setRejection] = useState<Rejection | null>(null)
@@ -169,6 +209,9 @@ export function useList(
       }
 
       const body = await res.json()
+
+      // 共有の状態は別に持つ（#276。`ReadyScreen` のコメント）
+      setShare({ visibility: body.list.visibility, shareId: body.list.shareId })
       setScreen({
         status: 'ready',
         key: body.list.id,
@@ -331,7 +374,11 @@ export function useList(
   }
 
   return {
-    screen,
+    // 共有の状態は**外に出すときに1回だけ足す**（#276。`ReadyScreen` のコメント）
+    screen:
+      screen.status === 'ready'
+        ? { ...screen, share: screen.source === 'server' ? share : null }
+        : screen,
     storage,
     importOutcome,
     rejection,

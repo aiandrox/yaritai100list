@@ -8,9 +8,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   addItem,
+  canInviteToShare,
   canUseShareSheet,
   createEmptyList,
   isShareCancelled,
+  parseInvitedAt,
+  SHARE_INVITE_INTERVAL_MS,
+  shareInviteStorageKey,
+  shareInviteTrigger,
   completedCount,
   filledCount,
   formatItemNumber,
@@ -497,6 +502,90 @@ describe('canUseShareSheet', () => {
   it('🔴 関数でないものが入っていても false', () => {
     // 「鍵があるか」で見ると、別物が入っている環境で押せるボタンが出る
     expect(canUseShareSheet({ share: true })).toBe(false)
+  })
+})
+
+/**
+ * 共有のお誘い（#276）。
+ *
+ * **うるさくしないための判断**なので、ここで固定しておく。
+ * 出す条件を間違えると「叶えるたびに毎回出る」になり、一番やってはいけない。
+ */
+describe('shareInviteTrigger', () => {
+  const at = (completed: number, filled: number) => ({ completed, filled })
+
+  it('「やった」が増えたら誘う', () => {
+    expect(shareInviteTrigger(at(0, 3), at(1, 3))).toBe('completed')
+  })
+
+  it('100個そろったら誘う', () => {
+    expect(shareInviteTrigger(at(0, 99), at(0, 100))).toBe('filled')
+  })
+
+  it('🔴 100個そろうまでは誘わない', () => {
+    expect(shareInviteTrigger(at(0, 98), at(0, 99))).toBeNull()
+  })
+
+  it('🔴 完了を取り消したときは誘わない', () => {
+    expect(shareInviteTrigger(at(1, 3), at(0, 3))).toBeNull()
+  })
+
+  it('🔴 項目を消したときは誘わない', () => {
+    expect(shareInviteTrigger(at(0, 100), at(0, 99))).toBeNull()
+  })
+
+  it('🔴 100個のまま完了を付けても、また誘いにはなる（きっかけが違う）', () => {
+    // 埋まったのは前のことなので `filled` ではなく `completed`
+    expect(shareInviteTrigger(at(0, 100), at(1, 100))).toBe('completed')
+  })
+
+  it('同時に起きたら「書き終えた」を選ぶ（大きい節目）', () => {
+    expect(shareInviteTrigger(at(0, 99), at(1, 100))).toBe('filled')
+  })
+
+  it('何も変わっていなければ誘わない', () => {
+    expect(shareInviteTrigger(at(2, 50), at(2, 50))).toBeNull()
+  })
+})
+
+describe('canInviteToShare', () => {
+  const now = Date.parse('2026-08-14T00:00:00.000Z')
+
+  it('一度も出していなければ出す', () => {
+    expect(canInviteToShare({ invitedAt: null, now })).toBe(true)
+  })
+
+  it('🔴 直後には出さない（続けて2回出さない）', () => {
+    expect(canInviteToShare({ invitedAt: now - 1000, now })).toBe(false)
+  })
+
+  it('🔴 30日経っていれば、同じリストでもまた出す', () => {
+    expect(canInviteToShare({ invitedAt: now - SHARE_INVITE_INTERVAL_MS, now })).toBe(true)
+  })
+
+  it('29日目はまだ出さない', () => {
+    expect(canInviteToShare({ invitedAt: now - 29 * 24 * 60 * 60 * 1000, now })).toBe(false)
+  })
+})
+
+describe('shareInviteStorageKey / parseInvitedAt', () => {
+  it('🔴 リストごとに別のキー（1つ断っても他のリストに響かない）', () => {
+    expect(shareInviteStorageKey('a')).not.toBe(shareInviteStorageKey('b'))
+  })
+
+  it('保存されていなければ null', () => {
+    expect(parseInvitedAt(null)).toBeNull()
+  })
+
+  it('壊れていたら「出したことが無い」に倒す', () => {
+    // 誘いが1回多く出るだけで害が無い。読めないことを理由に永久に出さない方が困る
+    expect(parseInvitedAt('こわれている')).toBeNull()
+  })
+
+  it('保存した値を読み戻せる', () => {
+    const now = Date.now()
+
+    expect(parseInvitedAt(String(now))).toBe(now)
   })
 })
 
