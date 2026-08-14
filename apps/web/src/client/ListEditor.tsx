@@ -640,9 +640,18 @@ function CompletionMenu({
   const thisYear = now.getFullYear()
   const thisMonth = now.getMonth() + 1
 
-  const yearNumber = Number(year)
-  const yearFilled =
-    /^\d{4}$/.test(year) && yearNumber >= COMPLETED_ON_MIN_YEAR && yearNumber <= thisYear
+  /**
+   * 年の欄が**送れる値になっているか。**
+   *
+   * 4桁揃っていることと、範囲（`1900` 〜 今年）を見る。
+   * ⚠️ **打っている途中は毎回ここに来る。** 年の欄で「2」「20」「202」と打つ間は
+   * 送らない（送ると `1900` 年より前としてサーバーに断られる）。
+   *
+   * 🔴 **上限も見る。** 「2030」を送っても未来なのでサーバーが断るが、
+   * **断られる要求をこちらから出さない**（画面が一瞬変わって戻るだけになる）。
+   */
+  const isYearFilled = (value: string) =>
+    /^\d{4}$/.test(value) && Number(value) >= COMPLETED_ON_MIN_YEAR && Number(value) <= thisYear
 
   /**
    * 揃ったぶんだけ送る。**揃っていなければ何もしない**（打っている途中）。
@@ -656,8 +665,7 @@ function CompletionMenu({
       return
     }
 
-    const filled = /^\d{4}$/.test(next.year)
-    if (!filled) return
+    if (!isYearFilled(next.year)) return
 
     if (next.mode === 'year') onChangeCompletedOn(next.year)
     if (next.mode === 'month' && next.month !== '') {
@@ -747,7 +755,10 @@ function CompletionMenu({
               <option value="">--</option>
               {Array.from({ length: 12 }, (_, index) => index + 1)
                 // 今年を選んでいるなら、**まだ来ていない月は出さない**
-                .filter((value) => !(yearFilled && yearNumber === thisYear && value > thisMonth))
+                .filter(
+                  (value) =>
+                    !(isYearFilled(year) && Number(year) === thisYear && value > thisMonth),
+                )
                 .map((value) => (
                   <option key={value} value={String(value).padStart(2, '0')}>
                     {value}月
