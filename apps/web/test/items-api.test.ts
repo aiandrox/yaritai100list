@@ -1,5 +1,10 @@
 import { exports } from 'cloudflare:workers'
-import { ITEM_TEXT_MAX_LENGTH, ITEMS_PER_LIST_MAX } from '@yaritai100list/shared'
+import {
+  COMPLETED_ON_TIME_ZONE_OFFSET_MS,
+  ITEM_TEXT_MAX_LENGTH,
+  ITEMS_PER_LIST_MAX,
+  toCompletedOn,
+} from '@yaritai100list/shared'
 import { asc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -330,14 +335,36 @@ describe('項目の変更', () => {
       expect(row?.completedAt).toBeNull()
     })
 
+    /**
+     * 日本時間の暦日（`YYYY-MM-DD`）。**サーバーと同じ変換**（#300）。
+     *
+     * `toCompletedOn` は日付ありの粒度なら必ず返すが、型は `null` を含む。
+     * **黙って別の値に倒さない**（倒すと、間違った日付で通ったのか分からなくなる）。
+     */
+    const jstDay = (at: Date): string => {
+      const value = toCompletedOn(at, 'day')
+      if (value === null) throw new Error('日付を作れなかった')
+
+      return value
+    }
+
     it('🔴 未来は拒否される（来年・来月・明日）', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
+      /*
+       * 🔴 **日付は日本時間で組み立てる**（#300）。
+       * サーバーは完了日を**日本時間の暦日**として読む（#279）ので、
+       * UTC で「明日」を作ると、**UTC 15:00〜24:00（日本時間の 0〜9時）の間だけ
+       * それが JST では過去になり、正しく通ってしまう。**
+       *
+       * 判定の基準を2箇所に書かないよう、**サーバーと同じ `toCompletedOn`** を使う。
+       * ⚠️ `now + 24h` の JST 日付は、必ず**その日の頭が未来**になる（境目も安全）。
+       */
       const now = new Date()
-      const nextYear = String(now.getFullYear() + 1)
-      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-      const nextDay = `${String(tomorrow.getFullYear())}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+      const jstNow = new Date(now.getTime() + COMPLETED_ON_TIME_ZONE_OFFSET_MS)
+      const nextYear = String(jstNow.getUTCFullYear() + 1)
+      const nextDay = jstDay(new Date(now.getTime() + 24 * 60 * 60 * 1000))
 
       for (const value of [nextYear, `${nextYear}-01`, nextDay]) {
         expect((await patchCompletedOn(me.headers, id, value)).status).toBe(400)
