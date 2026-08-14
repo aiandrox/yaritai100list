@@ -1,3 +1,4 @@
+import { COMPLETED_PRECISIONS } from '@yaritai100list/shared'
 import { sql } from 'drizzle-orm'
 import { check, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
@@ -47,9 +48,29 @@ export const items = sqliteTable(
 
     /**
      * 完了日時。**真偽値にしない**（`PRODUCT_SPEC.md` §3）。
-     * いつ叶えたかは思い出として意味がある。未完了なら NULL。
+     * いつ叶えたかは思い出として意味がある。
+     *
+     * 🔴 **これで完了を判定しない**（#279）。**日付を覚えていない完了**
+     * （`completed_precision = 'unknown'`）は NULL のままなので、
+     * 完了かどうかは `completed_precision` で見る（`isCompleted`）。
+     *
+     * `year` / `month` の粒度では**その期間の頭（日本時間）**が入る。
+     * 2026年 なら 2026-01-01 00:00 JST（`parseCompletedOn`）。
      */
     completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+
+    /**
+     * 完了日の粒度（#279）。**NULL は未完了。**
+     * 取りうる値は `packages/shared` の `COMPLETED_PRECISIONS` が唯一の情報源。
+     *
+     * 🔴 **`completed_at` との組み合わせは DB でも止める**（マイグレーション `0016`）。
+     * `unknown` は日時を持たない・日付のある粒度は日時が必須・未完了はどちらも無し。
+     *
+     * ⚠️ **CHECK ではなくトリガーで書いてある。** SQLite は既存の表に
+     * CHECK を後から足せず、表の作り直しが要る（`items` は外部キーと索引を持つ）。
+     * `lists` の件数上限（`0006`）と同じ折り合い。
+     */
+    completedPrecision: text('completed_precision', { enum: COMPLETED_PRECISIONS }),
 
     /**
      * 共有ページで本文を伏せるか（#237）。**既定は伏せない。**

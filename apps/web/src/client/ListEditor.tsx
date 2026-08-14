@@ -1,7 +1,12 @@
 import {
+  COMPLETED_ON_MIN_YEAR,
+  type CompletedPrecision,
+  formatCompletedOn,
+  isCompleted,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
+  toCompletedOn,
 } from '@yaritai100list/shared'
 import {
   DndContext,
@@ -23,9 +28,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   completedCount,
   filledCount,
-  toDateInputValue,
   toSlots,
-  withDatePart,
   type CompletionPermission,
   type Item,
   type LocalList,
@@ -51,8 +54,12 @@ interface ListEditorProps {
   onAddItem: (text: string) => Promise<boolean>
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
-  /** 完了日を直す（#207）。**完了済みの項目にしか使わない** */
-  onChangeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
+  /**
+   * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使わない。**
+   *
+   * 渡すのは `2026` / `2026-08` / `2026-08-14`（形が粒度を表す）。`null` は日付なし。
+   */
+  onChangeCompletedOn: (id: string, completedOn: string | null) => Promise<boolean>
   onRemoveItem: (id: string) => Promise<boolean>
   /** 移動先の位置（0 始まり）へ動かす。**ずらす量ではない**（#166） */
   onMoveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -65,7 +72,7 @@ export function ListEditor({
   onAddItem,
   onUpdateItemText,
   onToggleItem,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
   onRemoveItem,
   onMoveItem,
 }: ListEditorProps) {
@@ -225,13 +232,14 @@ export function ListEditor({
                     /**
                      * 🔴 **完了済みなら、その場では取り消さない**（#207）。
                      *
-                     * 取り消すと `completedAt` が消える。**いつ叶えたかは
-                     * 押し直しても戻らない**（サーバーが押した瞬間の時刻を入れるため）。
+                     * 取り消すと入れた完了日が消える。**いつ叶えたかは
+                     * 押し直しても戻らない**（#279 以降、✓ は日付を作らない）。
                      * 思い出として持っている値が、指が当たっただけで消えるのは重い。
                      *
                      * 増やす手数は**戻す側だけ。** 未完了の ✓ は今まで通り1回で付く。
+                     * 🔴 **判定は粒度で**（#279）。日付なしの完了もここに入る
                      */
-                    if (item.completedAt !== null) {
+                    if (isCompleted(item.completedPrecision)) {
                       setPromptedId((current) => (current === item.id ? null : item.id))
                       return
                     }
@@ -252,9 +260,10 @@ export function ListEditor({
                    *
                    * 開けたままにすれば、途中の値は最後の値で上書きされ、
                    * 直った日付がその行に出るのを見て自分で閉じられる。
+                   * **粒度を選び直す操作**（#279）でも同じ理由で閉じない。
                    */
-                  onChangeCompletedAt={(id, completedAt) => {
-                    void onChangeCompletedAt(id, completedAt)
+                  onChangeCompletedOn={(id, completedOn) => {
+                    void onChangeCompletedOn(id, completedOn)
                   }}
                   onRemove={(id) => void onRemoveItem(id)}
                 />
@@ -417,7 +426,7 @@ function ItemRow({
   onCommit,
   onToggle,
   onUncomplete,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
   onRemove,
 }: {
   number: string
@@ -427,11 +436,15 @@ function ItemRow({
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onUncomplete: (item: Item) => void
-  onChangeCompletedAt: (id: string, completedAt: number) => void
+  onChangeCompletedOn: (id: string, completedOn: string | null) => void
   onRemove: (id: string) => void
 }) {
   const [draft, setDraft] = useState(item.text)
-  const done = item.completedAt !== null
+  // 🔴 **完了は粒度で判定する**（#279）。日付なしの完了も「済み」の見た目にする
+  const done = isCompleted(item.completedPrecision)
+
+  const completedAtDate = item.completedAt === null ? null : new Date(item.completedAt)
+  const completedOn = formatCompletedOn(completedAtDate, item.completedPrecision)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
@@ -519,10 +532,13 @@ function ItemRow({
           className={`${TEXT_INPUT} ${done ? 'text-slate-400 line-through' : 'text-slate-900'}`}
         />
 
-        {done && item.completedAt !== null && (
-          <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">
-            {new Date(item.completedAt).toLocaleDateString('ja-JP')}
-          </span>
+        {/*
+          完了日。**粒度どおりに出す**（#279）。`2026/08/14` / `2026年8月` / `2026年`。
+          🔴 **日付なしの完了では何も出さない**（欄そのものが出ない）。
+          完了は打ち消し線・番号の色・「やった」の数が伝えている
+        */}
+        {completedOn !== '' && (
+          <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">{completedOn}</span>
         )}
 
         {/*
@@ -563,14 +579,17 @@ function ItemRow({
       */}
       {prompted &&
         (completion.allowed ? (
-          item.completedAt !== null && (
+          // 🔴 **`done` で出す**（#279）。`completedAt` で見ると
+          // 日付なしの完了で設定が開かず、**日付を入れる入口が無くなる**
+          done && (
             <CompletionMenu
-              completedAt={item.completedAt}
+              completedAt={completedAtDate}
+              completedPrecision={item.completedPrecision}
               onUncomplete={() => {
                 onUncomplete(item)
               }}
-              onChangeCompletedAt={(completedAt) => {
-                onChangeCompletedAt(item.id, completedAt)
+              onChangeCompletedOn={(completedOn) => {
+                onChangeCompletedOn(item.id, completedOn)
               }}
             />
           )
@@ -582,55 +601,171 @@ function ItemRow({
 }
 
 /**
- * 完了済みの ✓ を押したときに出る設定（#207）。
+ * 完了済みの ✓ を押したときに出る設定（#207 / #279）。
  *
  * 🔴 **2段にしない。** イシューの図は「未完了に戻す / 完了日時を変更する」の
  * 2択だったが、**日付の入力欄をその場に置く。** 押す回数が減る。
  *
  * 🔴 **「未完了に戻す」に確認を重ねない。** これを開いたこと自体が1段の確認。
  * 二重にすると、本当に戻したいときに邪魔になるだけ。
+ *
+ * 🔴 **粒度を選ぶのもここだけ**（2026-08-14 の判断、#279）。
+ * ✓ を押したときは「日付なし」で付き、思い出せる人がここで日付を足す。
+ * 完了にする瞬間に粒度を選ばせると、**ふつうの完了で毎回1手増える。**
+ *
+ * ⚠️ **選んだ粒度は state で持つ。** 「年月」に切り替えた瞬間には
+ * まだ年も月も無いことがある（日付なしから切り替えた場合）。
+ * **揃っていない間は送らない**（送ると、こちらが日付を捏造することになる）。
  */
 function CompletionMenu({
   completedAt,
+  completedPrecision,
   onUncomplete,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
 }: {
-  completedAt: number
+  completedAt: Date | null
+  completedPrecision: CompletedPrecision | null
   onUncomplete: () => void
-  onChangeCompletedAt: (completedAt: number) => void
+  onChangeCompletedOn: (completedOn: string | null) => void
 }) {
+  const current = toCompletedOn(completedAt, completedPrecision)
+
+  const [mode, setMode] = useState<CompletedPrecision>(completedPrecision ?? 'unknown')
+  // 既に入っている値を引き継ぐ。粒度を落として上げ直しても、覚えている分は消えない
+  const [year, setYear] = useState(current?.slice(0, 4) ?? '')
+  const [month, setMonth] = useState(current?.slice(5, 7) ?? '')
+
+  // 未来を選ばせないための上限。**親切のためだけ**（本当に弾くのはサーバー）
+  const now = new Date()
+  const thisYear = now.getFullYear()
+  const thisMonth = now.getMonth() + 1
+
+  /**
+   * 年の欄が**送れる値になっているか。**
+   *
+   * 4桁揃っていることと、範囲（`1900` 〜 今年）を見る。
+   * ⚠️ **打っている途中は毎回ここに来る。** 年の欄で「2」「20」「202」と打つ間は
+   * 送らない（送ると `1900` 年より前としてサーバーに断られる）。
+   *
+   * 🔴 **上限も見る。** 「2030」を送っても未来なのでサーバーが断るが、
+   * **断られる要求をこちらから出さない**（画面が一瞬変わって戻るだけになる）。
+   */
+  const isYearFilled = (value: string) =>
+    /^\d{4}$/.test(value) && Number(value) >= COMPLETED_ON_MIN_YEAR && Number(value) <= thisYear
+
+  /**
+   * 揃ったぶんだけ送る。**揃っていなければ何もしない**（打っている途中）。
+   *
+   * `day` はここを通らない（`<input type="date">` が値を1つ持っているので、
+   * その `change` から直に送る）。
+   */
+  const submit = (next: { mode: CompletedPrecision; year: string; month: string }) => {
+    if (next.mode === 'unknown') {
+      onChangeCompletedOn(null)
+      return
+    }
+
+    if (!isYearFilled(next.year)) return
+
+    if (next.mode === 'year') onChangeCompletedOn(next.year)
+    if (next.mode === 'month' && next.month !== '') {
+      onChangeCompletedOn(`${next.year}-${next.month}`)
+    }
+  }
+
   return (
     <PromptBox>
       {/* 横に並べる。入らない幅では折り返す（狭い端末で切れないように） */}
       <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center gap-1.5">
           <span className="shrink-0">完了日</span>
 
-          <input
-            type="date"
-            defaultValue={toDateInputValue(completedAt)}
-            aria-label="完了日"
-            /**
-             * 打っている途中の値を弾くための箍（`validity` で見る）。
-             *
-             * **未来**: 未来に叶えたことにはできない。
-             * **1900年より前**: 年の欄を打ち直すと `0002-05-03` のような値が一度出る。
-             *
-             * ⚠️ **どちらも親切のためだけ。** 手で組み立てた要求は通るので、
-             * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
-             */
-            min={COMPLETED_AT_MIN}
-            max={toDateInputValue(Date.now())}
+          <select
+            value={mode}
+            aria-label="完了日の記録の仕方"
             onChange={(event) => {
-              // 空にした・範囲外・読めない値は**何もしない。**
-              // 消す操作は「未完了に戻す」の方
-              if (!event.target.validity.valid) return
-
-              const next = withDatePart(completedAt, event.target.value)
-              if (next !== null) onChangeCompletedAt(next)
+              const next = event.target.value as CompletedPrecision
+              setMode(next)
+              submit({ mode: next, year, month })
             }}
-            className="min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900 tabular-nums"
-          />
+            className={SELECT}
+          >
+            <option value="day">年月日</option>
+            <option value="month">年月</option>
+            <option value="year">年</option>
+            <option value="unknown">日付なし</option>
+          </select>
+
+          {mode === 'day' && (
+            <input
+              type="date"
+              defaultValue={current ?? ''}
+              aria-label="完了日"
+              /**
+               * 打っている途中の値を弾くための箍（`validity` で見る）。
+               *
+               * **未来**: 未来に叶えたことにはできない。
+               * **1900年より前**: 年の欄を打ち直すと `0002-05-03` のような値が一度出る。
+               *
+               * ⚠️ **どちらも親切のためだけ。** 手で組み立てた要求は通るので、
+               * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
+               */
+              min={`${String(COMPLETED_ON_MIN_YEAR)}-01-01`}
+              max={toCompletedOn(now, 'day') ?? ''}
+              onChange={(event) => {
+                // 空にした・範囲外・読めない値は**何もしない。**
+                // 消す操作は「日付なし」の方（完了は取り消さない）
+                if (!event.target.validity.valid || event.target.value === '') return
+
+                onChangeCompletedOn(event.target.value)
+              }}
+              className={`${FIELD} tabular-nums`}
+            />
+          )}
+
+          {(mode === 'year' || mode === 'month') && (
+            <input
+              type="number"
+              inputMode="numeric"
+              value={year}
+              aria-label="完了した年"
+              placeholder={String(thisYear)}
+              min={COMPLETED_ON_MIN_YEAR}
+              max={thisYear}
+              onChange={(event) => {
+                setYear(event.target.value)
+                submit({ mode, year: event.target.value, month })
+              }}
+              className={`${FIELD} w-16 tabular-nums`}
+            />
+          )}
+
+          {mode === 'month' && (
+            <select
+              value={month}
+              aria-label="完了した月"
+              // 年が入っていないと月だけでは送れない。**選べることは伝える**ので
+              // 無効化はしない（何が足りないかは年の欄が空であることで分かる）
+              onChange={(event) => {
+                setMonth(event.target.value)
+                submit({ mode, year, month: event.target.value })
+              }}
+              className={SELECT}
+            >
+              <option value="">--</option>
+              {Array.from({ length: 12 }, (_, index) => index + 1)
+                // 今年を選んでいるなら、**まだ来ていない月は出さない**
+                .filter(
+                  (value) =>
+                    !(isYearFilled(year) && Number(year) === thisYear && value > thisMonth),
+                )
+                .map((value) => (
+                  <option key={value} value={String(value).padStart(2, '0')}>
+                    {value}月
+                  </option>
+                ))}
+            </select>
+          )}
         </span>
 
         <button
@@ -645,14 +780,10 @@ function CompletionMenu({
   )
 }
 
-/**
- * 完了日として画面から入れられる下限。**規則ではなく、打ち間違いの箍**（#207）。
- *
- * サーバーには下限を置いていない（`isFutureCompletedAt` の注意書き）。
- * ここで切るのは、`<input type="date">` の年の欄を打ち直したときに
- * 通り過ぎる `0002-05-03` のような値を保存しないため。
- */
-const COMPLETED_AT_MIN = '1900-01-01'
+/** 完了の設定の入力欄。**同じ見た目を3つで使う**（日付・年・月） */
+const FIELD = 'min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900'
+
+const SELECT = `${FIELD} shrink-0`
 
 /**
  * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に重ねて出す。**

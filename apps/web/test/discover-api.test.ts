@@ -153,7 +153,8 @@ describe('GET /api/discover', () => {
   describe('返す内容', () => {
     it('🔴 本文と「もう持っているか」だけを返す（作者も完了状態も返さない）', async () => {
       await makeList({ id: 'p1', visibility: 'public', texts: ['南極に行く'] })
-      await testDb().update(items).set({ completedAt: new Date() })
+      // 粒度も一緒に入れる（#279。DB が組み合わせを縛っている）
+      await testDb().update(items).set({ completedAt: new Date(), completedPrecision: 'day' })
 
       const [row] = (await readPool()).items
 
@@ -526,7 +527,8 @@ describe('GET /api/discover', () => {
 
       it('🔴 作者・完了状態・人数・元リストへの経路を返さない', async () => {
         await makeList({ id: 'p1', visibility: 'public', texts: ['オーロラを見る'] })
-        await testDb().update(items).set({ completedAt: new Date() })
+        // 粒度も一緒に入れる（#279。DB が組み合わせを縛っている）
+        await testDb().update(items).set({ completedAt: new Date(), completedPrecision: 'day' })
         await runBatch({ オーロラを見る: { genre: 'travel' } })
 
         expect((await read('?genre=travel')).items).toEqual([

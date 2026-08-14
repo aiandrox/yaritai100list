@@ -1,5 +1,11 @@
 import { z } from 'zod'
 
+import {
+  type CompletedPrecision,
+  completedPrecisionSchema,
+  formatCompletedOn,
+  isCompleted,
+} from './completion'
 import { ITEMS_PER_LIST_MAX } from './limits'
 import { isFutureCompletedAt, itemTextSchema, listTitleSchema } from './validation'
 
@@ -41,12 +47,48 @@ export const EXPORT_VERSION = 1
 export const exportedItemSchema = z
   .object({
     text: itemTextSchema,
-    /** 完了日時（ISO 8601）。未完了なら `null` */
+    /** 完了日時（ISO 8601）。未完了と**日付なしの完了**（#279）なら `null` */
     completedAt: z.iso.datetime().nullable(),
+
+    /**
+     * 完了の粒度（#279）。未完了なら `null`。
+     *
+     * 🔴 **省略できる。版（`EXPORT_VERSION`）を上げていない**（2026-08-14 の判断）。
+     * 上げると、**粒度を持たない既存のファイルが読めなくなる**（版が違えば断る作り）。
+     * 足したのは省略可能な1項目だけで、**古いファイルの意味は変わらない**
+     * （`completed_at` があれば `day`。`completedPrecisionOf` が補う）ので、
+     * 版で断る理由が無い。
+     */
+    completedPrecision: completedPrecisionSchema.nullable().optional(),
   })
   .strict()
+  /**
+   * 🔴 **粒度と完了日時の食い違いを読み込まない**（#279）。
+   * ファイルは手で編集できる。`day` なのに日時が無い行を通すと、
+   * DB のトリガー（`0016`）に弾かれて 500 になる。**入口で断る。**
+   */
+  .refine(
+    (item) =>
+      item.completedPrecision === undefined ||
+      (item.completedPrecision === null || item.completedPrecision === 'unknown'
+        ? item.completedAt === null
+        : item.completedAt !== null),
+    { message: '完了の粒度と完了日時が合っていない' },
+  )
 
 export type ExportedItem = z.infer<typeof exportedItemSchema>
+
+/**
+ * 書き出された項目の粒度（#279）。**古いファイルを読むための補い。**
+ *
+ * 粒度が無いファイル（#279 より前に書き出したもの）は、
+ * **完了日時があれば `day`、無ければ未完了**。これは #279 のマイグレーションと同じ規則。
+ */
+export function completedPrecisionOf(item: ExportedItem): CompletedPrecision | null {
+  if (item.completedPrecision !== undefined) return item.completedPrecision
+
+  return item.completedAt === null ? null : 'day'
+}
 
 export const exportedListSchema = z
   .object({
@@ -72,7 +114,14 @@ export type ExportFile = z.infer<typeof exportFileSchema>
  * 項目は**渡された順のまま**。並べ替えない（並び順の情報源は呼び出し側の1箇所）。
  */
 export function buildExportFile(
-  list: { title: string; items: { text: string; completedAt: Date | null }[] },
+  list: {
+    title: string
+    items: {
+      text: string
+      completedAt: Date | null
+      completedPrecision: CompletedPrecision | null
+    }[]
+  },
   exportedAt: Date,
 ): ExportFile {
   return {
@@ -83,6 +132,9 @@ export function buildExportFile(
       items: list.items.map((item) => ({
         text: item.text,
         completedAt: item.completedAt === null ? null : item.completedAt.toISOString(),
+        // 🔴 **粒度も書き出す**（#279）。落とすと、日付なしの完了が
+        // **読み込んだ先で未完了になる**（`completed_at` が無いため）
+        completedPrecision: item.completedPrecision,
       })),
     },
   }
@@ -176,16 +228,18 @@ export const DEFAULT_MARKDOWN_OPTIONS: MarkdownOptions = {
  *   転載を読む人が知りたいのは**どれだけ叶えたか**。分母も 100 ではなく
  *   **実際に書いた数**にする（書いていない枠を数に入れても意味がない）
  *
- * `formatDate` を外から受け取るのは**時間帯のため。**
- * 完了日時は UTC で持っているので、そのまま日付にすると閲覧者の日付と1日ずれうる。
- * **画面と同じ見え方にするため、ブラウザの時間帯で整形したものを渡す。**
+ * 🔴 **日付の整形を外から受け取らない**（2026-08-14、#279）。
+ * 以前はブラウザの時間帯で整形したものを渡していたが、**完了日は日本時間の暦日**
+ * として扱うことにしたので（`COMPLETED_ON_TIME_ZONE_OFFSET_MS`）、
+ * ここも画面・共有ページと同じ `formatCompletedOn` を使う。
+ * **同じ完了日が、どこで見ても同じ文字列で出る**方を採った。
  */
 export function buildMarkdown(
   file: ExportFile,
-  formatDate: (isoDate: string) => string,
   options: MarkdownOptions = DEFAULT_MARKDOWN_OPTIONS,
 ): string {
-  const completed = file.list.items.filter((item) => item.completedAt !== null).length
+  // 🔴 **粒度で数える**（#279）。`completedAt` で数えると日付なしの完了が落ちる
+  const completed = file.list.items.filter((item) => isCompleted(completedPrecisionOf(item))).length
 
   // 数の行は形式で変えない。**どの形式でも「どれだけ叶えたか」は同じ情報**（#129）
   const lines = [
@@ -211,14 +265,25 @@ export function buildMarkdown(
   function mark(item: ExportedItem, index: number): string {
     if (options.style === 'numbered') return `${String(index + 1)}.`
 
-    return item.completedAt === null ? '- [ ]' : '- [x]'
+    return isCompleted(completedPrecisionOf(item)) ? '- [x]' : '- [ ]'
   }
 
   function suffix(item: ExportedItem): string {
-    if (item.completedAt === null) return ''
-    if (options.showCompletedDate) return `（${formatDate(item.completedAt)} 達成）`
+    const precision = completedPrecisionOf(item)
+    if (!isCompleted(precision)) return ''
 
-    // 🔴 **連番のときだけ、日付を消しても完了の印を残す。**
+    /**
+     * 粒度どおりに出す（#279）。`2026/08/14` / `2026年8月` / `2026年`。
+     *
+     * 🔴 **日付なしの完了では空になる。** そのときは下の「印を残す」に落ちる
+     * （`- [x]` があるチェックリストでは何も足さない、という #279 の判断）。
+     */
+    const date =
+      item.completedAt === null ? '' : formatCompletedOn(new Date(item.completedAt), precision)
+
+    if (options.showCompletedDate && date !== '') return `（${date} 達成）`
+
+    // 🔴 **連番のときだけ、日付が無くても完了の印を残す。**
     // 連番には `- [x]` にあたるものが無いので、日付まで消すと
     // **完了かどうかを表す手段が行から全部無くなる**（#209）
     return options.style === 'numbered' ? '（達成済）' : ''

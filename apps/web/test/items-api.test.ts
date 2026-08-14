@@ -235,28 +235,37 @@ describe('項目の変更', () => {
     })
   })
 
-  it('完了にすると日時が入り、取り消すと消える', async () => {
+  /**
+   * 完了そのもの（#279 で意味が変わった）。
+   *
+   * 🔴 **✓ を押しただけでは日付を作らない。** 押した日が叶えた日とは限らないため
+   * （2026-08-14 の判断）。付くのは粒度 `unknown`（日付なしの完了）だけ。
+   */
+  it('🔴 完了にすると「日付なし」で入る（日時は作らない）', async () => {
     const { me } = await twoUsers()
     const id = await addItem(me.headers, 'my-list', '南極に行く')
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: true }))
     const [done] = await testDb().select().from(items).where(eq(items.id, id))
-    expect(done?.completedAt).toBeInstanceOf(Date)
+    expect(done?.completedPrecision).toBe('unknown')
+    expect(done?.completedAt).toBeNull()
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: false }))
     const [undone] = await testDb().select().from(items).where(eq(items.id, id))
+    expect(undone?.completedPrecision).toBeNull()
     expect(undone?.completedAt).toBeNull()
   })
 
   /**
-   * 完了日の直し（#207）。
+   * 完了日を入れる・直す（#207 / #279）。
    *
-   * 🔴 境目は「**初回か、直しか**」。
-   * 完了にする瞬間の日時はサーバーが決めるが、後からの直しは持ち主が決める。
-   * この区別が崩れると「好きな過去日を指定して完了にする」ができてしまう。
+   * 🔴 境目は「**完了にする**」と「**いつ叶えたか**」の2段。
+   * 完了していない項目に日付だけを入れさせない（粒度の付かない行を作らせない）。
+   *
+   * 送るのは `completedOn`。**形が粒度を表す**（`2026` / `2026-08` / `2026-08-14`）。
    */
   describe('完了日の直し', () => {
-    /** 完了済みの項目を1つ作って ID を返す。 */
+    /** 完了済み（日付なし）の項目を1つ作って ID を返す。 */
     async function completedItem(headers: Headers): Promise<string> {
       const id = await addItem(headers, 'my-list', '南極に行く')
       await request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completed: true }))
@@ -264,44 +273,110 @@ describe('項目の変更', () => {
       return id
     }
 
-    const patchCompletedAt = (headers: Headers, id: string, completedAt: unknown) =>
-      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completedAt }))
+    const patchCompletedOn = (headers: Headers, id: string, completedOn: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completedOn }))
 
-    it('完了済みなら日時を直せる', async () => {
+    const rowOf = async (id: string) => {
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+
+      return row
+    }
+
+    it('日まで入れられる。粒度は day', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(me.headers, id, '2020-05-03')
 
       expect(res.status).toBe(200)
 
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.toISOString()).toBe('2020-05-03T04:05:06.000Z')
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('day')
+      // 🔴 **日本時間の 00:00 で持つ**（#279）。共有ページ（Asia/Tokyo）で同じ日に出る
+      expect(row?.completedAt?.toISOString()).toBe('2020-05-02T15:00:00.000Z')
     })
 
-    it('🔴 未来の日時は拒否される', async () => {
+    it('年だけ入れられる。その年の頭（日本時間）を持つ', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      // 端末の時計は狂っていることがある。「まだ来ていない日に叶えた」にさせない
-      const res = await patchCompletedAt(me.headers, id, '2100-01-01T00:00:00.000Z')
+      expect((await patchCompletedOn(me.headers, id, '2020')).status).toBe(200)
 
-      expect(res.status).toBe(400)
-
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.getFullYear()).not.toBe(2100)
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('year')
+      expect(row?.completedAt?.toISOString()).toBe('2019-12-31T15:00:00.000Z')
     })
 
-    it('🔴 完了していない項目には入れられない（初回はサーバーが決める）', async () => {
+    it('年月だけ入れられる。その月の頭（日本時間）を持つ', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      expect((await patchCompletedOn(me.headers, id, '2020-05')).status).toBe(200)
+
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('month')
+      expect(row?.completedAt?.toISOString()).toBe('2020-04-30T15:00:00.000Z')
+    })
+
+    it('🔴 null で日付なしに戻せる。完了は取り消さない', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+      await patchCompletedOn(me.headers, id, '2020-05-03')
+
+      expect((await patchCompletedOn(me.headers, id, null)).status).toBe(200)
+
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('unknown')
+      expect(row?.completedAt).toBeNull()
+    })
+
+    it('🔴 未来は拒否される（来年・来月・明日）', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      const now = new Date()
+      const nextYear = String(now.getFullYear() + 1)
+      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      const nextDay = `${String(tomorrow.getFullYear())}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+
+      for (const value of [nextYear, `${nextYear}-01`, nextDay]) {
+        expect((await patchCompletedOn(me.headers, id, value)).status).toBe(400)
+      }
+
+      // 弾かれたので、日付なしのまま
+      expect((await rowOf(id))?.completedAt).toBeNull()
+    })
+
+    it('今年・今月は通る（期間の頭で判定するため）', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      const now = new Date()
+      const thisYear = String(now.getFullYear())
+
+      expect((await patchCompletedOn(me.headers, id, thisYear)).status).toBe(200)
+      expect(
+        (
+          await patchCompletedOn(
+            me.headers,
+            id,
+            `${thisYear}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+          )
+        ).status,
+      ).toBe(200)
+    })
+
+    it('🔴 完了していない項目には入れられない', async () => {
       const { me } = await twoUsers()
       const id = await addItem(me.headers, 'my-list', '南極に行く')
 
-      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(me.headers, id, '2020-05-03')
 
       expect(res.status).toBe(409)
 
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      const row = await rowOf(id)
       expect(row?.completedAt).toBeNull()
+      expect(row?.completedPrecision).toBeNull()
     })
 
     it('🔴 completed と同時には送れない', async () => {
@@ -310,32 +385,41 @@ describe('項目の変更', () => {
 
       const res = await request(
         `/api/lists/my-list/items/${id}`,
-        json(me.headers, 'PATCH', { completed: false, completedAt: '2020-05-03T04:05:06.000Z' }),
+        json(me.headers, 'PATCH', { completed: false, completedOn: '2020-05-03' }),
       )
 
       expect(res.status).toBe(400)
     })
 
-    it('🔴 日時として読めない値は拒否される', async () => {
+    it('🔴 読めない値は拒否される', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      // 旧実装は epoch ms を受け取る形だった。数値のまま通さない
-      expect((await patchCompletedAt(me.headers, id, 4_102_444_800_000)).status).toBe(400)
-      expect((await patchCompletedAt(me.headers, id, '2020-05-03')).status).toBe(400)
-      expect((await patchCompletedAt(me.headers, id, null)).status).toBe(400)
+      for (const bad of [
+        4_102_444_800_000, // 旧実装は epoch ms だった
+        '2020-05-03T04:05:06.000Z', // #279 より前の形（日時）
+        '2026-02-30', // 存在しない日
+        '2026-13-01',
+        '1899', // 1900年より前
+        '20-05-03',
+        'あした',
+        '',
+      ]) {
+        expect((await patchCompletedOn(me.headers, id, bad)).status).toBe(400)
+      }
+
+      // 何も入っていない（日付なしのまま）
+      expect((await rowOf(id))?.completedAt).toBeNull()
     })
 
     it('🔴 他人の項目の完了日は直せない', async () => {
       const { me, other } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      const res = await patchCompletedAt(other.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(other.headers, id, '2020-05-03')
 
       expect(res.status).toBe(404)
-
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.getFullYear()).not.toBe(2020)
+      expect((await rowOf(id))?.completedAt).toBeNull()
     })
   })
 

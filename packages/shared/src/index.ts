@@ -5,6 +5,7 @@
  * 両方のランタイムで動くものだけを置く（`TECH_STACK.md` §12）。
  */
 
+export * from './completion'
 export * from './export'
 export * from './export-image'
 export * from './export-image-template'
