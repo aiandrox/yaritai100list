@@ -1,9 +1,10 @@
-import type { Visibility } from '@yaritai100list/shared'
+import { isCompleted, parseCompletedOn, type Visibility } from '@yaritai100list/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from './api'
 import {
   addItem,
+  COMPLETION_WITHOUT_DATE,
   createEmptyList,
   hasAnythingToImport,
   LIST_STORAGE_KEY,
@@ -12,8 +13,9 @@ import {
   pickCurrentListId,
   removeItem,
   renameList,
+  NOT_COMPLETED,
   serializeList,
-  setItemCompletedAt,
+  setItemCompletion,
   toImportBody,
   toLocalList,
   updateItemText,
@@ -105,8 +107,13 @@ export interface ListController {
   addItem: (text: string) => Promise<boolean>
   updateItemText: (id: string, text: string) => Promise<boolean>
   toggleItem: (item: Item) => Promise<boolean>
-  /** 完了日を直す（#207）。**完了済みの項目にしか使えない** */
-  changeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
+  /**
+   * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使えない。**
+   *
+   * 渡すのは `2026` / `2026-08` / `2026-08-14`（形が粒度を表す）。
+   * `null` は「日付なし」。
+   */
+  changeCompletedOn: (id: string, completedOn: string | null) => Promise<boolean>
   removeItem: (id: string) => Promise<boolean>
   /** 1つ分ずらす。`-1` で上、`+1` で下 */
   moveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -488,49 +495,68 @@ export function useList(
     /**
      * 完了にする / 取り消す。
      *
-     * 🔴 **完了日時はサーバーが決める**（`src/index.ts` の `updateItemSchema`）。
-     * 手元では**その端末の時計**で先に描くので、時計が狂っていると日付がずれて見える。
-     * そこで送った後に取り直す（`applyOptimistic` の `resync`）。
-     * 画面はもう変わっているので、**取り直しを待っても遅くは見えない。**
+     * 🔴 **✓ を押しただけでは日付を作らない**（2026-08-14 の判断、#279）。
+     * 付くのは「日付なしの完了」（粒度 `unknown`）だけ。押した日が叶えた日とは
+     * 限らないので、**日付は持ち主が完了メニューから入れる**（`changeCompletedOn`）。
+     *
+     * 手元とサーバーで同じ値になる（どちらも日時を持たない）ので、
+     * **取り直しは要らない。** 以前は端末の時計で先に描いていたため取り直していた。
      */
     toggleItem: async (item) => {
       if (list === null) return false
 
+      const completing = !isCompleted(item.completedPrecision)
+
       return (
         onServer &&
         applyOptimistic(
-          setItemCompletedAt(list, item.id, item.completedAt === null ? Date.now() : null),
+          setItemCompletion(list, item.id, completing ? COMPLETION_WITHOUT_DATE : NOT_COMPLETED),
           (id) =>
             api.api.lists[':listId'].items[':itemId'].$patch({
               param: { listId: id, itemId: item.id },
-              json: { completed: item.completedAt === null },
+              json: { completed: completing },
             }),
-          true,
         )
       )
       // 未ログインでは完了にできない（#77）。`onServer` が false なのでここへは来ない
     },
 
     /**
-     * 完了日の直し（#207）。
+     * 完了日を入れる・直す・消す（#207 / #279）。
      *
      * **未ログインでは呼ばれない。** 未ログインでは完了にできないので（#77）、
      * ブラウザ側に完了済みの項目が存在せず、直す対象が無い。
      *
-     * 送るのは ISO の日時。**サーバーが未来を弾く**ので、
+     * 送るのは `2026` / `2026-08` / `2026-08-14` の形（粒度は形が表す）。
+     * `null` で**日付なしに戻す**（完了は取り消さない）。
+     *
+     * **サーバーが未来と読めない値を弾く**ので、
      * ここで弾けたつもりにならない（画面側の `max` は親切のためだけ）。
      */
-    changeCompletedAt: async (itemId, completedAt) => {
+    changeCompletedOn: async (itemId, completedOn) => {
       if (list === null) return false
+
+      /**
+       * 手元の値は**同じ規則で組み立てる**（`parseCompletedOn`）。
+       * サーバーと別の計算で先に描くと、取り直したときに日付が飛ぶ。
+       * 読めない値は送らない（画面側でも `validity` で止めているが、ここでも止める）。
+       */
+      const parsed = completedOn === null ? null : parseCompletedOn(completedOn)
+      if (completedOn !== null && parsed === null) return false
+
+      const completion =
+        parsed === null
+          ? COMPLETION_WITHOUT_DATE
+          : { completedAt: parsed.at.getTime(), completedPrecision: parsed.precision }
 
       // ここは**送る値をこちらが決めている**ので、取り直さなくてもずれない。
       // 未来を弾かれたら失敗になり、そのとき取り直して戻る
       return (
         onServer &&
-        applyOptimistic(setItemCompletedAt(list, itemId, completedAt), (id) =>
+        applyOptimistic(setItemCompletion(list, itemId, completion), (id) =>
           api.api.lists[':listId'].items[':itemId'].$patch({
             param: { listId: id, itemId },
-            json: { completedAt: new Date(completedAt).toISOString() },
+            json: { completedOn },
           }),
         )
       )

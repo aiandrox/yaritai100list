@@ -130,6 +130,91 @@ describe('POST /api/lists/restore', () => {
     expect(rows.map((row) => row.text)).toEqual(['南極に行く', 'オーロラを見る'])
     expect(rows[0]?.completedAt?.toISOString()).toBe('2026-05-01T00:00:00.000Z')
     expect(rows[1]?.completedAt).toBeNull()
+
+    // 🔴 **粒度を持たないファイル（#279 より前に書き出したもの）は day として読む。**
+    // マイグレーション 0016 の補い方と同じ
+    expect(rows[0]?.completedPrecision).toBe('day')
+    expect(rows[1]?.completedPrecision).toBeNull()
+  })
+
+  /** 完了日の粒度（#279）。**日付なしの完了が往復すること** */
+  describe('完了日の粒度（#279）', () => {
+    it('粒度をそのまま復元する', async () => {
+      const me = await signIn('precision@example.com')
+
+      const res = await restore(
+        me.headers,
+        exportFile({
+          list: {
+            title: '2026年の目標',
+            items: [
+              { text: '日付なし', completedAt: null, completedPrecision: 'unknown' },
+              {
+                text: '年だけ',
+                completedAt: '2025-12-31T15:00:00.000Z',
+                completedPrecision: 'year',
+              },
+              {
+                text: '年月だけ',
+                completedAt: '2026-07-31T15:00:00.000Z',
+                completedPrecision: 'month',
+              },
+              { text: '未完了', completedAt: null, completedPrecision: null },
+            ],
+          },
+        }),
+      )
+
+      expect(res.status).toBe(201)
+
+      const body = await res.json<{ list: { id: string } }>()
+      const rows = await itemsOf(body.list.id)
+
+      expect(rows.map((row) => row.completedPrecision)).toEqual(['unknown', 'year', 'month', null])
+      // 日付なしの完了は日時を持たないまま入る
+      expect(rows[0]?.completedAt).toBeNull()
+    })
+
+    it('🔴 粒度と完了日時が食い違うファイルは断る', async () => {
+      const me = await signIn('broken-precision@example.com')
+
+      const res = await restore(
+        me.headers,
+        exportFile({
+          list: {
+            title: 'x',
+            // 手で編集したファイル。DB のトリガーまで届かせない
+            items: [{ text: '壊れている', completedAt: null, completedPrecision: 'day' }],
+          },
+        }),
+      )
+
+      expect(res.status).toBe(400)
+      expect(await testDb().select().from(lists)).toEqual([])
+    })
+
+    it('🔴 未来の年を持つファイルは断る', async () => {
+      const me = await signIn('future-year@example.com')
+
+      const res = await restore(
+        me.headers,
+        exportFile({
+          list: {
+            title: 'x',
+            items: [
+              {
+                text: '来年やった',
+                completedAt: '2099-01-01T00:00:00.000Z',
+                completedPrecision: 'year',
+              },
+            ],
+          },
+        }),
+      )
+
+      expect(res.status).toBe(400)
+      expect(await testDb().select().from(lists)).toEqual([])
+    })
   })
 
   it('項目が0件のファイルも読み込める', async () => {

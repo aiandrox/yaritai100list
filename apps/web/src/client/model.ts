@@ -11,7 +11,10 @@
  */
 
 import {
+  type CompletedPrecision,
+  completedPrecisionSchema,
   DEFAULT_LIST_TITLE,
+  isCompleted,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   itemTextSchema,
@@ -140,8 +143,18 @@ export interface Item {
    */
   id: string
   text: string
-  /** 完了日時（epoch ms）。未完了なら `null`。 */
+  /**
+   * 完了日時（epoch ms）。未完了と**日付なしの完了**（#279）なら `null`。
+   *
+   * 🔴 **完了しているかはここでは分からない**（#279）。`completedPrecision` で見る。
+   */
   completedAt: number | null
+  /**
+   * 完了日の粒度（#279）。**`null` は未完了。**
+   *
+   * 未ログインのリストでは常に `null`（未ログインでは印を付けられない。#77）。
+   */
+  completedPrecision: CompletedPrecision | null
 }
 
 /**
@@ -210,7 +223,13 @@ export function addItem(list: LocalList, item: { id: string; text: string }): Li
 
   return {
     ok: true,
-    list: { ...list, items: [...list.items, { id: item.id, text: text.data, completedAt: null }] },
+    list: {
+      ...list,
+      items: [
+        ...list.items,
+        { id: item.id, text: text.data, completedAt: null, completedPrecision: null },
+      ],
+    },
   }
 }
 
@@ -227,72 +246,38 @@ export function updateItemText(list: LocalList, id: string, text: string): ListR
 }
 
 /**
- * 完了にする / 取り消す。
+ * 完了にする / 取り消す / 完了日を変える（#279）。
  *
- * `completedAt` に `null` を渡すと取り消し。**リスト内の位置は動かさない**
+ * `completedPrecision` に `null` を渡すと取り消し。**リスト内の位置は動かさない**
  * （`PRODUCT_SPEC.md` §4.5。番号 = 並び順が動くと、どれを完了したのか分からなくなる）。
+ *
+ * 🔴 **日時と粒度を必ず一緒に渡す。** 片方だけ変えられる形にすると、
+ * 「粒度は `day` なのに日時が無い」という組み合わせが画面の中に作れてしまう
+ * （サーバーは DB のトリガーで止めるが、画面の表示はそこまで待たない）。
  */
-export function setItemCompletedAt(
+export function setItemCompletion(
   list: LocalList,
   id: string,
-  completedAt: number | null,
+  completion: { completedAt: number | null; completedPrecision: CompletedPrecision | null },
 ): ListResult {
   if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 
-  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, completedAt })) }
-}
-
-// ---------------------------------------------------------------------------
-// 完了日の直し（#207）
-// ---------------------------------------------------------------------------
-
-/**
- * `<input type="date">` に入れる値（`YYYY-MM-DD`）。
- *
- * **その端末の時間帯での日付**にする。画面に出している日付
- * （`toLocaleDateString`）と同じものが入力欄に出ないと、
- * **開いた瞬間に「1日ずれている」ように見える。**
- *
- * ⚠️ **`toISOString().slice(0, 10)` を使わない。** あれは UTC の日付なので、
- * 日本時間の朝9時より前に完了した項目が前日として出る。
- */
-export function toDateInputValue(completedAt: number): string {
-  const date = new Date(completedAt)
-  const pad = (value: number) => String(value).padStart(2, '0')
-
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, ...completion })) }
 }
 
 /**
- * 完了日時の**日付だけ**を差し替える。時刻は元のまま。
+ * 「やった」印を付けたときの完了（#279）。**日付は作らない。**
  *
- * 🔴 **その日の 00:00 にしない**（2026-08-08 の判断、#207）。
- * 00:00 にすると、端末の時間帯によっては共有ページ（`Asia/Tokyo` 固定）で前日に見える。
- * 元の時刻（＝✓ を押した瞬間の時刻。たいてい日中）を保てば、
- * 時間帯が多少ずれても日付が動かない。
- *
- * 差し替えは**端末の時間帯**で行う（`setFullYear`）ので、
- * 入力欄に入れた日付がそのまま画面に出ることは保証される。
- *
- * 読めない値なら `null`。`<input type="date">` は空にできるし、
- * 手で打てるブラウザもあるので、**画面から来る値を信用しない。**
+ * 押した日が叶えた日とは限らないため（2026-08-14 の判断）。
+ * 日付を入れるのは完了メニュー（#207）から。
  */
-export function withDatePart(completedAt: number, dateInput: string): number | null {
-  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput)
-  if (parts === null) return null
+export const COMPLETION_WITHOUT_DATE = {
+  completedAt: null,
+  completedPrecision: 'unknown',
+} as const
 
-  const [year, month, day] = parts.slice(1).map(Number) as [number, number, number]
-
-  const next = new Date(completedAt)
-  next.setFullYear(year, month - 1, day)
-
-  // 存在しない日（2026-02-30 など）は別の日に繰り上がる。**黙って別の日にしない**
-  if (next.getFullYear() !== year || next.getMonth() !== month - 1 || next.getDate() !== day) {
-    return null
-  }
-
-  return next.getTime()
-}
+/** 未完了に戻すときの値。 */
+export const NOT_COMPLETED = { completedAt: null, completedPrecision: null } as const
 
 /**
  * 断られた理由。**ローカルの検証結果とサーバーの応答を同じ形にまとめる。**
@@ -449,7 +434,9 @@ export function filledCount(list: LocalList): number {
  * 「書けた」の分母が 100 なのは、**あちらが枠の空き具合を見せる数字**だから。
  */
 export function completedCount(list: LocalList): number {
-  return list.items.filter((item) => item.completedAt !== null).length
+  // 🔴 **粒度で数える**（#279）。`completedAt` で数えると
+  // 日付なしの完了が「やった」に入らない
+  return list.items.filter((item) => isCompleted(item.completedPrecision)).length
 }
 
 // --- 共有のお誘い（#276） ---------------------------------------------------
@@ -575,6 +562,14 @@ const storedListSchema = z.object({
       id: z.string(),
       text: z.string(),
       completedAt: z.number().nullable(),
+      /**
+       * 完了日の粒度（#279）。**古い保存には無いので省略できる。**
+       *
+       * 必須にすると、#279 より前に書いた人の保存が丸ごと `broken` に落ちる
+       * （このスキーマの注意書きのとおり、既にあるものは救う）。
+       * 無いときの補い方は**マイグレーション `0016` と同じ**（日時があれば `day`）。
+       */
+      completedPrecision: completedPrecisionSchema.nullable().optional(),
     }),
   ),
 })
@@ -597,7 +592,16 @@ export function parseStoredList(raw: string | null): StoredListResult {
   const parsed = storedListSchema.safeParse(json)
   if (!parsed.success) return { status: 'broken' }
 
-  return { status: 'loaded', list: parsed.data }
+  return {
+    status: 'loaded',
+    list: {
+      title: parsed.data.title,
+      items: parsed.data.items.map((item) => ({
+        ...item,
+        completedPrecision: item.completedPrecision ?? (item.completedAt === null ? null : 'day'),
+      })),
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +625,8 @@ export interface RemoteItem {
   id: string
   text: string
   completedAt: string | null
+  /** 完了日の粒度（#279）。**`null` は未完了** */
+  completedPrecision: CompletedPrecision | null
 }
 
 /**
@@ -670,6 +676,7 @@ export function toLocalList(list: { title: string }, items: RemoteItem[]): Local
       id: item.id,
       text: item.text,
       completedAt: item.completedAt === null ? null : Date.parse(item.completedAt),
+      completedPrecision: item.completedPrecision,
     })),
   }
 }

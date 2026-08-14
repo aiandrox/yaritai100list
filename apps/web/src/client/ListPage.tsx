@@ -206,7 +206,7 @@ function ListPageBody({
             onAddItem={controller.addItem}
             onUpdateItemText={controller.updateItemText}
             onToggleItem={controller.toggleItem}
-            onChangeCompletedAt={controller.changeCompletedAt}
+            onChangeCompletedOn={controller.changeCompletedOn}
             onRemoveItem={controller.removeItem}
             onMoveItem={controller.moveItem}
           />

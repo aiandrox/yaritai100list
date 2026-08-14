@@ -2,6 +2,9 @@ import * as Sentry from '@sentry/cloudflare'
 import {
   BROWSABLE_GENRES,
   buildExportFile,
+  type CompletedPrecision,
+  completedOnSchema,
+  completedPrecisionOf,
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
@@ -9,7 +12,9 @@ import {
   DISCOVER_MAX_PAGE,
   DISCOVER_PAGE_SIZE,
   hasFutureCompletedAt,
+  isCompleted,
   isFutureCompletedAt,
+  parseCompletedOn,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   SHARE_HIDDEN_ITEM_LABEL,
@@ -97,16 +102,17 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
 /**
  * 項目の変更。
  *
- * 🔴 **完了にする瞬間の日時はサーバーが決める。** `completed: true` で受けるのは
- * 真偽値だけで、日時は入れさせない。端末の時計は狂っていることがあり、
- * 送られた値をそのまま入れると「未来に叶えたこと」になる。
+ * 🔴 **`completed: true` は「日付なしの完了」になる**（2026-08-14 の判断、#279）。
+ * 以前はサーバーの現在時刻を入れていたが、**押した日が叶えた日とは限らない**
+ * （昔やったことを後から書き足す）。日付は持ち主が入れるものにして、
+ * ✓ を押しただけでは日付を作らない。
  *
- * 🔴 **後から日付を直すのは持ち主が決める**（#207）。`completedAt` を受け取る。
- * 境目は「**初回か、直しか**」。こう置くと
- * 「未完了の項目に好きな過去日を入れて完了にする」という抜け道ができない
- * （完了していない項目への `completedAt` は、下のハンドラが 409 で断る）。
+ * 🔴 **日付を入れる・直すのは持ち主が決める**（#207 / #279）。`completedOn` を受け取る。
+ * 形が粒度を表す（`2026` / `2026-08` / `2026-08-14`）。`null` で日付なしに戻せる。
+ * **完了していない項目には入れさせない**（下のハンドラが 409 で断る）。
+ * 「完了にする」と「いつ叶えたか」を2段に分けておくと、状態の組み合わせが増えない。
  *
- * ⚠️ **`completed` と `completedAt` は同時に送れない。**
+ * ⚠️ **`completed` と `completedOn` は同時に送れない。**
  * 「取り消しつつ日付を直す」は意味を持たないし、どちらを勝たせるかを決めたくない。
  *
  * 未来かどうかはここでは見ない。**`now` を渡して判定する**必要があるので
@@ -123,13 +129,13 @@ const updateItemSchema = z
   .object({
     text: itemTextSchema.optional(),
     completed: z.boolean().optional(),
-    completedAt: z.iso.datetime().optional(),
+    completedOn: completedOnSchema.nullable().optional(),
     hiddenInShare: z.boolean().optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
-  .refine((patch) => patch.completed === undefined || patch.completedAt === undefined, {
-    message: 'completed と completedAt は同時に送れない',
+  .refine((patch) => patch.completed === undefined || patch.completedOn === undefined, {
+    message: 'completed と completedOn は同時に送れない',
   })
 
 /**
@@ -168,17 +174,21 @@ const importListSchema = z
  *
  * ⚠️ **D1 は1文あたりのバインド変数の上限が100個**（実測。#89 で踏んだ）。
  * 一番列の多い呼び出し（`POST /api/lists/restore`。`id` / `list_id` / `text` /
- * `completed_at` / `hidden_in_share`（#237） / `position` の6列。
- * `created_at` / `updated_at` は SQL 側の既定値なのでバインド変数を使わない）でも
- * 16行 × 6列 = 96個に収まるようにしてある。
+ * `completed_at` / `completed_precision`（#279） / `hidden_in_share`（#237） /
+ * `position` の7列。`created_at` / `updated_at` は SQL 側の既定値なので
+ * バインド変数を使わない）でも 14行 × 7列 = 98個に収まるようにしてある。
  *
  * 🔴 **`hiddenInShare` を明示せずに `insert` しても、JS 側の既定値（`false`）が
  * バインド変数として1個乗る。** SQL 側の既定値（`sql\`...\`` で書いた列）と違い、
  * 省略しても列数には数えなければならない（#237 でここが100個の上限に触れて実測し直した）。
  *
+ * 🔴 **列を足したらここを見直す。** #279 で `completed_precision` を足したとき、
+ * 16行 × 7列 = 112個で上限を越えて**100件の読み込みだけが 500 になった**
+ * （少ない件数では1文に収まるので、テストの件数を減らすと気づけない）。
+ *
  * 分けても `batch` に渡せば1トランザクションのまま。
  */
-const INSERT_CHUNK = 16
+const INSERT_CHUNK = 14
 
 /** そのリストの項目を並び順で取る。 */
 function selectItems(db: Db, listId: string) {
@@ -415,6 +425,9 @@ const app = new Hono<AppEnv>()
       text: item.text,
       position,
       completedAt: item.completedAt === null ? null : new Date(item.completedAt),
+      // 🔴 **粒度が無い古いファイルを読めるようにする**（#279）。
+      // 補い方は `completedPrecisionOf`（日時があれば `day`）。ここで書かない
+      completedPrecision: completedPrecisionOf(item),
     }))
 
     // 項目が0件のリストも書き出せるので、ここは空になりうる。
@@ -621,8 +634,8 @@ const app = new Hono<AppEnv>()
   /**
    * 項目の本文と完了を変える。
    *
-   * **完了にする瞬間の日時はサーバーが決める。後からの直しは受け取る**
-   * （`updateItemSchema` の注意書き。#207）。
+   * **✓ を押した時点では日付を作らない。日付は後から受け取る**
+   * （`updateItemSchema` の注意書き。#207 / #279）。
    * 完了しても並び順は動かさない（`PRODUCT_SPEC.md` §4.5）。
    */
   .patch(
@@ -637,23 +650,40 @@ const app = new Hono<AppEnv>()
       const patch = c.req.valid('json')
 
       /**
-       * 完了日の直し（#207）。**受け取る前に2つ断る。**
+       * 完了日の直し（#207 / #279）。**受け取る前に3つ断る。**
        *
-       * 🔴 **完了していない項目には入れさせない。** 入れられると
-       * 「好きな過去日を指定して完了にする」ことができ、
-       * 「完了にする瞬間はサーバーが決める」が要求の組み立てだけで迂回できる。
+       * 🔴 **完了していない項目には入れさせない。** 「完了にする」と
+       * 「いつ叶えたか」を2段に分けているので、順序を飛ばす要求は断る
+       * （`completed_at` だけが入って粒度が付かない行を作らせない）。
+       *
+       * 🔴 **読めない日付を弾く**（`parseCompletedOn`）。存在しない日
+       * （`2026-02-30`）や 1900年より前は入れさせない。
        *
        * 🔴 **未来を弾く**（`isFutureCompletedAt`）。取り込みと同じ判定を使う。
+       * 粒度が `year` / `month` のときは**その期間の頭**で判定するので、
+       * 「今年」は通り「来年」は通らない。
        */
-      let completedAt: Date | undefined
-      if (patch.completedAt !== undefined) {
-        if (item.completedAt === null) {
+      let completion:
+        { completedAt: Date | null; completedPrecision: CompletedPrecision } | undefined
+      if (patch.completedOn !== undefined) {
+        if (!isCompleted(item.completedPrecision)) {
           return c.json({ error: 'Not Completed' } as const, 409)
         }
 
-        completedAt = new Date(patch.completedAt)
-        if (isFutureCompletedAt(completedAt, new Date())) {
-          return c.json({ error: 'Future Completed At' } as const, 400)
+        if (patch.completedOn === null) {
+          // 日付なしに戻す。**完了は取り消さない**
+          completion = { completedAt: null, completedPrecision: 'unknown' }
+        } else {
+          const parsed = parseCompletedOn(patch.completedOn)
+          if (parsed === null) {
+            return c.json({ error: 'Bad Request' } as const, 400)
+          }
+
+          if (isFutureCompletedAt(parsed.at, new Date())) {
+            return c.json({ error: 'Future Completed At' } as const, 400)
+          }
+
+          completion = { completedAt: parsed.at, completedPrecision: parsed.precision }
         }
       }
 
@@ -661,10 +691,14 @@ const app = new Hono<AppEnv>()
         .update(items)
         .set({
           ...(patch.text === undefined ? {} : { text: patch.text }),
+          // 🔴 **完了にしても日付は作らない**（#279）。粒度だけを付ける
           ...(patch.completed === undefined
             ? {}
-            : { completedAt: patch.completed ? new Date() : null }),
-          ...(completedAt === undefined ? {} : { completedAt }),
+            : {
+                completedAt: null,
+                completedPrecision: patch.completed ? ('unknown' as const) : null,
+              }),
+          ...(completion ?? {}),
           ...(patch.hiddenInShare === undefined ? {} : { hiddenInShare: patch.hiddenInShare }),
           updatedAt: new Date(),
         })
@@ -799,12 +833,14 @@ const app = new Hono<AppEnv>()
         imageUrl: ogImageUrl(new URL(c.req.url).origin, list.shareId, list.updatedAt),
         // 🔴 **伏せる項目（#237）は、ここで本文を落としてから渡す。**
         // `renderSharePage` には見せてよいデータだけを渡す（`src/share.ts` の設計どおり）。
-        // 達成状況（`completed`）は伏せても見せてよいが、完了日時（「いつ」）は伏せる
+        // 達成状況（`completed`）は伏せても見せてよいが、完了日時（「いつ」）は伏せる。
+        // 🔴 **粒度も伏せる**（#279）。「2026年」だけでも「いつ」の情報
         items: rows.map((item) => ({
           text: item.hiddenInShare ? SHARE_HIDDEN_ITEM_LABEL : item.text,
-          completed: item.completedAt !== null,
+          completed: isCompleted(item.completedPrecision),
           completedAt:
             !item.hiddenInShare && item.completedAt !== null ? item.completedAt.getTime() : null,
+          completedPrecision: item.hiddenInShare ? null : item.completedPrecision,
         })),
       }),
     )

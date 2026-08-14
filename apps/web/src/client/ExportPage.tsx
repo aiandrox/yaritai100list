@@ -114,17 +114,12 @@ function ExportPageBody({ listId }: { listId: string }) {
   /**
    * 貼るための文字列。**形式を変えたらその場で作り直す。**
    *
-   * 組み立ては shared の純関数（テストしてある）。ここから渡すのは
-   * **日付の整形だけ**で、これは時間帯のため（`buildMarkdown`）。
+   * 組み立ては shared の純関数（テストしてある）。
+   * 🔴 **日付の整形も渡さない**（#279）。完了日は日本時間の暦日として扱うので、
+   * 画面・共有ページと同じ整形（`formatCompletedOn`）を `buildMarkdown` が使う。
    */
   const markdown = useMemo(
-    () =>
-      state.status === 'ready'
-        ? buildMarkdown(state.file, (iso) => new Date(iso).toLocaleDateString('ja-JP'), {
-            style,
-            showCompletedDate,
-          })
-        : '',
+    () => (state.status === 'ready' ? buildMarkdown(state.file, { style, showCompletedDate }) : ''),
     [state, style, showCompletedDate],
   )
 

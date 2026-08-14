@@ -33,15 +33,15 @@ import {
   shareUrl,
   sortAdoptedLast,
   sortListsByCreated,
-  setItemCompletedAt,
+  COMPLETION_WITHOUT_DATE,
+  NOT_COMPLETED,
+  setItemCompletion,
   toCompletionPermission,
-  toDateInputValue,
   toImportBody,
   toLocalList,
   toSessionState,
   toSlots,
   updateItemText,
-  withDatePart,
   type ListResult,
   type LocalList,
 } from '../src/client/model'
@@ -129,6 +129,14 @@ function listOf(...texts: string[]): LocalList {
   )
 }
 
+/**
+ * 日付まで覚えている完了にする（#279）。**テストの読みやすさのため**の薄い包み。
+ * 粒度と日時を別々に渡せないようにしてあるので（`setItemCompletion`）、ここで揃える。
+ */
+function completeOn(list: LocalList, id: string, completedAt: number): ListResult {
+  return setItemCompletion(list, id, { completedAt, completedPrecision: 'day' })
+}
+
 describe('createEmptyList', () => {
   it('既定のタイトルを持ち、項目は空', () => {
     // 100個の空スロットを持たない（PRODUCT_SPEC.md §3）
@@ -137,10 +145,12 @@ describe('createEmptyList', () => {
 })
 
 describe('addItem', () => {
-  it('末尾に足す。完了日時は null で始まる', () => {
+  it('末尾に足す。完了日時と粒度は null で始まる', () => {
     const list = expectOk(addItem(createEmptyList(), { id: 'i1', text: '南極に行く' }))
 
-    expect(list.items).toEqual([{ id: 'i1', text: '南極に行く', completedAt: null }])
+    expect(list.items).toEqual([
+      { id: 'i1', text: '南極に行く', completedAt: null, completedPrecision: null },
+    ])
   })
 
   it('元のリストを書き換えない', () => {
@@ -208,13 +218,14 @@ describe('addItem', () => {
 
 describe('updateItemText', () => {
   it('本文だけ変える。完了日時は残る', () => {
-    const completed = expectOk(setItemCompletedAt(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+    const completed = expectOk(completeOn(listOf('南極に行く'), 'i1', 1_700_000_000_000))
     const list = expectOk(updateItemText(completed, 'i1', '北極に行く'))
 
     expect(list.items[0]).toEqual({
       id: 'i1',
       text: '北極に行く',
       completedAt: 1_700_000_000_000,
+      completedPrecision: 'day',
     })
   })
 
@@ -237,95 +248,57 @@ describe('updateItemText', () => {
   })
 })
 
-describe('setItemCompletedAt', () => {
+describe('setItemCompletion', () => {
   it('完了日時を入れる。真偽値にしない（いつ叶えたかを残す）', () => {
-    const list = expectOk(setItemCompletedAt(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+    const list = expectOk(completeOn(listOf('南極に行く'), 'i1', 1_700_000_000_000))
 
     expect(list.items[0]?.completedAt).toBe(1_700_000_000_000)
+    expect(list.items[0]?.completedPrecision).toBe('day')
   })
 
-  it('null を渡すと完了の取り消し', () => {
-    const completed = expectOk(setItemCompletedAt(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+  it('粒度に null を渡すと完了の取り消し', () => {
+    const completed = expectOk(completeOn(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+    const back = expectOk(setItemCompletion(completed, 'i1', NOT_COMPLETED))
 
-    expect(expectOk(setItemCompletedAt(completed, 'i1', null)).items[0]?.completedAt).toBeNull()
+    expect(back.items[0]?.completedAt).toBeNull()
+    expect(back.items[0]?.completedPrecision).toBeNull()
+  })
+
+  /**
+   * ✓ を押したときの完了（#279）。**日付を作らない。**
+   * 押した日が叶えた日とは限らないため（2026-08-14 の判断）。
+   */
+  it('🔴 日付なしの完了は、日時を持たないまま「やった」になる', () => {
+    const list = expectOk(setItemCompletion(listOf('南極に行く'), 'i1', COMPLETION_WITHOUT_DATE))
+
+    expect(list.items[0]?.completedAt).toBeNull()
+    expect(list.items[0]?.completedPrecision).toBe('unknown')
+    expect(completedCount(list)).toBe(1)
+  })
+
+  it('年だけ・年月だけの完了も持てる', () => {
+    const year = expectOk(
+      setItemCompletion(listOf('南極に行く'), 'i1', {
+        completedAt: Date.parse('2025-12-31T15:00:00.000Z'),
+        completedPrecision: 'year',
+      }),
+    )
+
+    expect(year.items[0]?.completedPrecision).toBe('year')
+    expect(completedCount(year)).toBe(1)
   })
 
   it('🔴 完了してもリスト内の位置は動かない', () => {
     // 番号 = 並び順なので、動くとどれを完了したのか分からなくなる（PRODUCT_SPEC.md §4.5）
-    const list = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目', '3つ目'), 'i2', 1))
+    const list = expectOk(completeOn(listOf('1つ目', '2つ目', '3つ目'), 'i2', 1))
 
     expect(list.items.map((item) => item.id)).toEqual(['i1', 'i2', 'i3'])
   })
 
   it('無い ID なら not-found', () => {
-    expect(setItemCompletedAt(listOf('南極に行く'), 'nope', 1)).toEqual({
+    expect(completeOn(listOf('南極に行く'), 'nope', 1)).toEqual({
       ok: false,
       reason: 'not-found',
-    })
-  })
-})
-
-/**
- * 完了日の直し（#207）。
- *
- * 🔴 どちらも**端末の時間帯で**動く。UTC で計算すると、
- * 日本時間の朝9時より前に完了した項目が1日ずれる。
- * テストの実行環境の時間帯に依存しないよう、**入れた値と出た値の関係**だけを見る。
- */
-describe('toDateInputValue / withDatePart', () => {
-  /** その端末の時間帯での 2026-05-03 12:34。 */
-  const noon = new Date(2026, 4, 3, 12, 34, 56, 789).getTime()
-
-  describe('toDateInputValue', () => {
-    it('YYYY-MM-DD にする', () => {
-      expect(toDateInputValue(noon)).toBe('2026-05-03')
-    })
-
-    it('1桁の月日を0で埋める', () => {
-      expect(toDateInputValue(new Date(2026, 0, 9, 12).getTime())).toBe('2026-01-09')
-    })
-
-    it('🔴 端末の時間帯で見た日付になる（UTC の日付ではない）', () => {
-      // toISOString().slice(0, 10) だと、時間帯によっては前日／翌日になる
-      const midnight = new Date(2026, 4, 3, 0, 30).getTime()
-      const lateNight = new Date(2026, 4, 3, 23, 30).getTime()
-
-      expect(toDateInputValue(midnight)).toBe('2026-05-03')
-      expect(toDateInputValue(lateNight)).toBe('2026-05-03')
-    })
-  })
-
-  describe('withDatePart', () => {
-    it('日付だけ変わる', () => {
-      const next = withDatePart(noon, '2020-01-15')
-
-      expect(next).not.toBeNull()
-      expect(toDateInputValue(next ?? 0)).toBe('2020-01-15')
-    })
-
-    it('🔴 時刻は元のまま（その日の 00:00 にしない）', () => {
-      // 00:00 にすると、共有ページ（Asia/Tokyo 固定）で前日に見えることがある
-      const changed = new Date(withDatePart(noon, '2020-01-15') ?? 0)
-
-      expect([changed.getHours(), changed.getMinutes(), changed.getSeconds()]).toEqual([12, 34, 56])
-    })
-
-    it('入れた日付がそのまま読み戻せる（往復して動かない）', () => {
-      for (const date of ['2026-01-01', '2026-02-28', '2026-12-31', '2024-02-29']) {
-        expect(toDateInputValue(withDatePart(noon, date) ?? 0)).toBe(date)
-      }
-    })
-
-    it('🔴 存在しない日は null（黙って別の日にしない）', () => {
-      // setFullYear は 2026-02-30 を 3月2日に繰り上げる
-      expect(withDatePart(noon, '2026-02-30')).toBeNull()
-      expect(withDatePart(noon, '2026-13-01')).toBeNull()
-    })
-
-    it('🔴 読めない値は null（画面から来る値を信用しない）', () => {
-      for (const bad of ['', '2026-5-3', '2026/05/03', 'あした', '2026-05-03T00:00:00Z']) {
-        expect(withDatePart(noon, bad)).toBeNull()
-      }
     })
   })
 })
@@ -367,7 +340,7 @@ describe('moveItem', () => {
   })
 
   it('🔴 完了の状態は動かしても変わらない', () => {
-    const done = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目'), 'i1', 1_700_000_000_000))
+    const done = expectOk(completeOn(listOf('1つ目', '2つ目'), 'i1', 1_700_000_000_000))
     const list = expectOk(moveItem(done, 'i1', 1))
 
     expect(list.items[1]?.completedAt).toBe(1_700_000_000_000)
@@ -417,7 +390,7 @@ describe('toSlots / formatItemNumber / filledCount', () => {
 
     expect(slots[0]).toEqual({
       number: '001',
-      item: { id: 'i1', text: '南極に行く', completedAt: null },
+      item: { id: 'i1', text: '南極に行く', completedAt: null, completedPrecision: null },
     })
     expect(slots[1]).toEqual({ number: '002', item: null })
   })
@@ -429,8 +402,8 @@ describe('toSlots / formatItemNumber / filledCount', () => {
   })
 
   it('🔴 達成済みの数を数える', () => {
-    const one = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
-    const two = expectOk(setItemCompletedAt(one, 'i3', 1))
+    const one = expectOk(completeOn(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
+    const two = expectOk(completeOn(one, 'i3', 1))
 
     expect(completedCount(createEmptyList())).toBe(0)
     expect(completedCount(listOf('1つ目', '2つ目'))).toBe(0)
@@ -441,7 +414,7 @@ describe('toSlots / formatItemNumber / filledCount', () => {
   it('🔴 全部やっても、埋まり具合とは別の数字のまま', () => {
     // 置き換えると「100 という枠がまだ埋まっていない」が見えなくなる（#145）
     const all = ['1つ目', '2つ目'].reduce(
-      (list, _, index) => expectOk(setItemCompletedAt(list, `i${String(index + 1)}`, 1)),
+      (list, _, index) => expectOk(completeOn(list, `i${String(index + 1)}`, 1)),
       listOf('1つ目', '2つ目'),
     )
 
@@ -449,8 +422,17 @@ describe('toSlots / formatItemNumber / filledCount', () => {
     expect(filledCount(all)).toBe(2)
   })
 
+  it('🔴 日付を覚えていない完了も「やった」に数える（#279）', () => {
+    // `completedAt` で数えると、ここが 0 になる
+    const list = expectOk(
+      setItemCompletion(listOf('1つ目', '2つ目'), 'i1', COMPLETION_WITHOUT_DATE),
+    )
+
+    expect(completedCount(list)).toBe(1)
+  })
+
   it('🔴 「23 / 100」の左は埋まり具合。完了した数ではない', () => {
-    const list = expectOk(setItemCompletedAt(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
+    const list = expectOk(completeOn(listOf('1つ目', '2つ目', '3つ目'), 'i1', 1))
 
     expect(filledCount(list)).toBe(3)
   })
@@ -639,23 +621,36 @@ describe('sortListsByCreated', () => {
 describe('toLocalList', () => {
   it('サーバーの応答を画面の形に直す。完了日時は数値になる', () => {
     const list = toLocalList({ title: '2026年の目標' }, [
-      { id: 'i1', text: '南極に行く', completedAt: '2026-08-07T00:00:00.000Z' },
-      { id: 'i2', text: 'オーロラを見る', completedAt: null },
+      {
+        id: 'i1',
+        text: '南極に行く',
+        completedAt: '2026-08-07T00:00:00.000Z',
+        completedPrecision: 'day',
+      },
+      { id: 'i2', text: 'オーロラを見る', completedAt: null, completedPrecision: null },
+      // 日付なしの完了（#279）。**日時が無いまま完了として渡ってくる**
+      { id: 'i3', text: '富士山に登る', completedAt: null, completedPrecision: 'unknown' },
     ])
 
     expect(list).toEqual({
       title: '2026年の目標',
       items: [
-        { id: 'i1', text: '南極に行く', completedAt: Date.parse('2026-08-07T00:00:00.000Z') },
-        { id: 'i2', text: 'オーロラを見る', completedAt: null },
+        {
+          id: 'i1',
+          text: '南極に行く',
+          completedAt: Date.parse('2026-08-07T00:00:00.000Z'),
+          completedPrecision: 'day',
+        },
+        { id: 'i2', text: 'オーロラを見る', completedAt: null, completedPrecision: null },
+        { id: 'i3', text: '富士山に登る', completedAt: null, completedPrecision: 'unknown' },
       ],
     })
   })
 
   it('🔴 並べ替えない（並び順の情報源をサーバーに1本化する）', () => {
     const list = toLocalList({ title: 'x' }, [
-      { id: 'i2', text: '2番目に入っている', completedAt: null },
-      { id: 'i1', text: '1番目に入っている', completedAt: null },
+      { id: 'i2', text: '2番目に入っている', completedAt: null, completedPrecision: null },
+      { id: 'i1', text: '1番目に入っている', completedAt: null, completedPrecision: null },
     ])
 
     expect(list.items.map((item) => item.id)).toEqual(['i2', 'i1'])
@@ -673,7 +668,7 @@ describe('toImportBody / hasAnythingToImport', () => {
   })
 
   it('🔴 完了の状態を送らない（未ログインでは印を付けられないため）', () => {
-    const completed = expectOk(setItemCompletedAt(listOf('南極に行く'), 'i1', 1_700_000_000_000))
+    const completed = expectOk(completeOn(listOf('南極に行く'), 'i1', 1_700_000_000_000))
 
     // 送る口を作ると #77 の制約を迂回できてしまう
     expect(toImportBody(completed).items).toEqual([{ text: '南極に行く' }])
@@ -693,7 +688,7 @@ describe('toImportBody / hasAnythingToImport', () => {
 describe('serializeList / parseStoredList', () => {
   it('直列化して読み戻すと同じリストになる', () => {
     const list = expectOk(
-      setItemCompletedAt(listOf('南極に行く', 'オーロラを見る'), 'i1', 1_700_000_000_000),
+      completeOn(listOf('南極に行く', 'オーロラを見る'), 'i1', 1_700_000_000_000),
     )
 
     expect(parseStoredList(serializeList(list))).toEqual({ status: 'loaded', list })
