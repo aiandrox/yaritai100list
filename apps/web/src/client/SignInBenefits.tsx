@@ -1,6 +1,6 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 
-import { Modal } from './Modal'
+import { Modal, ModalDecline } from './Modal'
 import { signInBenefits, type SignInBenefit } from './model'
 
 /**
@@ -38,6 +38,34 @@ export function SignInBenefits({ label = 'ほかにできること' }: { label?:
 
       <Dialog ref={dialog} />
     </>
+  )
+}
+
+/**
+ * 未ログインで**100個すべて書き終えた**ときに出す（#284）。
+ *
+ * #276 のお誘い（共有）はログイン中だけだった。誘う先がログインの向こう側にあるため。
+ * しかし**100個書き終えるのは一番大きな節目**で、そこで何も起きないのはもったいない。
+ * 未ログインの人にとっての次の一歩は共有ではなく、**まずログイン**（`PRODUCT_SPEC.md` §2）。
+ *
+ * 🔴 **中身は「ログインすると、できること」と同じものを使う**（#204 の決定）。
+ * **変えるのは見出しだけ。** 書き分けると必ずずれる。
+ */
+export function WroteAllInvite({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    if (open) dialog.current?.showModal()
+  }, [open])
+
+  return (
+    <Dialog
+      ref={dialog}
+      title="100個、書き終わりました！"
+      onClose={onClose}
+      // 押していないのに出てくるので、断る場所を本文の側にも置く
+      onDecline={() => dialog.current?.close()}
+    />
   )
 }
 
@@ -134,9 +162,21 @@ function GoogleLogo() {
   )
 }
 
-function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
+function Dialog({
+  ref,
+  title = 'ログインすると、できること',
+  onClose,
+  onDecline,
+}: {
+  ref: React.RefObject<HTMLDialogElement | null>
+  /** 🔴 **見出しだけを差し替える**（#284）。中身は書き分けない */
+  title?: string
+  onClose?: () => void
+  /** 渡すと「閉じる」が出る。**こちらから声をかけたときだけ**（`ModalDecline`） */
+  onDecline?: () => void
+}) {
   return (
-    <Modal ref={ref} title="ログインすると、できること">
+    <Modal ref={ref} title={title} onClose={onClose}>
       {/*
         🔴 **1つずつ札に分ける**（#213）。
         文だけを縦に並べると、**どこからどこまでが1つの話か分からず読む気にならない。**
@@ -164,6 +204,8 @@ function Dialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
         <GoogleLogo />
         Googleでログイン
       </a>
+
+      {onDecline !== undefined && <ModalDecline onClose={onDecline} />}
     </Modal>
   )
 }

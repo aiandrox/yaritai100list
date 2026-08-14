@@ -4,15 +4,17 @@ import { Link } from 'wouter'
 import { ListEditor } from './ListEditor'
 import { Notice } from './Notice'
 import { ShareInvite } from './ShareInvite'
-import { SignInBenefits } from './SignInBenefits'
+import { SignInBenefits, WroteAllInvite } from './SignInBenefits'
 import {
   canInviteToShare,
+  inviteKind,
   listProgress,
   parseInvitedAt,
   rejectionMessage,
   shareInviteStorageKey,
   shareInviteTrigger,
   toCompletionPermission,
+  type InviteKind,
   type ListProgress,
   type SessionState,
 } from './model'
@@ -67,7 +69,7 @@ function SignInRequired({ session }: { session: SessionState }) {
 }
 
 /**
- * 共有のお誘いを出すかどうかを決める（#276）。
+ * 節目のお誘いを出すかどうかを決める（#276 / #284）。
  *
  * 🔴 **操作の側に手を入れない。** 「✓ を押したとき」「項目を足したとき」に
  * 呼び出しを足す形にすると、**足し忘れた経路から出なくなる**し、
@@ -78,19 +80,24 @@ function SignInRequired({ session }: { session: SessionState }) {
  * 開いただけで誘いが出る。
  */
 function useShareInvite(screen: ListController['screen']): {
-  open: boolean
+  kind: InviteKind | null
   close: () => void
 } {
-  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState<InviteKind | null>(null)
   const previous = useRef<{ key: string; progress: ListProgress } | null>(null)
 
   const key = screen.status === 'ready' ? screen.key : null
   const list = screen.status === 'ready' ? screen.list : null
-  // 未ログイン（`share` が null）では誘わない。渡す先がログインの向こう側にある
+  /**
+   * ログイン中か（`share` が入っているか）。**誘い方が変わる**（#284）。
+   *
+   * 未ログインの人の次の一歩は共有ではなく**まずログイン**。
+   * 共有設定はログインの向こう側にあるので、そちらへ送っても何もできない。
+   */
   const shared = screen.status === 'ready' && screen.share !== null
 
   useEffect(() => {
-    if (key === null || list === null || !shared) {
+    if (key === null || list === null) {
       previous.current = null
       return
     }
@@ -100,7 +107,13 @@ function useShareInvite(screen: ListController['screen']): {
     previous.current = { key, progress }
 
     if (before?.key !== key) return
-    if (shareInviteTrigger(before.progress, progress) === null) return
+
+    const trigger = shareInviteTrigger(before.progress, progress)
+    if (trigger === null) return
+
+    // どちらのお誘いか。**未ログインで完了だけ、のときは出さない**（#284）
+    const next = inviteKind(trigger, shared)
+    if (next === null) return
 
     /*
      * 🔴 **間隔を守る**（同じリストでは30日に1回）。
@@ -117,16 +130,16 @@ function useShareInvite(screen: ListController['screen']): {
       }
 
       localStorage.setItem(storageKey, String(now))
-      setOpen(true)
+      setKind(next)
     } catch {
       // 記録できない環境。**黙って出さない**（利用者に伝えることが無い）
     }
   }, [key, list, shared])
 
   return {
-    open,
+    kind,
     close: () => {
-      setOpen(false)
+      setKind(null)
     },
   }
 }
@@ -212,16 +225,21 @@ function ListPageBody({
           />
 
           {/*
-            叶えたとき・100個書き終えたときのお誘い（#276）。
+            節目のお誘い（#276 / #284）。
             **出すかどうかは `useShareInvite`。** ここは置き場所だけ
           */}
           {screen.share !== null && (
             <ShareInvite
               listId={screen.key}
               share={screen.share}
-              open={invite.open}
+              open={invite.kind === 'share'}
               onClose={invite.close}
             />
+          )}
+
+          {/* 未ログインで100個書き終えたとき。**共有ではなくログインへ誘う**（#284） */}
+          {screen.share === null && (
+            <WroteAllInvite open={invite.kind === 'sign-in'} onClose={invite.close} />
           )}
         </>
       )}

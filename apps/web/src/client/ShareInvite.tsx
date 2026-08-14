@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 
-import { Modal } from './Modal'
+import { Modal, ModalDecline } from './Modal'
 import { canUseShareSheet, isShareCancelled, shareUrl } from './model'
 import type { ShareState } from './useList'
 
@@ -86,7 +86,7 @@ function NotSharedYet({ listId, onClose }: { listId: string; onClose: () => void
         共有の設定を開く
       </Link>
 
-      <CloseButton onClose={onClose} />
+      <ModalDecline onClose={onClose} />
     </>
   )
 }
@@ -159,16 +159,7 @@ function AlreadyShared({ shareId, onClose }: { shareId: string; onClose: () => v
         {copied ? 'コピーしました' : 'URL をコピー'}
       </button>
 
-      <CloseButton onClose={onClose} />
+      <ModalDecline onClose={onClose} />
     </>
-  )
-}
-
-/** 断る側。**主のボタンと同じ強さにしない。** */
-function CloseButton({ onClose }: { onClose: () => void }) {
-  return (
-    <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-sm text-slate-500">
-      閉じる
-    </button>
   )
 }
