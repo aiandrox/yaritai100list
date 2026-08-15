@@ -9,13 +9,16 @@ import {
   canInviteToShare,
   inviteKind,
   listProgress,
+  newlyCompletedText,
   parseInvitedAt,
   rejectionMessage,
   shareInviteStorageKey,
   shareInviteTrigger,
   toCompletionPermission,
+  type Achievement,
   type InviteKind,
   type ListProgress,
+  type LocalList,
   type SessionState,
 } from './model'
 import { useList, type ImportOutcome, type ListController } from './useList'
@@ -80,11 +83,18 @@ function SignInRequired({ session }: { session: SessionState }) {
  * 開いただけで誘いが出る。
  */
 function useShareInvite(screen: ListController['screen']): {
-  kind: InviteKind | null
+  /** 出しているお誘い。**何が起きて出たのかを一緒に持つ**（#306） */
+  invite: { kind: InviteKind; achievement: Achievement } | null
   close: () => void
 } {
-  const [kind, setKind] = useState<InviteKind | null>(null)
-  const previous = useRef<{ key: string; progress: ListProgress } | null>(null)
+  const [invite, setInvite] = useState<{ kind: InviteKind; achievement: Achievement } | null>(null)
+  /**
+   * 直前の状態。
+   *
+   * 🔴 **リストそのものを持つ**（#306）。進み具合（数）だけでは
+   * **どの項目を達成したかが分からず、見出しに書けない**（`newlyCompletedText`）。
+   */
+  const previous = useRef<{ key: string; progress: ListProgress; list: LocalList } | null>(null)
 
   const key = screen.status === 'ready' ? screen.key : null
   const list = screen.status === 'ready' ? screen.list : null
@@ -104,7 +114,7 @@ function useShareInvite(screen: ListController['screen']): {
 
     const progress = listProgress(list)
     const before = previous.current
-    previous.current = { key, progress }
+    previous.current = { key, progress, list }
 
     if (before?.key !== key) return
 
@@ -114,6 +124,23 @@ function useShareInvite(screen: ListController['screen']): {
     // どちらのお誘いか。**未ログインで完了だけ、のときは出さない**（#284）
     const next = inviteKind(trigger, shared)
     if (next === null) return
+
+    /**
+     * 何が起きたか（#306）。見出しに出す。
+     *
+     * 🔴 **達成した項目が分からないなら出さない。**
+     * 「を達成しました」のような見出しを出す方が、出さないより悪い。
+     */
+    let achievement: Achievement | null = null
+
+    if (trigger === 'filled') {
+      achievement = { kind: 'filled' }
+    } else {
+      const text = newlyCompletedText(before.list, list)
+      if (text !== null) achievement = { kind: 'completed', text }
+    }
+
+    if (achievement === null) return
 
     /*
      * 🔴 **間隔を守る**（同じリストでは30日に1回）。
@@ -130,16 +157,16 @@ function useShareInvite(screen: ListController['screen']): {
       }
 
       localStorage.setItem(storageKey, String(now))
-      setKind(next)
+      setInvite({ kind: next, achievement })
     } catch {
       // 記録できない環境。**黙って出さない**（利用者に伝えることが無い）
     }
   }, [key, list, shared])
 
   return {
-    kind,
+    invite,
     close: () => {
-      setKind(null)
+      setInvite(null)
     },
   }
 }
@@ -154,7 +181,7 @@ function ListPageBody({
 }) {
   const controller = useList(session, listId ?? null)
   const { screen, rejection } = controller
-  const invite = useShareInvite(screen)
+  const { invite, close: closeInvite } = useShareInvite(screen)
 
   return (
     <>
@@ -228,18 +255,23 @@ function ListPageBody({
             節目のお誘い（#276 / #284）。
             **出すかどうかは `useShareInvite`。** ここは置き場所だけ
           */}
-          {screen.share !== null && (
+          {/*
+            🔴 **出すときだけ組み立てる**（#306）。
+            見出しに「何が起きたか」（`achievement`）が要るので、
+            出さないときに渡す値を作らなくて済む形にする
+          */}
+          {screen.share !== null && invite?.kind === 'share' && (
             <ShareInvite
               listId={screen.key}
               share={screen.share}
-              open={invite.kind === 'share'}
-              onClose={invite.close}
+              achievement={invite.achievement}
+              onClose={closeInvite}
             />
           )}
 
           {/* 未ログインで100個書き終えたとき。**共有ではなくログインへ誘う**（#284） */}
           {screen.share === null && (
-            <WroteAllInvite open={invite.kind === 'sign-in'} onClose={invite.close} />
+            <WroteAllInvite open={invite?.kind === 'sign-in'} onClose={closeInvite} />
           )}
         </>
       )}

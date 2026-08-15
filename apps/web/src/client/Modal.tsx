@@ -75,7 +75,12 @@ export function Modal({
           ×
         </button>
 
-        <h2 id={titleId} className="text-center text-lg font-bold">
+        {/*
+          ⚠️ **長い見出しで崩れないようにする**（#306）。
+          見出しに項目の本文（最大100文字）が入るようになったので、
+          区切りの無い長い文字列でも枠から出ないよう折り返す
+        */}
+        <h2 id={titleId} className="text-center text-lg font-bold break-words">
           {title}
         </h2>
 

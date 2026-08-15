@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 
 import { Modal } from './Modal'
-import { canUseShareSheet, isShareCancelled, shareUrl } from './model'
+import {
+  achievementTitle,
+  canUseShareSheet,
+  isShareCancelled,
+  shareUrl,
+  type Achievement,
+} from './model'
 import type { ShareState } from './useList'
 
 /**
@@ -12,12 +18,20 @@ import type { ShareState } from './useList'
  * それまでの導線は「共有の設定を開く → 公開範囲を変える → URL をコピー」だけで、
  * **一番気分が乗っている瞬間には何も起きなかった。**
  *
+ * 🔴 **見出しは「何が起きたか」**（2026-08-15 の利用者の指摘、#306）。
+ * 「〈やりたいこと〉を達成しました」「100個、書き終わりました！」。
+ * 以前は共有の話から始まっていて、**なぜ出たのか分からなかった**
+ * （押し間違いで出た広告のように見える）。文言は `model.ts` の `achievementTitle`。
+ *
  * 🔴 **公開範囲で中身を変える**（2026-08-14 の利用者の指示）。いまの状態から次の一歩が違う。
  *
  * | いまの公開範囲 | 出すもの |
  * |---|---|
  * | 非公開 | 「みんなにもリストを見せませんか？」→ 共有の設定へ |
  * | 全公開・リンク限定 | 「SNSでみんなに見せませんか？」→ **その場で送れる** |
+ *
+ * ⚠️ **この2つの文は本文の先頭に移した**（#306）。見出しを達成の報告に譲ったため。
+ * **文言は変えていない**（#276 で利用者が書いたもの）。
  *
  * 🔴 **ここで公開範囲を変えられるようにしない。** 誘いの場で設定を触らせない。
  *
@@ -32,27 +46,25 @@ import type { ShareState } from './useList'
 export function ShareInvite({
   listId,
   share,
-  open,
+  achievement,
   onClose,
 }: {
   listId: string
   share: ShareState
-  open: boolean
+  /** 何が起きて出たのか（#306）。**見出しになる** */
+  achievement: Achievement
   onClose: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const close = () => dialog.current?.close()
 
+  // 出すときだけ組み立てられる（`ListPage`）ので、置かれたら開く
   useEffect(() => {
-    if (open) dialog.current?.showModal()
-  }, [open])
+    dialog.current?.showModal()
+  }, [])
 
   return (
-    <Modal
-      ref={dialog}
-      title={share.visibility === 'private' ? INVITE_TITLE : SHARE_TITLE}
-      onClose={onClose}
-    >
+    <Modal ref={dialog} title={achievementTitle(achievement)} onClose={onClose}>
       {share.visibility === 'private' ? (
         <NotSharedYet listId={listId} onClose={close} />
       ) : (
@@ -63,10 +75,13 @@ export function ShareInvite({
 }
 
 /**
- * 見出し。🔴 **利用者が書いた文をそのまま使う**（2026-08-14）。言い換えない。
+ * 共有を促す文。
+ *
+ * 🔴 **利用者が書いた文をそのまま使う**（2026-08-14）。言い換えない。
+ * #306 で**見出しから本文の先頭へ移した**（見出しは達成の報告になった）。
  */
-const INVITE_TITLE = 'みんなにもリストを見せませんか？'
-const SHARE_TITLE = 'SNSでみんなに見せませんか？'
+const INVITE_LEAD = 'みんなにもリストを見せませんか？'
+const SHARE_LEAD = 'SNSでみんなに見せませんか？'
 
 /**
  * まだ非公開のとき。**渡す先が無いので、まず公開範囲を決めてもらう。**
@@ -74,7 +89,10 @@ const SHARE_TITLE = 'SNSでみんなに見せませんか？'
 function NotSharedYet({ listId, onClose }: { listId: string; onClose: () => void }) {
   return (
     <>
-      <p className="mt-3 text-sm leading-6 text-slate-600">
+      {/* 🔴 **共有を促すのはここから**（#306）。見出しは達成の報告 */}
+      <p className="mt-3 text-center text-sm font-bold">{INVITE_LEAD}</p>
+
+      <p className="mt-2 text-sm leading-6 text-slate-600">
         いまは自分だけが見られる状態です。公開すると、リンクを渡した人に見てもらえます。
       </p>
 
@@ -124,7 +142,9 @@ function AlreadyShared({ shareId }: { shareId: string }) {
 
   return (
     <>
-      <p className="mt-3 text-sm leading-6 text-slate-600">
+      <p className="mt-3 text-center text-sm font-bold">{SHARE_LEAD}</p>
+
+      <p className="mt-2 text-sm leading-6 text-slate-600">
         このリストは、リンクを渡した人が見られる状態です。
       </p>
 

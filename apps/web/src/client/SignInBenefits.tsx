@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { Modal } from './Modal'
-import { signInBenefits, type SignInBenefit } from './model'
+import { signInBenefits, WROTE_ALL_TITLE, type SignInBenefit } from './model'
 
 /**
  * ログインすると何ができるかを、まとめて見せる（#204）。
@@ -58,7 +58,8 @@ export function WroteAllInvite({ open, onClose }: { open: boolean; onClose: () =
     if (open) dialog.current?.showModal()
   }, [open])
 
-  return <Dialog ref={dialog} title="100個、書き終わりました！" onClose={onClose} />
+  // 🔴 **共有のお誘い（#306）と同じ文言を使う。** 書き分けると必ずずれる
+  return <Dialog ref={dialog} title={WROTE_ALL_TITLE} onClose={onClose} />
 }
 
 /**

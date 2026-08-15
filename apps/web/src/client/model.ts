@@ -511,6 +511,64 @@ export function inviteKind(trigger: ShareInviteTrigger, shared: boolean): Invite
 }
 
 /**
+ * **何が起きて出たのか**（#306）。モーダルの見出しになる。
+ *
+ * 🔴 **見出しで「いま自分が何をしたか」を言う**（2026-08-15 の利用者の指摘）。
+ * 以前は「みんなにもリストを見せませんか？」から始まっていて、
+ * **なぜ出たのか分からず、押し間違いで出た広告のように見えた。**
+ * 共有を促す文は本文の先頭へ移した（文言はそのまま。#276）。
+ */
+export type Achievement =
+  /** 1つ叶えた。**その項目の本文を持つ**（どれを達成したかを見出しで言うため） */
+  | { kind: 'completed'; text: string }
+  /** 100個すべて書き終えた */
+  | { kind: 'filled' }
+
+/**
+ * 100個書き終えたときの見出し。
+ *
+ * 🔴 **未ログインのお誘い（#284）と同じ文言を使う。** 書き分けると必ずずれる
+ * （利用者が書いた文をそのまま使う、という #276 / #284 の扱いも変えない）。
+ */
+export const WROTE_ALL_TITLE = '100個、書き終わりました！'
+
+/**
+ * モーダルの見出し（#306）。
+ *
+ * 🔴 **利用者が指示した形をそのまま使う**（2026-08-15）:
+ * 「〈やりたいこと〉を達成しました」。言い換えない。
+ */
+export function achievementTitle(achievement: Achievement): string {
+  return achievement.kind === 'filled' ? WROTE_ALL_TITLE : `${achievement.text}を達成しました`
+}
+
+/**
+ * 直前の状態と見比べて、**新しく完了した項目の本文**を返す（#306）。
+ *
+ * 見出しに「どれを達成したか」を出すために要る。お誘いの判定は達成数の増減
+ * （`shareInviteTrigger`）だけを見ているので、**項目はここで特定する。**
+ *
+ * 🔴 **`completedPrecision` で見る**（#279）。日付なしの完了も達成に入る。
+ * ⚠️ **同時に2つ以上完了していたら、リストで先に来るものを返す。**
+ * 1回の操作で1つしか完了できないので、実際には起きない
+ * （起きるとしたら別の端末での操作が同時に届いたとき）。
+ *
+ * 分からなければ `null`。**呼び出し側はそのときお誘いを出さない**
+ * （「なぜ出たか」を言えないなら出さない方がよい。#306）。
+ */
+export function newlyCompletedText(before: LocalList, after: LocalList): string | null {
+  const completedBefore = new Set(
+    before.items.filter((item) => isCompleted(item.completedPrecision)).map((item) => item.id),
+  )
+
+  const item = after.items.find(
+    (candidate) => isCompleted(candidate.completedPrecision) && !completedBefore.has(candidate.id),
+  )
+
+  return item?.text ?? null
+}
+
+/**
  * 同じリストで続けて出さない間隔。**30日**（2026-08-14 の利用者の指示）。
  *
  * 🔴 **「1回きり」にしない。** そのとき断っただけの人を、一生誘わないのはやりすぎ。
