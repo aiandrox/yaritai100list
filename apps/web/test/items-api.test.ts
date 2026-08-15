@@ -314,23 +314,27 @@ describe('項目の変更', () => {
   })
 
   /**
-   * 完了そのもの（#279 で意味が変わった）。
+   * 完了そのもの。
    *
-   * 🔴 **✓ を押しただけでは日付を作らない。** 押した日が叶えた日とは限らないため
-   * （2026-08-14 の判断）。付くのは粒度 `unknown`（日付なしの完了）だけ。
+   * 🔴 **完了日時はサーバーが決める**（2026-08-15、#298）。付くのは**その日・粒度 `day`**。
+   * #279 で一度「日付なし」を既定にしたが、**ふつうの完了で毎回日付を入れる手数が多く、
+   * 戻した**（覚えていない場合は完了の設定で年を空にする）。
    */
-  it('🔴 完了にすると「日付なし」で入る（日時は作らない）', async () => {
+  it('🔴 完了にすると、その日の日時と粒度 day が入る', async () => {
     const { me } = await twoUsers()
     const id = await addItem(me.headers, 'my-list', '南極に行く')
+    const before = Date.now()
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: true }))
     const [done] = await testDb().select().from(items).where(eq(items.id, id))
-    expect(done?.completedPrecision).toBe('unknown')
-    expect(done?.completedAt).toBeNull()
+    expect(done?.completedPrecision).toBe('day')
+    expect(done?.completedAt?.getTime()).toBeGreaterThanOrEqual(before)
+    expect(done?.completedAt?.getTime()).toBeLessThanOrEqual(Date.now())
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: false }))
     const [undone] = await testDb().select().from(items).where(eq(items.id, id))
     expect(undone?.completedPrecision).toBeNull()
+    // 🔴 **取り消したら日時も消える**（粒度なしに日時が残る行は DB が拒否する）
     expect(undone?.completedAt).toBeNull()
   })
 
@@ -343,7 +347,7 @@ describe('項目の変更', () => {
    * 送るのは `completedOn`。**形が粒度を表す**（`2026` / `2026-08` / `2026-08-14`）。
    */
   describe('完了日の直し', () => {
-    /** 完了済み（日付なし）の項目を1つ作って ID を返す。 */
+    /** 完了済み（その日・粒度 `day`）の項目を1つ作って ID を返す。 */
     async function completedItem(headers: Headers): Promise<string> {
       const id = await addItem(headers, 'my-list', '南極に行く')
       await request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completed: true }))
@@ -443,27 +447,22 @@ describe('項目の変更', () => {
         expect((await patchCompletedOn(me.headers, id, value)).status).toBe(400)
       }
 
-      // 弾かれたので、日付なしのまま
-      expect((await rowOf(id))?.completedAt).toBeNull()
+      // 弾かれたので、✓ を押したときの日付（今日・粒度 day）のまま
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('day')
+      expect(jstDay(row?.completedAt ?? new Date(0))).toBe(jstDay(now))
     })
 
-    it('今年・今月は通る（期間の頭で判定するため）', async () => {
+    it('今年・今月・今日は通る（期間の頭で判定するため）', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      const now = new Date()
-      const thisYear = String(now.getFullYear())
+      // 日本時間の今日から組み立てる（上の「未来は拒否される」と同じ理由。#300）
+      const todayJst = jstDay(new Date())
 
-      expect((await patchCompletedOn(me.headers, id, thisYear)).status).toBe(200)
-      expect(
-        (
-          await patchCompletedOn(
-            me.headers,
-            id,
-            `${thisYear}-${String(now.getMonth() + 1).padStart(2, '0')}`,
-          )
-        ).status,
-      ).toBe(200)
+      expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 4))).status).toBe(200)
+      expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 7))).status).toBe(200)
+      expect((await patchCompletedOn(me.headers, id, todayJst)).status).toBe(200)
     })
 
     it('🔴 完了していない項目には入れられない', async () => {
@@ -508,8 +507,8 @@ describe('項目の変更', () => {
         expect((await patchCompletedOn(me.headers, id, bad)).status).toBe(400)
       }
 
-      // 何も入っていない（日付なしのまま）
-      expect((await rowOf(id))?.completedAt).toBeNull()
+      // 何も変わっていない（✓ を押したときの粒度のまま）
+      expect((await rowOf(id))?.completedPrecision).toBe('day')
     })
 
     it('🔴 他人の項目の完了日は直せない', async () => {
@@ -519,7 +518,7 @@ describe('項目の変更', () => {
       const res = await patchCompletedOn(other.headers, id, '2020-05-03')
 
       expect(res.status).toBe(404)
-      expect((await rowOf(id))?.completedAt).toBeNull()
+      expect((await rowOf(id))?.completedAt?.getFullYear()).not.toBe(2020)
     })
   })
 

@@ -1,6 +1,8 @@
 import {
+  buildCompletedOn,
   COMPLETED_ON_MIN_YEAR,
   type CompletedPrecision,
+  daysInMonth,
   formatCompletedOn,
   isCompleted,
   ITEM_TEXT_MAX_LENGTH,
@@ -232,8 +234,8 @@ export function ListEditor({
                     /**
                      * 🔴 **完了済みなら、その場では取り消さない**（#207）。
                      *
-                     * 取り消すと入れた完了日が消える。**いつ叶えたかは
-                     * 押し直しても戻らない**（#279 以降、✓ は日付を作らない）。
+                     * 取り消すと完了日が消える。**いつ叶えたかは押し直しても戻らない**
+                     * （押し直すとその日が入る。直した日付は戻ってこない）。
                      * 思い出として持っている値が、指が当たっただけで消えるのは重い。
                      *
                      * 増やす手数は**戻す側だけ。** 未完了の ✓ は今まで通り1回で付く。
@@ -536,9 +538,25 @@ function ItemRow({
           完了日。**粒度どおりに出す**（#279）。`2026/08/14` / `2026年8月` / `2026年`。
           🔴 **日付なしの完了では何も出さない**（欄そのものが出ない）。
           完了は打ち消し線・番号の色・「やった」の数が伝えている
+
+          🔴 **押すと完了の設定が開く**（2026-08-15、#298）。
+          直したいのは日付なのに、入口が ✓ しか無かった。
+          `button` にしてキーボードからも押せるようにする。
+          `data-keep-prompt` は ✓ と同じ理由（押した瞬間に閉じると開き直せない）
         */}
         {completedOn !== '' && (
-          <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">{completedOn}</span>
+          <button
+            type="button"
+            aria-label={`${number} 番目の完了日を直す`}
+            aria-expanded={prompted}
+            data-keep-prompt=""
+            onClick={() => {
+              onToggle(item)
+            }}
+            className="shrink-0 text-[10px] text-brand-deep underline tabular-nums"
+          >
+            {completedOn}
+          </button>
         )}
 
         {/*
@@ -609,13 +627,20 @@ function ItemRow({
  * 🔴 **「未完了に戻す」に確認を重ねない。** これを開いたこと自体が1段の確認。
  * 二重にすると、本当に戻したいときに邪魔になるだけ。
  *
- * 🔴 **粒度を選ぶのもここだけ**（2026-08-14 の判断、#279）。
- * ✓ を押したときは「日付なし」で付き、思い出せる人がここで日付を足す。
- * 完了にする瞬間に粒度を選ばせると、**ふつうの完了で毎回1手増える。**
+ * 🔴 **粒度を選ばせない**（2026-08-15 の判断、#298）。
+ * **年・月・日をそれぞれ入れて、入った値から粒度が決まる**（`buildCompletedOn`）。
+ * 以前は粒度の `<select>` を先に選ばせていたが、**選んでから入れる順序が余計だった。**
  *
- * ⚠️ **選んだ粒度は state で持つ。** 「年月」に切り替えた瞬間には
- * まだ年も月も無いことがある（日付なしから切り替えた場合）。
- * **揃っていない間は送らない**（送ると、こちらが日付を捏造することになる）。
+ * ```
+ * 完了日 [2026]年 [8]月 [14]日      未完了に戻す
+ * ```
+ *
+ * 🔴 **上位が空なら下位は `-` に追従する。** 年が空なら月は選べず、月が空なら日は選べない。
+ * 年を空にすれば**日付なし**（完了は取り消さない）。ここが「覚えていない」の入口。
+ *
+ * ⚠️ **打っている途中は送らない。** 年の欄で「2」「20」「202」と打つ間に送ると、
+ * 途中の値が保存される（`1900` 年より前としてサーバーに断られる）。
+ * **空にしたときだけは送る**（日付なしにする操作なので）。
  */
 function CompletionMenu({
   completedAt,
@@ -630,142 +655,150 @@ function CompletionMenu({
 }) {
   const current = toCompletedOn(completedAt, completedPrecision)
 
-  const [mode, setMode] = useState<CompletedPrecision>(completedPrecision ?? 'unknown')
-  // 既に入っている値を引き継ぐ。粒度を落として上げ直しても、覚えている分は消えない
+  // 既に入っている分を引き継ぐ（`2026-08-14` / `2026-08` / `2026` / null）
   const [year, setYear] = useState(current?.slice(0, 4) ?? '')
   const [month, setMonth] = useState(current?.slice(5, 7) ?? '')
+  const [day, setDay] = useState(current?.slice(8, 10) ?? '')
 
-  // 未来を選ばせないための上限。**親切のためだけ**（本当に弾くのはサーバー）
-  const now = new Date()
-  const thisYear = now.getFullYear()
-  const thisMonth = now.getMonth() + 1
+  /**
+   * 未来を選ばせないための上限。**親切のためだけ**（本当に弾くのはサーバー）。
+   *
+   * 🔴 **日本時間の今日から数える**（`toCompletedOn`）。サーバーは日本時間の暦日で
+   * 判定するので（#279）、`getFullYear()` などで組み立てると
+   * **時間帯によって1日ずれ、通らない日を選ばせたり、選べる日を隠したりする。**
+   */
+  const todayJst = toCompletedOn(new Date(), 'day') ?? ''
+  const thisYear = Number(todayJst.slice(0, 4))
+  const thisMonth = Number(todayJst.slice(5, 7))
+  const today = Number(todayJst.slice(8, 10))
 
   /**
    * 年の欄が**送れる値になっているか。**
    *
    * 4桁揃っていることと、範囲（`1900` 〜 今年）を見る。
-   * ⚠️ **打っている途中は毎回ここに来る。** 年の欄で「2」「20」「202」と打つ間は
-   * 送らない（送ると `1900` 年より前としてサーバーに断られる）。
-   *
    * 🔴 **上限も見る。** 「2030」を送っても未来なのでサーバーが断るが、
    * **断られる要求をこちらから出さない**（画面が一瞬変わって戻るだけになる）。
    */
   const isYearFilled = (value: string) =>
     /^\d{4}$/.test(value) && Number(value) >= COMPLETED_ON_MIN_YEAR && Number(value) <= thisYear
 
+  const inThisYear = (y: string) => isYearFilled(y) && Number(y) === thisYear
+  const inThisMonth = (y: string, m: string) => inThisYear(y) && Number(m) === thisMonth
+
   /**
-   * 揃ったぶんだけ送る。**揃っていなければ何もしない**（打っている途中）。
+   * 3つの欄をまとめて確定する。
    *
-   * `day` はここを通らない（`<input type="date">` が値を1つ持っているので、
-   * その `change` から直に送る）。
+   * 🔴 **上位を変えたときに下位を落とす。** 年を今年にしたら未来の月は成り立たないし、
+   * うるう年を外れたら 2月29日は存在しない。**黙って別の日にしない**ために、
+   * 成り立たなくなった下位は捨てて1段粗い粒度に落とす。
    */
-  const submit = (next: { mode: CompletedPrecision; year: string; month: string }) => {
-    if (next.mode === 'unknown') {
-      onChangeCompletedOn(null)
-      return
+  const commit = (next: { year: string; month: string; day: string }) => {
+    const y = next.year
+    let m = next.month
+    let d = next.day
+
+    if (!isYearFilled(y)) {
+      // 年が無ければ月日は意味を持たない（空にしたなら日付なしとして送る）
+      m = ''
+      d = ''
+    } else if (m !== '' && inThisYear(y) && Number(m) > thisMonth) {
+      m = ''
+      d = ''
     }
 
-    if (!isYearFilled(next.year)) return
-
-    if (next.mode === 'year') onChangeCompletedOn(next.year)
-    if (next.mode === 'month' && next.month !== '') {
-      onChangeCompletedOn(`${next.year}-${next.month}`)
+    if (
+      d !== '' &&
+      (m === '' || Number(d) > daysInMonth(y, m) || (inThisMonth(y, m) && Number(d) > today))
+    ) {
+      d = ''
     }
+
+    setYear(next.year)
+    setMonth(m)
+    setDay(d)
+
+    // 打っている途中（1〜3桁や範囲外）は送らない。**空にしたときは送る**
+    if (next.year !== '' && !isYearFilled(next.year)) return
+
+    onChangeCompletedOn(buildCompletedOn({ year: y, month: m, day: d }))
   }
+
+  /** 月・日の選択肢。`-` は「そこまでは覚えていない」 */
+  const options = (values: number[]) => [
+    <option key="none" value="">
+      -
+    </option>,
+    ...values.map((value) => (
+      <option key={value} value={String(value).padStart(2, '0')}>
+        {value}
+      </option>
+    )),
+  ]
+
+  const months = Array.from({ length: 12 }, (_, index) => index + 1).filter(
+    // 今年なら、**まだ来ていない月は出さない**
+    (value) => !(inThisYear(year) && value > thisMonth),
+  )
+
+  const days = Array.from({ length: daysInMonth(year, month) }, (_, index) => index + 1).filter(
+    // 今月なら、**まだ来ていない日は出さない**
+    (value) => !(inThisMonth(year, month) && value > today),
+  )
 
   return (
     <PromptBox>
       {/* 横に並べる。入らない幅では折り返す（狭い端末で切れないように） */}
       <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="shrink-0">完了日</span>
+        <span className="flex flex-wrap items-center gap-1">
+          <span className="mr-1 shrink-0">完了日</span>
+
+          <input
+            type="number"
+            inputMode="numeric"
+            value={year}
+            aria-label="完了した年"
+            placeholder={String(thisYear)}
+            /**
+             * ⚠️ **`min` / `max` は親切のためだけ。** 手で組み立てた要求は通るので、
+             * 本当に弾くのはサーバー（`isFutureCompletedAt` と `parseCompletedOn`）。
+             */
+            min={COMPLETED_ON_MIN_YEAR}
+            max={thisYear}
+            onChange={(event) => {
+              commit({ year: event.target.value, month, day })
+            }}
+            className={`${FIELD} w-[4.5rem] tabular-nums`}
+          />
+          <span className="shrink-0">年</span>
 
           <select
-            value={mode}
-            aria-label="完了日の記録の仕方"
+            value={month}
+            aria-label="完了した月"
+            // 🔴 **年が空なら選ばせない。** 月だけでは日付にならないので、
+            // 選べる形にしておくと「選んだのに何も起きない」ことになる
+            disabled={!isYearFilled(year)}
             onChange={(event) => {
-              const next = event.target.value as CompletedPrecision
-              setMode(next)
-              submit({ mode: next, year, month })
+              commit({ year, month: event.target.value, day })
             }}
             className={SELECT}
           >
-            <option value="day">年月日</option>
-            <option value="month">年月</option>
-            <option value="year">年</option>
-            <option value="unknown">日付なし</option>
+            {options(months)}
           </select>
+          <span className="shrink-0">月</span>
 
-          {mode === 'day' && (
-            <input
-              type="date"
-              defaultValue={current ?? ''}
-              aria-label="完了日"
-              /**
-               * 打っている途中の値を弾くための箍（`validity` で見る）。
-               *
-               * **未来**: 未来に叶えたことにはできない。
-               * **1900年より前**: 年の欄を打ち直すと `0002-05-03` のような値が一度出る。
-               *
-               * ⚠️ **どちらも親切のためだけ。** 手で組み立てた要求は通るので、
-               * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
-               */
-              min={`${String(COMPLETED_ON_MIN_YEAR)}-01-01`}
-              max={toCompletedOn(now, 'day') ?? ''}
-              onChange={(event) => {
-                // 空にした・範囲外・読めない値は**何もしない。**
-                // 消す操作は「日付なし」の方（完了は取り消さない）
-                if (!event.target.validity.valid || event.target.value === '') return
-
-                onChangeCompletedOn(event.target.value)
-              }}
-              className={`${FIELD} tabular-nums`}
-            />
-          )}
-
-          {(mode === 'year' || mode === 'month') && (
-            <input
-              type="number"
-              inputMode="numeric"
-              value={year}
-              aria-label="完了した年"
-              placeholder={String(thisYear)}
-              min={COMPLETED_ON_MIN_YEAR}
-              max={thisYear}
-              onChange={(event) => {
-                setYear(event.target.value)
-                submit({ mode, year: event.target.value, month })
-              }}
-              className={`${FIELD} w-16 tabular-nums`}
-            />
-          )}
-
-          {mode === 'month' && (
-            <select
-              value={month}
-              aria-label="完了した月"
-              // 年が入っていないと月だけでは送れない。**選べることは伝える**ので
-              // 無効化はしない（何が足りないかは年の欄が空であることで分かる）
-              onChange={(event) => {
-                setMonth(event.target.value)
-                submit({ mode, year, month: event.target.value })
-              }}
-              className={SELECT}
-            >
-              <option value="">--</option>
-              {Array.from({ length: 12 }, (_, index) => index + 1)
-                // 今年を選んでいるなら、**まだ来ていない月は出さない**
-                .filter(
-                  (value) =>
-                    !(isYearFilled(year) && Number(year) === thisYear && value > thisMonth),
-                )
-                .map((value) => (
-                  <option key={value} value={String(value).padStart(2, '0')}>
-                    {value}月
-                  </option>
-                ))}
-            </select>
-          )}
+          <select
+            value={day}
+            aria-label="完了した日"
+            // 月が空なら日は選ばせない（同じ理由）
+            disabled={month === ''}
+            onChange={(event) => {
+              commit({ year, month, day: event.target.value })
+            }}
+            className={SELECT}
+          >
+            {options(days)}
+          </select>
+          <span className="shrink-0">日</span>
         </span>
 
         <button
@@ -780,7 +813,7 @@ function CompletionMenu({
   )
 }
 
-/** 完了の設定の入力欄。**同じ見た目を3つで使う**（日付・年・月） */
+/** 完了の設定の入力欄。**同じ見た目を3つで使う**（年・月・日） */
 const FIELD = 'min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900'
 
 const SELECT = `${FIELD} shrink-0`
