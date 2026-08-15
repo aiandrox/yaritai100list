@@ -495,12 +495,13 @@ export function useList(
     /**
      * 完了にする / 取り消す。
      *
-     * 🔴 **✓ を押しただけでは日付を作らない**（2026-08-14 の判断、#279）。
-     * 付くのは「日付なしの完了」（粒度 `unknown`）だけ。押した日が叶えた日とは
-     * 限らないので、**日付は持ち主が完了メニューから入れる**（`changeCompletedOn`）。
+     * 🔴 **完了日時はサーバーが決める**（`src/index.ts` の `updateItemSchema`）。
+     * 付くのは**その日・粒度 `day`**（2026-08-15 の判断、#298。#279 の
+     * 「既定は日付なし」から戻した）。覚えていない場合は完了の設定で年を空にする。
      *
-     * 手元とサーバーで同じ値になる（どちらも日時を持たない）ので、
-     * **取り直しは要らない。** 以前は端末の時計で先に描いていたため取り直していた。
+     * 手元では**その端末の時計**で先に描くので、時計が狂っていると日付がずれて見える。
+     * そこで送った後に取り直す（`applyOptimistic` の `resync`）。
+     * 画面はもう変わっているので、**取り直しを待っても遅くは見えない。**
      */
     toggleItem: async (item) => {
       if (list === null) return false
@@ -510,12 +511,18 @@ export function useList(
       return (
         onServer &&
         applyOptimistic(
-          setItemCompletion(list, item.id, completing ? COMPLETION_WITHOUT_DATE : NOT_COMPLETED),
+          setItemCompletion(
+            list,
+            item.id,
+            // 🔴 **時刻はここで作る**（`model.ts` は現在時刻を読まない）
+            completing ? { completedAt: Date.now(), completedPrecision: 'day' } : NOT_COMPLETED,
+          ),
           (id) =>
             api.api.lists[':listId'].items[':itemId'].$patch({
               param: { listId: id, itemId: item.id },
               json: { completed: completing },
             }),
+          true,
         )
       )
       // 未ログインでは完了にできない（#77）。`onServer` が false なのでここへは来ない

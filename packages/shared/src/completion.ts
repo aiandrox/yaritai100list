@@ -145,6 +145,58 @@ export function parseCompletedOn(value: string): { precision: DatedPrecision; at
 }
 
 /**
+ * 年・月・日の**別々の入力**から `completedOn` を組み立てる（#298）。
+ *
+ * 画面は粒度を選ばせず、**入った値から粒度が決まる**
+ * （2026-08-15 の利用者の指示。「選んでから入れる」順序が余計だった）。
+ *
+ * ```
+ * 2026 / 8 / 14 → '2026-08-14'    2026 / 8 / -  → '2026-08'
+ * 2026 / -  / -  → '2026'          -    / -  / - → null（日付なし）
+ * ```
+ *
+ * 🔴 **上位が空なら下位は捨てる。** 「月が空なのに日だけある」を持ち上げない。
+ * 🔴 **存在しない日になったら1段落とす**（`2023-02-29` は `2023-02`）。
+ * 年を変えたときに起きるので、**黙って別の日にしない**ためにここで受ける。
+ *
+ * ⚠️ **未来は見ない**（`now` を読まないため）。選ばせない工夫は画面側、
+ * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
+ */
+export function buildCompletedOn(parts: {
+  year: string
+  month: string
+  day: string
+}): string | null {
+  const { year, month, day } = parts
+
+  if (!/^\d{4}$/.test(year) || Number(year) < COMPLETED_ON_MIN_YEAR) return null
+  if (month === '') return year
+
+  const withMonth = `${year}-${month}`
+  if (parseCompletedOn(withMonth) === null) return year
+  if (day === '') return withMonth
+
+  const withDay = `${withMonth}-${day}`
+
+  return parseCompletedOn(withDay) === null ? withMonth : withDay
+}
+
+/**
+ * その年月の日数（#298）。日の選択肢を作るために使う。
+ *
+ * 読めない年月には `0`（選択肢が空になる）。うるう年は `Date` に任せる
+ * （`Date.UTC(2024, 2, 0)` = 2024-02-29）。
+ */
+export function daysInMonth(year: string, month: string): number {
+  if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month)) return 0
+
+  const monthNumber = Number(month)
+  if (monthNumber < 1 || monthNumber > 12) return 0
+
+  return new Date(Date.UTC(Number(year), monthNumber, 0)).getUTCDate()
+}
+
+/**
  * 逆向き。**`<input>` に入れる値**と、往復の検算に使う。
  *
  * 日付を持たない粒度（`unknown`）と未完了は `null`。

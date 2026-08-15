@@ -1,7 +1,9 @@
 import {
+  buildCompletedOn,
   COMPLETED_ON_MIN_YEAR,
   COMPLETED_PRECISIONS,
   completedOnSchema,
+  daysInMonth,
   formatCompletedOn,
   isCompleted,
   parseCompletedOn,
@@ -179,6 +181,81 @@ describe('completedOnSchema', () => {
   it('それ以外は通さない', () => {
     for (const value of ['', '26', '2026-8', '2026-08-14T00:00:00Z', '2026-08-14-01']) {
       expect(completedOnSchema.safeParse(value).success).toBe(false)
+    }
+  })
+})
+
+/**
+ * 年・月・日の別々の入力から組み立てる（#298）。
+ *
+ * 画面は粒度を選ばせず、**入った値から粒度が決まる**
+ * （2026-08-15 の利用者の指示）。ここが「何を入れたら何になるか」の仕様。
+ */
+describe('buildCompletedOn', () => {
+  const parts = (year: string, month: string, day: string) => ({ year, month, day })
+
+  it('入った値から粒度が決まる', () => {
+    expect(buildCompletedOn(parts('2026', '08', '14'))).toBe('2026-08-14')
+    expect(buildCompletedOn(parts('2026', '08', ''))).toBe('2026-08')
+    expect(buildCompletedOn(parts('2026', '', ''))).toBe('2026')
+  })
+
+  it('🔴 年が空なら null（日付なし）', () => {
+    expect(buildCompletedOn(parts('', '', ''))).toBeNull()
+    // 月日が残っていても、年が無ければ日付にならない
+    expect(buildCompletedOn(parts('', '08', '14'))).toBeNull()
+  })
+
+  it('🔴 上位が空なら下位は捨てる（月が無いのに日だけは持ち上げない）', () => {
+    expect(buildCompletedOn(parts('2026', '', '14'))).toBe('2026')
+  })
+
+  it('🔴 存在しない日なら1段落とす（黙って別の日にしない）', () => {
+    // 2023年はうるう年ではない。2024-02-29 の年を変えたときに起きる
+    expect(buildCompletedOn(parts('2023', '02', '29'))).toBe('2023-02')
+    expect(buildCompletedOn(parts('2024', '02', '29'))).toBe('2024-02-29')
+  })
+
+  it('打っている途中のような年は null（呼ぶ側が送らない判断をする）', () => {
+    for (const year of ['2', '20', '202', '20266', 'あ', '1899']) {
+      expect(buildCompletedOn(parts(year, '08', '14'))).toBeNull()
+    }
+  })
+
+  it('組み立てたものは必ず読み戻せる', () => {
+    for (const value of [
+      buildCompletedOn(parts('2026', '08', '14')),
+      buildCompletedOn(parts('2026', '08', '')),
+      buildCompletedOn(parts('2026', '', '')),
+    ]) {
+      expect(value).not.toBeNull()
+      expect(parseCompletedOn(value ?? '')).not.toBeNull()
+    }
+  })
+})
+
+describe('daysInMonth', () => {
+  it('月ごとの日数を返す', () => {
+    expect(daysInMonth('2026', '01')).toBe(31)
+    expect(daysInMonth('2026', '04')).toBe(30)
+    expect(daysInMonth('2026', '02')).toBe(28)
+  })
+
+  it('うるう年の2月は29日', () => {
+    expect(daysInMonth('2024', '02')).toBe(29)
+    expect(daysInMonth('2000', '02')).toBe(29)
+    expect(daysInMonth('1900', '02')).toBe(28)
+  })
+
+  it('読めない年月は 0（選択肢が空になる）', () => {
+    for (const [year, month] of [
+      ['2026', ''],
+      ['2026', '13'],
+      ['2026', '00'],
+      ['', '01'],
+      ['26', '01'],
+    ]) {
+      expect(daysInMonth(year ?? '', month ?? '')).toBe(0)
     }
   })
 })

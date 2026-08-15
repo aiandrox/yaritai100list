@@ -102,12 +102,15 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
 /**
  * 項目の変更。
  *
- * 🔴 **`completed: true` は「日付なしの完了」になる**（2026-08-14 の判断、#279）。
- * 以前はサーバーの現在時刻を入れていたが、**押した日が叶えた日とは限らない**
- * （昔やったことを後から書き足す）。日付は持ち主が入れるものにして、
- * ✓ を押しただけでは日付を作らない。
+ * 🔴 **`completed: true` は「その日・粒度 `day`」になる。日時はサーバーが決める**
+ * （2026-08-15 の判断、#298）。端末の時計は狂っていることがあるので値は受け取らない。
  *
- * 🔴 **日付を入れる・直すのは持ち主が決める**（#207 / #279）。`completedOn` を受け取る。
+ * ⚠️ **#279 で一度「日付なし」を既定にしたが、戻した。**
+ * 「押した日が叶えた日とは限らない」のは確かでも、**記録のほとんどは今日やったこと**で、
+ * ふつうの完了で毎回日付を入れることになり手数が多かった。
+ * 覚えていない場合は、完了の設定で**年を空にすれば日付なしに戻せる**（#298）。
+ *
+ * 🔴 **日付を直すのは持ち主が決める**（#207 / #279）。`completedOn` を受け取る。
  * 形が粒度を表す（`2026` / `2026-08` / `2026-08-14`）。`null` で日付なしに戻せる。
  * **完了していない項目には入れさせない**（下のハンドラが 409 で断る）。
  * 「完了にする」と「いつ叶えたか」を2段に分けておくと、状態の組み合わせが増えない。
@@ -723,13 +726,15 @@ const app = new Hono<AppEnv>()
         .update(items)
         .set({
           ...(patch.text === undefined ? {} : { text: patch.text }),
-          // 🔴 **完了にしても日付は作らない**（#279）。粒度だけを付ける
+          /**
+           * 🔴 **完了にした瞬間は「その日」**（2026-08-15、#298）。日時はサーバーが決める。
+           * 粒度も一緒に入れる（`completed_at` だけの行は DB が拒否する。`0016`）。
+           */
           ...(patch.completed === undefined
             ? {}
-            : {
-                completedAt: null,
-                completedPrecision: patch.completed ? ('unknown' as const) : null,
-              }),
+            : patch.completed
+              ? { completedAt: new Date(), completedPrecision: 'day' as const }
+              : { completedAt: null, completedPrecision: null }),
           ...(completion ?? {}),
           ...(patch.hiddenInShare === undefined ? {} : { hiddenInShare: patch.hiddenInShare }),
           updatedAt: new Date(),
