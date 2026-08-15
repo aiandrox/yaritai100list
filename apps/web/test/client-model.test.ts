@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import {
+  achievementTitle,
   addItem,
   canInviteToShare,
   canUseShareSheet,
@@ -34,6 +35,8 @@ import {
   shareUrl,
   sortAdoptedLast,
   sortListsByCreated,
+  newlyCompletedText,
+  WROTE_ALL_TITLE,
   COMPLETION_WITHOUT_DATE,
   NOT_COMPLETED,
   setItemCompletion,
@@ -545,6 +548,83 @@ describe('inviteKind', () => {
   it('🔴 未ログインで「やった」が増えても誘わない', () => {
     // そもそも未ログインでは完了にできない（#77）。条件が変わっても勝手に増えないように
     expect(inviteKind('completed', false)).toBeNull()
+  })
+})
+
+/**
+ * モーダルの見出し（#306）。**なぜ出たのかを見出しで言う。**
+ *
+ * 以前は「みんなにもリストを見せませんか？」から始まっていて、
+ * **いま自分が何をしたから出たのか**が分からなかった（2026-08-15 の利用者の指摘）。
+ */
+describe('achievementTitle', () => {
+  it('叶えたときは、その項目の本文を入れる', () => {
+    expect(achievementTitle({ kind: 'completed', text: '南極に行く' })).toBe(
+      '南極に行くを達成しました',
+    )
+  })
+
+  it('100個書き終えたときの文言', () => {
+    expect(achievementTitle({ kind: 'filled' })).toBe(WROTE_ALL_TITLE)
+  })
+
+  it('🔴 未ログインの書き終わり（#284）と同じ文言を使う', () => {
+    // 書き分けると必ずずれる。**同じ定数を指していること**を固定する
+    expect(WROTE_ALL_TITLE).toBe('100個、書き終わりました！')
+  })
+})
+
+describe('newlyCompletedText', () => {
+  /** 完了した状態の項目を作る（粒度で完了を表す。#279） */
+  const done = (list: LocalList, id: string) =>
+    expectOk(setItemCompletion(list, id, COMPLETION_WITHOUT_DATE))
+
+  it('新しく完了した項目の本文を返す', () => {
+    const before = listOf('南極に行く', 'オーロラを見る')
+    const after = done(before, 'i2')
+
+    expect(newlyCompletedText(before, after)).toBe('オーロラを見る')
+  })
+
+  it('🔴 日付なしの完了も見つける（#279）', () => {
+    const before = listOf('南極に行く')
+    const after = done(before, 'i1')
+
+    expect(newlyCompletedText(before, after)).toBe('南極に行く')
+  })
+
+  it('日付ありの完了も見つける', () => {
+    const before = listOf('南極に行く')
+    const after = expectOk(completeOn(before, 'i1', 1_700_000_000_000))
+
+    expect(newlyCompletedText(before, after)).toBe('南極に行く')
+  })
+
+  it('何も変わっていなければ null', () => {
+    const list = done(listOf('南極に行く', 'オーロラを見る'), 'i1')
+
+    expect(newlyCompletedText(list, list)).toBeNull()
+  })
+
+  it('🔴 完了を取り消しただけなら null（お誘いを出さない側に倒す）', () => {
+    const before = done(listOf('南極に行く'), 'i1')
+    const after = expectOk(setItemCompletion(before, 'i1', NOT_COMPLETED))
+
+    expect(newlyCompletedText(before, after)).toBeNull()
+  })
+
+  it('本文を書き換えただけなら null（完了は動いていない）', () => {
+    const before = done(listOf('南極に行く'), 'i1')
+    const after = expectOk(updateItemText(before, 'i1', '北極に行く'))
+
+    expect(newlyCompletedText(before, after)).toBeNull()
+  })
+
+  it('2つ同時に完了していたら、リストで先に来るものを返す', () => {
+    const before = listOf('1つ目', '2つ目')
+    const after = done(done(before, 'i2'), 'i1')
+
+    expect(newlyCompletedText(before, after)).toBe('1つ目')
   })
 })
 
