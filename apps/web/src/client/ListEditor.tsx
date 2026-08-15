@@ -632,11 +632,15 @@ function ItemRow({
  * 以前は粒度の `<select>` を先に選ばせていたが、**選んでから入れる順序が余計だった。**
  *
  * ```
- * 完了日 [2026]年 [8]月 [14]日      未完了に戻す
+ * 完了日 [2026]年 [8]月 [14]日
+ * 日付なし / 未完了に戻す
  * ```
  *
  * 🔴 **上位が空なら下位は `-` に追従する。** 年が空なら月は選べず、月が空なら日は選べない。
- * 年を空にすれば**日付なし**（完了は取り消さない）。ここが「覚えていない」の入口。
+ *
+ * 🔴 **「日付なし」は押せるものとして出す**（2026-08-15 の指摘、#310）。
+ * 年を空にしても日付なしになるが、**そう書いていないので暗黙すぎた。**
+ * 覚えていない人がたどり着ける口を、押せる形で1つ置く（完了は取り消さない）。
  *
  * ⚠️ **打っている途中は送らない。** 年の欄で「2」「20」「202」と打つ間に送ると、
  * 途中の値が保存される（`1900` 年より前としてサーバーに断られる）。
@@ -801,17 +805,35 @@ function CompletionMenu({
           <span className="shrink-0">日</span>
         </span>
 
-        <button
-          type="button"
-          onClick={onUncomplete}
-          className="font-bold text-brand-deep underline"
-        >
-          未完了に戻す
-        </button>
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {/*
+            🔴 **「日付なし」の入口**（#310）。年を空にするのと同じことをする。
+            **日付が入っているときだけ出す**（既に日付なしなら押しても何も起きない）。
+            文言は #279 で利用者が選んだ「日付なし」をそのまま使う
+          */}
+          {year !== '' && (
+            <button
+              type="button"
+              onClick={() => {
+                commit({ year: '', month: '', day: '' })
+              }}
+              className={ACTION}
+            >
+              日付なし
+            </button>
+          )}
+
+          <button type="button" onClick={onUncomplete} className={ACTION}>
+            未完了に戻す
+          </button>
+        </span>
       </span>
     </PromptBox>
   )
 }
+
+/** 完了の設定の押せる文字。**「日付なし」と「未完了に戻す」で同じ見た目にする**（#310） */
+const ACTION = 'font-bold text-brand-deep underline'
 
 /** 完了の設定の入力欄。**同じ見た目を3つで使う**（年・月・日） */
 const FIELD = 'min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900'
