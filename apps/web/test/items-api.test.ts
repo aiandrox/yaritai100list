@@ -1,5 +1,11 @@
 import { exports } from 'cloudflare:workers'
-import { ITEM_TEXT_MAX_LENGTH, ITEMS_PER_LIST_MAX, toCompletedOn } from '@yaritai100list/shared'
+import {
+  COMPLETED_ON_TIME_ZONE_OFFSET_MS,
+  ITEM_MEMO_MAX_LENGTH,
+  ITEM_TEXT_MAX_LENGTH,
+  ITEMS_PER_LIST_MAX,
+  toCompletedOn,
+} from '@yaritai100list/shared'
 import { asc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -181,6 +187,78 @@ describe('項目の変更', () => {
     expect(row?.text).toBe('北極に行く')
   })
 
+  /** メモ（#294）。**理由・補足・叶えたときのこと。** */
+  describe('メモ', () => {
+    const patchMemo = (headers: Headers, id: string, memo: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { memo }))
+
+    const memoOf = async (id: string) => {
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+
+      return row?.memo
+    }
+
+    it('書ける・読み戻せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, '大学の頃から登りたかった')).status).toBe(200)
+      expect(await memoOf(id)).toBe('大学の頃から登りたかった')
+    })
+
+    it('本文と一緒に送れる（別の操作にしない）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      const res = await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { text: '富士山に登頂する', memo: 'ご来光が見たい' }),
+      )
+
+      expect(res.status).toBe(200)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.text).toBe('富士山に登頂する')
+      expect(row?.memo).toBe('ご来光が見たい')
+    })
+
+    it('null で消せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, null)).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 空文字は null に寄せる（「書いていない」の表し方を1つにする）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, '   ')).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 上限を超えたら断る', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH))).status).toBe(200)
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH + 1))).status).toBe(
+        400,
+      )
+    })
+
+    it('🔴 他人の項目のメモは書き換えられない', async () => {
+      const { me, other } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(other.headers, id, '書き換え')).status).toBe(404)
+      expect(await memoOf(id)).toBeNull()
+    })
+  })
+
   /** 共有で見せない設定（#237）。 */
   describe('共有で見せない設定', () => {
     it('隠せる・戻せる', async () => {
@@ -334,22 +412,36 @@ describe('項目の変更', () => {
       expect(row?.completedAt).toBeNull()
     })
 
+    /**
+     * 日本時間の暦日（`YYYY-MM-DD`）。**サーバーと同じ変換**（#300）。
+     *
+     * `toCompletedOn` は日付ありの粒度なら必ず返すが、型は `null` を含む。
+     * **黙って別の値に倒さない**（倒すと、間違った日付で通ったのか分からなくなる）。
+     */
+    const jstDay = (at: Date): string => {
+      const value = toCompletedOn(at, 'day')
+      if (value === null) throw new Error('日付を作れなかった')
+
+      return value
+    }
+
     it('🔴 未来は拒否される（来年・来月・明日）', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      /**
-       * 🔴 **「明日」「今年」は日本時間で数える**（`toCompletedOn`）。サーバーが
-       * 日本時間の暦日で判定するため（#279）。
+      /*
+       * 🔴 **日付は日本時間で組み立てる**（#300）。
+       * サーバーは完了日を**日本時間の暦日**として読む（#279）ので、
+       * UTC で「明日」を作ると、**UTC 15:00〜24:00（日本時間の 0〜9時）の間だけ
+       * それが JST では過去になり、正しく通ってしまう。**
        *
-       * ⚠️ **`new Date().getFullYear()` などで組み立てないこと。**
-       * テストは UTC の時計で走るので、日本時間の朝9時より前は**日付が1日ずれ、
-       * 「明日」がじつは今日になって 200 が返る**（実際に踏んだ）。
+       * 判定の基準を2箇所に書かないよう、**サーバーと同じ `toCompletedOn`** を使う。
+       * ⚠️ `now + 24h` の JST 日付は、必ず**その日の頭が未来**になる（境目も安全）。
        */
       const now = new Date()
-      const todayJst = toCompletedOn(now, 'day') ?? ''
-      const nextYear = String(Number(todayJst.slice(0, 4)) + 1)
-      const nextDay = toCompletedOn(new Date(now.getTime() + 24 * 60 * 60 * 1000), 'day') ?? ''
+      const jstNow = new Date(now.getTime() + COMPLETED_ON_TIME_ZONE_OFFSET_MS)
+      const nextYear = String(jstNow.getUTCFullYear() + 1)
+      const nextDay = jstDay(new Date(now.getTime() + 24 * 60 * 60 * 1000))
 
       for (const value of [nextYear, `${nextYear}-01`, nextDay]) {
         expect((await patchCompletedOn(me.headers, id, value)).status).toBe(400)
@@ -358,15 +450,15 @@ describe('項目の変更', () => {
       // 弾かれたので、✓ を押したときの日付（今日・粒度 day）のまま
       const row = await rowOf(id)
       expect(row?.completedPrecision).toBe('day')
-      expect(toCompletedOn(row?.completedAt ?? null, 'day')).toBe(todayJst)
+      expect(jstDay(row?.completedAt ?? new Date(0))).toBe(jstDay(now))
     })
 
     it('今年・今月・今日は通る（期間の頭で判定するため）', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      // 日本時間の今日から組み立てる（上の「未来は拒否される」と同じ理由）
-      const todayJst = toCompletedOn(new Date(), 'day') ?? ''
+      // 日本時間の今日から組み立てる（上の「未来は拒否される」と同じ理由。#300）
+      const todayJst = jstDay(new Date())
 
       expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 4))).status).toBe(200)
       expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 7))).status).toBe(200)

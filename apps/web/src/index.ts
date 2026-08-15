@@ -19,6 +19,7 @@ import {
   LISTS_PER_USER_MAX,
   SHARE_HIDDEN_ITEM_LABEL,
   SHARED_VISIBILITIES,
+  itemMemoSchema,
   itemTextSchema,
   signExportImagePayload,
   signOgPayload,
@@ -127,6 +128,10 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
  * 🔴 **`hiddenInShare`（#237）はリストの `visibility` とは別物。**
  * 「誰が見られるか」ではなく「見られる相手にこの1件の本文を見せるか」で、
  * 共有ページにだけ効く。ダウンロード画像・書き出しには適用しない。
+ *
+ * 🔴 **`memo`（#294）は本文と一緒に送れる。** 別の操作にしない
+ * （書きながら直すものなので、要求を分ける理由が無い）。
+ * `null` で消せる。省略は「変えない」（`itemMemoSchema`）。
  */
 const updateItemSchema = z
   .object({
@@ -134,6 +139,7 @@ const updateItemSchema = z
     completed: z.boolean().optional(),
     completedOn: completedOnSchema.nullable().optional(),
     hiddenInShare: z.boolean().optional(),
+    memo: itemMemoSchema.optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
@@ -178,8 +184,8 @@ const importListSchema = z
  * ⚠️ **D1 は1文あたりのバインド変数の上限が100個**（実測。#89 で踏んだ）。
  * 一番列の多い呼び出し（`POST /api/lists/restore`。`id` / `list_id` / `text` /
  * `completed_at` / `completed_precision`（#279） / `hidden_in_share`（#237） /
- * `position` の7列。`created_at` / `updated_at` は SQL 側の既定値なので
- * バインド変数を使わない）でも 14行 × 7列 = 98個に収まるようにしてある。
+ * `memo`（#294） / `position` の8列。`created_at` / `updated_at` は SQL 側の既定値なので
+ * バインド変数を使わない）でも 12行 × 8列 = 96個に収まるようにしてある。
  *
  * 🔴 **`hiddenInShare` を明示せずに `insert` しても、JS 側の既定値（`false`）が
  * バインド変数として1個乗る。** SQL 側の既定値（`sql\`...\`` で書いた列）と違い、
@@ -188,10 +194,11 @@ const importListSchema = z
  * 🔴 **列を足したらここを見直す。** #279 で `completed_precision` を足したとき、
  * 16行 × 7列 = 112個で上限を越えて**100件の読み込みだけが 500 になった**
  * （少ない件数では1文に収まるので、テストの件数を減らすと気づけない）。
+ * #294 で `memo` を足したときも同じ計算で **14 → 12** に下げている。
  *
  * 分けても `batch` に渡せば1トランザクションのまま。
  */
-const INSERT_CHUNK = 14
+const INSERT_CHUNK = 12
 
 /**
  * 画像を出せなかったことを最後に通知した時刻（#290）。
@@ -461,6 +468,8 @@ const app = new Hono<AppEnv>()
       // 🔴 **粒度が無い古いファイルを読めるようにする**（#279）。
       // 補い方は `completedPrecisionOf`（日時があれば `day`）。ここで書かない
       completedPrecision: completedPrecisionOf(item),
+      // メモが無い古いファイルは `undefined` で来る（#294）。**NULL に寄せる**
+      memo: item.memo ?? null,
     }))
 
     // 項目が0件のリストも書き出せるので、ここは空になりうる。
@@ -737,6 +746,8 @@ const app = new Hono<AppEnv>()
               : { completedAt: null, completedPrecision: null }),
           ...(completion ?? {}),
           ...(patch.hiddenInShare === undefined ? {} : { hiddenInShare: patch.hiddenInShare }),
+          // 空文字は `itemMemoSchema` が null に寄せてある（＝消す）
+          ...(patch.memo === undefined ? {} : { memo: patch.memo }),
           updatedAt: new Date(),
         })
         .where(eq(items.id, item.id))

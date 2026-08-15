@@ -171,6 +171,23 @@ describe('GET /api/discover', () => {
 
       expect(Object.keys(row ?? {})).toEqual(['text', 'adopted'])
     })
+
+    /**
+     * 🔴 **メモは流通させない**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
+     * プールは**本文だけ**を集める場で、個人の事情が混ざる場所ではない。
+     */
+    it('🔴 メモを返さない（プールに流れ込まない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['南極に行く'] })
+      await testDb()
+        .update(items)
+        .set({ memo: 'ここは自分だけのメモ' })
+        .where(eq(items.listId, 'p1'))
+
+      const body = await readPool()
+
+      expect(JSON.stringify(body)).not.toContain('ここは自分だけのメモ')
+      expect(Object.keys(body.items[0] ?? {})).toEqual(['text', 'adopted'])
+    })
   })
 
   describe('本文でまとめる', () => {

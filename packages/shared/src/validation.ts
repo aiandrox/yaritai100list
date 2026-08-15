@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ITEM_TEXT_MAX_LENGTH, LIST_TITLE_MAX_LENGTH } from './limits'
+import { ITEM_MEMO_MAX_LENGTH, ITEM_TEXT_MAX_LENGTH, LIST_TITLE_MAX_LENGTH } from './limits'
 
 /**
  * リストの公開範囲。`PRODUCT_SPEC.md` §5.1。
@@ -52,6 +52,23 @@ export const POOL_VISIBILITIES = ['public'] as const
 export const listTitleSchema = z.string().trim().min(1).max(LIST_TITLE_MAX_LENGTH)
 
 export const itemTextSchema = z.string().trim().min(1).max(ITEM_TEXT_MAX_LENGTH)
+
+/**
+ * 項目のメモ（#294）。**本文と違って「空」を許す。**
+ *
+ * 🔴 **空文字は `null` に寄せる**（`.transform`）。
+ * 「書いていない」の表し方を1つにする。2通りあると、
+ * 画面もテストも「空文字と null の両方」を気にすることになる（`items.memo` のコメント）。
+ *
+ * ⚠️ **`null` を受け取れる。** 書いたメモを**消す**経路がこれ。
+ * 省略（`undefined`）は「変えない」で、`null` は「消す」。
+ */
+export const itemMemoSchema = z
+  .string()
+  .trim()
+  .max(ITEM_MEMO_MAX_LENGTH)
+  .nullable()
+  .transform((memo) => (memo === null || memo === '' ? null : memo))
 
 /**
  * 完了日時として受け取ってはいけない値か。**未来だけを弾く**（#207 / #89）。

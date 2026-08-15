@@ -73,7 +73,7 @@ gh api repos/aiandrox/yaritai100list/issues/2/sub_issues -F sub_issue_id=$CHILD_
 git switch -c 12-vitest-miniflare              # <イシュー番号>-<英小文字の slug>
 
 # 実装する。テストを同じ PR に含める
-npm run typecheck && npm run lint && npm test  # ローカルで緑にしてから出す
+npm run typecheck && npm run lint && npm run format:check && npm test  # ローカルで緑にしてから出す
 
 git commit -m "..."
 gh pr create --fill --body "Closes #12"         # 🔴 日本語にしない。閉じなくなる

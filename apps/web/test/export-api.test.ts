@@ -65,8 +65,9 @@ describe('buildExportFile', () => {
             text: '南極に行く',
             completedAt: new Date(1_700_000_000_000),
             completedPrecision: 'day',
+            memo: null,
           },
-          { text: 'オーロラを見る', completedAt: null, completedPrecision: null },
+          { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
         ],
       },
       new Date(0),
@@ -77,9 +78,29 @@ describe('buildExportFile', () => {
         text: '南極に行く',
         completedAt: new Date(1_700_000_000_000).toISOString(),
         completedPrecision: 'day',
+        memo: null,
       },
-      { text: 'オーロラを見る', completedAt: null, completedPrecision: null },
+      { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
     ])
+  })
+
+  /**
+   * 🔴 **JSON にはメモを入れる**（#294）。ここだけが入れる側。
+   * 落とすと、書き出して取り込んだときに**メモだけが消える。**
+   */
+  it('🔴 メモを含める（落とすと往復でメモだけ消える）', () => {
+    const file = buildExportFile(
+      {
+        title: 'x',
+        items: [
+          { text: '南極に行く', completedAt: null, completedPrecision: null, memo: '寒そう' },
+          { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
+        ],
+      },
+      new Date(0),
+    )
+
+    expect(file.list.items.map((item) => item.memo)).toEqual(['寒そう', null])
   })
 
   // 🔴 落とすと、日付なしの完了が読み込んだ先で未完了になる（#279）
@@ -87,13 +108,15 @@ describe('buildExportFile', () => {
     const file = buildExportFile(
       {
         title: 'x',
-        items: [{ text: '南極に行く', completedAt: null, completedPrecision: 'unknown' }],
+        items: [
+          { text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null },
+        ],
       },
       new Date(0),
     )
 
     expect(file.list.items).toEqual([
-      { text: '南極に行く', completedAt: null, completedPrecision: 'unknown' },
+      { text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null },
     ])
     expect(exportFileSchema.safeParse(file).success).toBe(true)
   })
@@ -128,7 +151,12 @@ describe('buildExportFile', () => {
 
     it('粒度があればそちらを使う', () => {
       expect(
-        completedPrecisionOf({ text: 'x', completedAt: null, completedPrecision: 'unknown' }),
+        completedPrecisionOf({
+          text: 'x',
+          completedAt: null,
+          completedPrecision: 'unknown',
+          memo: null,
+        }),
       ).toBe('unknown')
     })
   })
@@ -138,8 +166,8 @@ describe('buildExportFile', () => {
       {
         title: 'x',
         items: [
-          { text: 'b', completedAt: null, completedPrecision: null },
-          { text: 'a', completedAt: null, completedPrecision: null },
+          { text: 'b', completedAt: null, completedPrecision: null, memo: null },
+          { text: 'a', completedAt: null, completedPrecision: null, memo: null },
         ],
       },
       new Date(0),
@@ -154,7 +182,9 @@ describe('buildExportFile', () => {
     const file = buildExportFile(
       {
         title: '2026年の目標',
-        items: [{ text: '南極に行く', completedAt: new Date(0), completedPrecision: 'day' }],
+        items: [
+          { text: '南極に行く', completedAt: new Date(0), completedPrecision: 'day', memo: null },
+        ],
       },
       new Date(1_700_000_000_000),
     )
@@ -178,6 +208,8 @@ describe('buildMarkdown', () => {
           text: item.text,
           completedAt: item.completedAt === null ? null : new Date(item.completedAt),
           completedPrecision: item.completedPrecision ?? (item.completedAt === null ? null : 'day'),
+          // マークダウンにメモは出さない（#294）。ここでは常に空
+          memo: null,
         })),
       },
       new Date(0),
@@ -248,6 +280,32 @@ describe('buildMarkdown', () => {
     const markdown = buildMarkdown(file([{ text: 'x', completedAt: '2026-05-01T15:00:00.000Z' }]))
 
     expect(markdown).toContain('（2026/05/02 達成）')
+  })
+
+  /**
+   * 🔴 **マークダウンにメモを出さない**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
+   * これは**ブログなどに貼る、人に見せるためのもの。** 自分だけのメモは載せない。
+   */
+  it('🔴 メモを出さない（人に見せるためのものなので）', () => {
+    const built = buildExportFile(
+      {
+        title: 'x',
+        items: [
+          {
+            text: '南極に行く',
+            completedAt: null,
+            completedPrecision: null,
+            memo: 'ここは自分だけのメモ',
+          },
+        ],
+      },
+      new Date(0),
+    )
+
+    const markdown = buildMarkdown(built)
+
+    expect(markdown).toContain('南極に行く')
+    expect(markdown).not.toContain('ここは自分だけのメモ')
   })
 
   describe('粒度どおりに出す（#279）', () => {
@@ -435,6 +493,7 @@ describe('GET /api/lists/:listId/export', () => {
         position: 0,
         completedAt: new Date(1_700_000_000_000),
         completedPrecision: 'day',
+        memo: null,
       })
 
     const res = await request('/api/lists/my-list/export', { headers: me.headers })

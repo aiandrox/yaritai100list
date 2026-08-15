@@ -235,9 +235,15 @@ describe('POST /api/lists/restore', () => {
       exportFile({
         list: {
           title: 'いっぱい',
+          /*
+           * 🔴 **メモ付きで詰める**（#294）。列が1つ増えるとバインド変数も増えるので、
+           * **メモが空のままだと上限に触れず、この試験の意味が無くなる**
+           * （#279 で `completed_precision` を足したときに同じ形で踏んだ）。
+           */
           items: Array.from({ length: ITEMS_PER_LIST_MAX }, (_, i) => ({
             text: `やりたい${String(i)}`,
             completedAt: null,
+            memo: `メモ${String(i)}`,
           })),
         },
       }),
@@ -246,7 +252,54 @@ describe('POST /api/lists/restore', () => {
     expect(res.status).toBe(201)
 
     const [row] = await testDb().select().from(lists)
-    expect(await itemsOf(row?.id ?? '')).toHaveLength(ITEMS_PER_LIST_MAX)
+    const restored = await itemsOf(row?.id ?? '')
+
+    expect(restored).toHaveLength(ITEMS_PER_LIST_MAX)
+    expect(restored[0]?.memo).toBe('メモ0')
+  })
+
+  /** メモ（#294）。**JSON だけが持ち出せる形なので、往復で消えないことを見る。** */
+  describe('メモ', () => {
+    it('🔴 書き出して読み込むと、メモが戻る', async () => {
+      const me = await signIn('memo@example.com')
+
+      const res = await restore(
+        me.headers,
+        exportFile({
+          list: {
+            title: 'x',
+            items: [
+              { text: '富士山に登る', completedAt: null, memo: 'ご来光が見たい' },
+              { text: '南極に行く', completedAt: null },
+            ],
+          },
+        }),
+      )
+
+      expect(res.status).toBe(201)
+
+      const [row] = await testDb().select().from(lists)
+      const restored = await itemsOf(row?.id ?? '')
+
+      expect(restored.map((item) => item.memo)).toEqual(['ご来光が見たい', null])
+    })
+
+    it('🔴 メモが無い古いファイルも読める（版を上げていない）', async () => {
+      // #279 と同じ判断。省略できる1項目を足しただけなので、古いファイルの意味は変わらない
+      const me = await signIn('oldfile@example.com')
+
+      const res = await restore(
+        me.headers,
+        exportFile({
+          list: { title: 'x', items: [{ text: '南極に行く', completedAt: null }] },
+        }),
+      )
+
+      expect(res.status).toBe(201)
+
+      const [row] = await testDb().select().from(lists)
+      expect((await itemsOf(row?.id ?? ''))[0]?.memo).toBeNull()
+    })
   })
 
   describe('断るもの', () => {

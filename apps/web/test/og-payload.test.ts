@@ -38,6 +38,13 @@ describe('ogPayloadSchema', () => {
     expect(ogPayloadSchema.safeParse(withAuthor).success).toBe(false)
   })
 
+  it('🔴 メモを入れる場所が無い（#294）', () => {
+    // OGP はリンクを渡した人が見るカード。自分だけのメモを載せない
+    const withMemo = { ...payload(), memo: 'ここは自分だけのメモ' }
+
+    expect(ogPayloadSchema.safeParse(withMemo).success).toBe(false)
+  })
+
   it('🔴 タイトルの長さに上限がある', () => {
     // 画像に描くテキストは長さを制限する（TECH_STACK.md §9）。
     // レイアウト崩れと CPU 消費の両方を防ぐ
