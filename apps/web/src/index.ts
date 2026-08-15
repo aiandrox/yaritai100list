@@ -34,7 +34,7 @@ import { z } from 'zod'
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { items, lists, pool, wishTexts } from './db/schema'
+import { items, lists, pool, users, wishTexts } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
@@ -631,6 +631,54 @@ const app = new Hono<AppEnv>()
     await createDb(c.env.DB)
       .delete(lists)
       .where(eq(lists.id, c.get('list').id))
+
+    return c.json({ deleted: true } as const)
+  })
+
+  /**
+   * アカウントを消す（#308）。**取り消せない。**
+   *
+   * 🔴 **自分のアカウントしか消せない。** `userId` を要求から受け取らず、
+   * **セッションから引く**（`requireUser`）。受け取る口を作らなければ、他人を消せない。
+   *
+   * 消えるもの:
+   *
+   * | | どうやって |
+   * |---|---|
+   * | `users` / `sessions` / `accounts` | `on delete cascade` |
+   * | `lists` → `items` | 同上（リスト1件の削除と同じ経路） |
+   * | `pool` | **作り直す**（下記） |
+   * | `wish_texts` | **参照されなくなった行を消す**（下記） |
+   *
+   * ⚠️ **セッションも消える**ので、この応答の後は同じ Cookie で何も通らない。
+   */
+  .delete('/api/account', requireUser, async (c) => {
+    const db = createDb(c.env.DB)
+
+    await db.delete(users).where(eq(users.id, c.get('userId')))
+
+    /*
+     * 🔴 **消し残る2つを片付ける。**
+     *
+     * `wish_texts` は**書かれたままの本文をキー**にしていて、誰が書いたかを持たない。
+     * アカウントを消しても**その人が書いた文章が残る**ので、
+     * **どこからも参照されなくなった行**を消す。
+     * ⚠️ 他の人が同じ本文を書いていれば残る（それはその人のもの）。
+     *
+     * `pool` はバッチが1時間ごとに作り直すので、放っておくと
+     * **「消したのに `/discover` に出ている」が最大1時間続く。** ここで作り直す。
+     *
+     * 🔴 **削除と同じトランザクションにしない。** ここが失敗しても
+     * **アカウントの削除は確定させる**（逆だと、消したはずのものが戻る）。
+     * 失敗しても次のバッチが直すので、記録だけ残して先へ進む。
+     */
+    try {
+      await db.run(sql`delete from wish_texts where raw_text not in (select text from items)`)
+      await rebuildPool(db)
+    } catch (error) {
+      Sentry.captureException(error)
+      console.error(`delete-account: 後片付けに失敗した: ${String(error)}`)
+    }
 
     return c.json({ deleted: true } as const)
   })
