@@ -320,7 +320,11 @@ describe('見えてはいけないもの', () => {
   it('🔴 完了した項目でもメモは出ない（叶えたときのことを書く場所なので）', async () => {
     const list = await createList({ visibility: 'unlisted' })
     await addItems(list.id, [
-      { text: '富士山に登る', completedAt: new Date('2026-08-01T00:00:00.000Z'), memo: 'ご来光が見えた' },
+      {
+        text: '富士山に登る',
+        completedAt: new Date('2026-08-01T00:00:00.000Z'),
+        memo: 'ご来光が見えた',
+      },
     ])
 
     const body = await (await request(`/share/${list.shareId}`)).text()

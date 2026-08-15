@@ -108,7 +108,9 @@ describe('buildExportFile', () => {
     const file = buildExportFile(
       {
         title: 'x',
-        items: [{ text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null }],
+        items: [
+          { text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null },
+        ],
       },
       new Date(0),
     )
@@ -149,7 +151,12 @@ describe('buildExportFile', () => {
 
     it('粒度があればそちらを使う', () => {
       expect(
-        completedPrecisionOf({ text: 'x', completedAt: null, completedPrecision: 'unknown', memo: null }),
+        completedPrecisionOf({
+          text: 'x',
+          completedAt: null,
+          completedPrecision: 'unknown',
+          memo: null,
+        }),
       ).toBe('unknown')
     })
   })
@@ -175,7 +182,9 @@ describe('buildExportFile', () => {
     const file = buildExportFile(
       {
         title: '2026年の目標',
-        items: [{ text: '南極に行く', completedAt: new Date(0), completedPrecision: 'day', memo: null }],
+        items: [
+          { text: '南極に行く', completedAt: new Date(0), completedPrecision: 'day', memo: null },
+        ],
       },
       new Date(1_700_000_000_000),
     )

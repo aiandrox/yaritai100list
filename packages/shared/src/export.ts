@@ -7,12 +7,7 @@ import {
   isCompleted,
 } from './completion'
 import { ITEMS_PER_LIST_MAX } from './limits'
-import {
-  isFutureCompletedAt,
-  itemMemoSchema,
-  itemTextSchema,
-  listTitleSchema,
-} from './validation'
+import { isFutureCompletedAt, itemMemoSchema, itemTextSchema, listTitleSchema } from './validation'
 
 /**
  * リストを持ち出すときの形式（#115）。
