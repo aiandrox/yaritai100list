@@ -34,7 +34,7 @@ npm install
 npm run db:migrate --workspace @yaritai100list/web   # ローカル D1 にマイグレーションを当てる
 npm run dev                                          # http://localhost:5173
 
-npm run typecheck && npm run lint && npm test        # PR を出す前に緑にする
+npm run typecheck && npm run lint && npm run format:check && npm test   # PR を出す前に緑にする
 ```
 
 - `npm run dev` は **SPA と Worker の両方**が1プロセスで動く（Worker は workerd で実行される）

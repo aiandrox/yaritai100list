@@ -120,6 +120,13 @@
       "when": 1786695695420,
       "tag": "0016_add_items_completed_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1786749395379,
+      "tag": "0017_add_items_memo",
+      "breakpoints": true
     }
   ]
 }
