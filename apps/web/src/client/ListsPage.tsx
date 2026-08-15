@@ -291,6 +291,13 @@ export function ListsPage({
 
         {signOutFailed && <p className="mt-1 text-xs text-brand-deep">ログアウトに失敗しました</p>}
       </div>
+
+      {/*
+        アカウントの削除（#308）。**ログアウトと同じ場所に置く**（#114）。
+        🔴 **一番下に、いちばん目立たない見た目で。** 日常的に押すものではないうえ、
+        押した先が取り消せない
+      */}
+      <DeleteAccount />
     </div>
   )
 }
@@ -394,6 +401,98 @@ function RestoreField({ onPick }: { onPick: (file: File) => Promise<void> }) {
       >
         ファイルからリストを読み込む
       </button>
+    </div>
+  )
+}
+
+/**
+ * アカウントの削除（#308）。**取り消せない。**
+ *
+ * 🔴 **2段階にする**（共有リンクの作り直しと同じ作法）。
+ * 押した先が戻せないので、1回の誤タップで消えないようにする。
+ *
+ * 🔴 **消す前に「書き出せること」を伝える。**
+ * 戻す手段が無い操作では、**戻せるうちに持ち出せる**ことを先に示す。
+ *
+ * ⚠️ **消えた後は自分のセッションも無効**（サーバー側で cascade）。
+ * 画面を作り直させるため、応答が返ったら**トップへ移す**。
+ */
+function DeleteAccount() {
+  const [confirming, setConfirming] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  const remove = async () => {
+    setFailed(false)
+
+    try {
+      const res = await api.api.account.$delete()
+
+      if (!res.ok) {
+        setFailed(true)
+        return
+      }
+
+      // 🔴 **状態を持ち回らない。** セッションごと消えているので、
+      // 画面の状態を作り直す方が確実（React の state を1つずつ戻さない）
+      window.location.href = '/'
+    } catch {
+      setFailed(true)
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <div className="mt-8 text-center">
+        <button
+          type="button"
+          onClick={() => {
+            setConfirming(true)
+          }}
+          className="text-xs text-slate-400 underline"
+        >
+          アカウントを削除する
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-8 rounded border border-brand-deep/40 px-3 py-3 text-sm">
+      <p className="font-bold text-brand-deep">アカウントを削除しますか</p>
+
+      <ul className="mt-2 list-disc pl-5 text-xs leading-6 text-slate-600">
+        <li>すべてのリストと、書いたやりたいことが消えます</li>
+        <li>共有した URL は、その場で開けなくなります</li>
+        <li>
+          <strong className="text-slate-900">元に戻せません。</strong>
+          残したいものは、先に各リストの「書き出す」から保存してください
+        </li>
+      </ul>
+
+      {failed && (
+        <p role="alert" className="mt-2 text-xs text-brand-deep">
+          削除できませんでした。通信を確かめて、もう一度お試しください
+        </p>
+      )}
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => void remove()}
+          className="flex-1 rounded bg-brand-deep px-3 py-2 text-white"
+        >
+          削除する
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setConfirming(false)
+          }}
+          className="flex-1 rounded border border-brand px-3 py-2 text-slate-600"
+        >
+          やめる
+        </button>
+      </div>
     </div>
   )
 }
