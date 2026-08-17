@@ -17,8 +17,8 @@
     "deploy": "vite build && wrangler deploy -c dist/yaritai100list/wrangler.json"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.51.0",
-    "@cloudflare/vitest-pool-workers": "^0.20.2",
+    "@cloudflare/vite-plugin": "^1.52.1",
+    "@cloudflare/vitest-pool-workers": "^0.21.3",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
