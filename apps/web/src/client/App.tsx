@@ -6,7 +6,9 @@ import { ExportPage } from './ExportPage'
 import { Layout } from './Layout'
 import { ListPage } from './ListPage'
 import { ListsPage } from './ListsPage'
+import { PrivacyPage } from './PrivacyPage'
 import { SharePage } from './SharePage'
+import { TermsPage } from './TermsPage'
 import { Notice } from './Notice'
 import { signOutRequestInit, toSessionState, type SessionState } from './model'
 
@@ -104,6 +106,18 @@ export function App() {
 
         <Route path="/lists/:listId">
           {(params) => <ListPage session={session} listId={params.listId} />}
+        </Route>
+
+        {/*
+          規約とポリシー（#304）。**ログインの有無で出し分けない。**
+          読むのに何も要らない
+        */}
+        <Route path="/terms">
+          <TermsPage />
+        </Route>
+
+        <Route path="/privacy">
+          <PrivacyPage />
         </Route>
 
         <Route>

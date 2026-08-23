@@ -270,6 +270,20 @@ describe('公開されているリスト', () => {
     expect(await res.text()).toContain('0 / 0 達成')
   })
 
+  /**
+   * 🔴 **共有ページは SPA と別実装**（`src/share.ts`）。
+   * SPA 側のフッターを足しただけでは出ないので、**ここだけ規約に行けない**状態が作れる。
+   */
+  it('🔴 フッターから規約とポリシーに行ける（共有ページは別実装）', async () => {
+    const list = await createList({ visibility: 'unlisted' })
+    await addItems(list.id, [{ text: '南極に行く' }])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('href="/terms"')
+    expect(body).toContain('href="/privacy"')
+  })
+
   describe('自分のリストを作る導線（#225）', () => {
     it('下にトップへのリンクが出る', async () => {
       const list = await createList({ visibility: 'unlisted' })
