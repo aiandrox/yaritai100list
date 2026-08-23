@@ -30,6 +30,36 @@ export const SERVICE_NAME = 'やりたいことリスト100'
 export const SERVICE_URL = 'yaritai100list.aiandrox.workers.dev'
 
 /**
+ * 運営者（#304）。**利用規約とプライバシーポリシーに出す。**
+ *
+ * 🔴 **本名と住所は出さない**（2026-08-15 の判断）。無償の個人サービスで取引が無いため、
+ * 特定商取引法の表記義務（氏名・住所）はかからない。
+ * 連絡は問い合わせフォーム（`CONTACT_FORM_URL`）で受ける。
+ */
+export const OPERATOR_NAME = 'END'
+export const OPERATOR_HANDLE = '@aiandrox'
+export const OPERATOR_URL = 'https://x.com/aiandrox'
+
+/**
+ * 問い合わせ窓口（#304）。**Google フォーム。**
+ *
+ * 🔴 **埋め込まずにリンクにする**（2026-08-15 の判断）。iframe は
+ * **高さが自動で合わず**、モバイルで二重スクロールになる（主対象がモバイル縦1カラム）。
+ *
+ * ⚠️ **ここを唯一の情報源にする。** 画面に URL を直書きしない。
+ * フォームを作り直したら、この1行だけ差し替える。
+ */
+export const CONTACT_FORM_URL = 'https://forms.gle/B4ZPTdQife4LfHJt5'
+
+/**
+ * 規約・ポリシーの制定日（#304）。**画面に出す。**
+ *
+ * ⚠️ **中身を変えたら日付も変える。** 変えた事実が利用者から見えないと、
+ * 「掲載した時点から適用する」と書いてある意味が無い。
+ */
+export const LEGAL_EFFECTIVE_DATE = '2026年8月21日'
+
+/**
  * サービスを一言で言ったもの。**OGP 画像に載せる**（#229）。
  *
  * 🔴 **利用者が書いた文をそのまま使う**（2026-08-09）。**言い換えない。**
