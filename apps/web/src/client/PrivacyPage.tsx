@@ -166,16 +166,16 @@ export function PrivacyPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}
           <strong className="font-bold text-slate-900">
             公開の可否の判定は自動（AI）で行われます。
           </strong>
-          人が内容を読んで判断しているわけではありません
+          人が内容を読んで判断しているわけではありません。
         </li>
         <li>
           <strong className="font-bold text-slate-900">
             画像の生成は、共有ページが第三者により閲覧された際にも行われます。
           </strong>
-          利用者自身が操作していない場合でも、その時点で対象の情報が送信されます
+          利用者自身が操作していない場合でも、その時点で対象の情報が送信されます。
         </li>
         <li>
-          不具合の把握のために送信する情報には、入力された内容・クッキー・通信の内容を含めていません
+          不具合の把握のために送信する情報には、入力された内容・クッキー・通信の内容を含めていません。
         </li>
       </LegalList>
 
@@ -183,16 +183,16 @@ export function PrivacyPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}
       <LegalList>
         <li>
           <strong className="font-bold text-slate-900">
-            どの公開面にも、書いた人の名前・メールアドレスは表示しません
+            どの公開面にも、書いた人の名前・メールアドレスは表示しません。
           </strong>
         </li>
         <li>
-          「リンクを知っている人だけ」「全体に公開」にしたリストは、URL を知っている人が見られます
+          「リンクを知っている人だけ」「全体に公開」にしたリストは、URL を知っている人が見られます。
         </li>
-        <li>「全体に公開」にしたリストの項目は、作者を伏せた形で「さがす」に並びます</li>
+        <li>「全体に公開」にしたリストの項目は、作者を伏せた形で「さがす」に並びます。</li>
         <li>
           <strong className="font-bold text-slate-900">メモは、どの公開面にも表示しません。</strong>
-          自分だけが読むものとして扱います
+          自分だけが読むものとして扱います。
         </li>
       </LegalList>
 
@@ -206,12 +206,12 @@ export function PrivacyPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}
       <LegalList>
         <li>
           アカウントを削除すると、リスト・やりたいこと・メモ・ログイン情報は
-          <strong className="font-bold text-slate-900">すべて消えます</strong>
+          <strong className="font-bold text-slate-900">すべて消えます。</strong>
         </li>
-        <li>削除は、ログイン後の「すべてのリスト」からいつでも行えます</li>
+        <li>削除は、ログイン後の「すべてのリスト」からいつでも行えます。</li>
         <li>
           「さがす」のために保持している判定結果のうち、削除後にどこからも参照されなくなったものは、
-          あわせて消えます
+          あわせて消えます。
         </li>
       </LegalList>
 
