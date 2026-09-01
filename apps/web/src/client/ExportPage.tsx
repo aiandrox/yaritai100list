@@ -86,6 +86,7 @@ function ExportPageBody({ listId }: { listId: string }) {
   const [showCompletedDate, setShowCompletedDate] = useState(
     DEFAULT_MARKDOWN_OPTIONS.showCompletedDate,
   )
+  const [showMemo, setShowMemo] = useState(DEFAULT_MARKDOWN_OPTIONS.showMemo)
 
   const load = useCallback(async () => {
     try {
@@ -119,8 +120,11 @@ function ExportPageBody({ listId }: { listId: string }) {
    * 画面・共有ページと同じ整形（`formatCompletedOn`）を `buildMarkdown` が使う。
    */
   const markdown = useMemo(
-    () => (state.status === 'ready' ? buildMarkdown(state.file, { style, showCompletedDate }) : ''),
-    [state, style, showCompletedDate],
+    () =>
+      state.status === 'ready'
+        ? buildMarkdown(state.file, { style, showCompletedDate, showMemo })
+        : '',
+    [state, style, showCompletedDate, showMemo],
   )
 
   // 中身が変われば「コピーしました」は嘘になる。**貼るのはいま見えているもの**
@@ -274,6 +278,8 @@ function ExportPageBody({ listId }: { listId: string }) {
         <MarkdownOptionsForm
           style={style}
           showCompletedDate={showCompletedDate}
+          showMemo={showMemo}
+          onShowMemoChange={setShowMemo}
           onStyleChange={setStyle}
           onShowCompletedDateChange={setShowCompletedDate}
         />
@@ -327,6 +333,8 @@ function ExportPageBody({ listId }: { listId: string }) {
 const STYLES: { value: MarkdownStyle; label: string }[] = [
   { value: 'checklist', label: 'チェックリスト' },
   { value: 'numbered', label: '連番' },
+  // やりたいことごとに節を作る（#329）。メモを本文として置ける
+  { value: 'heading', label: '見出し' },
 ]
 
 /**
@@ -338,13 +346,17 @@ const STYLES: { value: MarkdownStyle; label: string }[] = [
 function MarkdownOptionsForm({
   style,
   showCompletedDate,
+  showMemo,
   onStyleChange,
   onShowCompletedDateChange,
+  onShowMemoChange,
 }: {
   style: MarkdownStyle
   showCompletedDate: boolean
+  showMemo: boolean
   onStyleChange: (style: MarkdownStyle) => void
   onShowCompletedDateChange: (show: boolean) => void
+  onShowMemoChange: (show: boolean) => void
 }) {
   return (
     <div className="mt-3 rounded bg-brand-soft px-2 py-2">
@@ -378,6 +390,21 @@ function MarkdownOptionsForm({
           }}
         />
         達成日を出す
+      </label>
+
+      {/*
+        🔴 **メモは既定で出さない**（#329）。**自分だけが読むもの**なので、
+        人に見せる形に混ぜるかは本人が決める
+      */}
+      <label className="mt-1 flex items-center gap-1 text-xs text-slate-700">
+        <input
+          type="checkbox"
+          checked={showMemo}
+          onChange={(e) => {
+            onShowMemoChange(e.target.checked)
+          }}
+        />
+        メモを出す
       </label>
     </div>
   )

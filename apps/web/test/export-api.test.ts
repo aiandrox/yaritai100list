@@ -283,10 +283,10 @@ describe('buildMarkdown', () => {
   })
 
   /**
-   * 🔴 **マークダウンにメモを出さない**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
-   * これは**ブログなどに貼る、人に見せるためのもの。** 自分だけのメモは載せない。
+   * 🔴 **既定では出さない**（#294 → #329）。
+   * メモは**自分だけが読むもの**なので、人に見せる形に混ぜるかは本人が決める。
    */
-  it('🔴 メモを出さない（人に見せるためのものなので）', () => {
+  it('🔴 既定ではメモを出さない', () => {
     const built = buildExportFile(
       {
         title: 'x',
@@ -306,6 +306,129 @@ describe('buildMarkdown', () => {
 
     expect(markdown).toContain('南極に行く')
     expect(markdown).not.toContain('ここは自分だけのメモ')
+  })
+
+  describe('メモ（#329）', () => {
+    const withMemo = () =>
+      buildExportFile(
+        {
+          title: 'x',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '寒そうだけど見たい',
+            },
+            { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
+          ],
+        },
+        new Date(0),
+      )
+
+    it('出すと決めれば出る', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('寒そうだけど見たい')
+    })
+
+    it('🔴 箇条書きの中に入れる（下げないと別の段落になる）', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('- [ ] 南極に行く\n  寒そうだけど見たい')
+    })
+
+    it('改行を含むメモも、行ごとに下げる', () => {
+      const file = buildExportFile(
+        {
+          title: 'x',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '1行目\n2行目',
+            },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('  1行目\n  2行目')
+    })
+
+    it('メモが無い項目は何も足さない', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'numbered',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('2. オーロラを見る\n')
+    })
+  })
+
+  describe('見出しの形（#329）', () => {
+    it('やりたいことが見出しになり、メモが本文になる', () => {
+      const file = buildExportFile(
+        {
+          title: '人生でやりたいことリスト',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '寒そうだけど見たい',
+            },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'heading',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('## 人生でやりたいことリスト')
+      expect(markdown).toContain('### 1. 南極に行く')
+      expect(markdown).toContain('### 1. 南極に行く\n\n寒そうだけど見たい')
+    })
+
+    it('🔴 日付なしの完了に印が残る（見出しには [x] にあたるものが無い）', () => {
+      const file = buildExportFile(
+        {
+          title: 'x',
+          items: [
+            { text: '日付なし', completedAt: null, completedPrecision: 'unknown', memo: null },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'heading',
+        showCompletedDate: true,
+        showMemo: false,
+      })
+
+      expect(markdown).toContain('### 1. 日付なし（達成済）')
+    })
   })
 
   describe('粒度どおりに出す（#279）', () => {
@@ -344,7 +467,7 @@ describe('buildMarkdown', () => {
       // 連番には `- [x]` にあたるものが無いので、これが無いと完了が消える（#209）
       const markdown = buildMarkdown(
         file([{ text: '日付なし', completedAt: null, completedPrecision: 'unknown' }]),
-        { style: 'numbered', showCompletedDate: true },
+        { style: 'numbered', showCompletedDate: true, showMemo: false },
       )
 
       expect(markdown).toContain('1. 日付なし（達成済）')
@@ -373,6 +496,7 @@ describe('buildMarkdown', () => {
       const markdown = buildMarkdown(both(), {
         style: 'checklist',
         showCompletedDate: true,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual([
@@ -385,6 +509,7 @@ describe('buildMarkdown', () => {
       const markdown = buildMarkdown(both(), {
         style: 'checklist',
         showCompletedDate: false,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual(['- [x] グランピング', '- [ ] オーロラを見る'])
@@ -394,6 +519,7 @@ describe('buildMarkdown', () => {
       const markdown = buildMarkdown(both(), {
         style: 'numbered',
         showCompletedDate: true,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual(['1. グランピング（2026/08/08 達成）', '2. オーロラを見る'])
@@ -405,15 +531,19 @@ describe('buildMarkdown', () => {
       const markdown = buildMarkdown(both(), {
         style: 'numbered',
         showCompletedDate: false,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual(['1. グランピング（達成済）', '2. オーロラを見る'])
     })
 
     it('数の行は形式で変えない', () => {
-      for (const style of ['checklist', 'numbered'] as const) {
+      // 🔴 見出しの形（#329）も含めて、どの形式でも同じ行が出る
+      for (const style of ['checklist', 'numbered', 'heading'] as const) {
         for (const showCompletedDate of [true, false]) {
-          expect(buildMarkdown(both(), { style, showCompletedDate })).toContain('1 / 2 達成済み')
+          expect(buildMarkdown(both(), { style, showCompletedDate, showMemo: false })).toContain(
+            '1 / 2 達成済み',
+          )
         }
       }
     })
