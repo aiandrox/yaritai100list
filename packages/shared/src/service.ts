@@ -64,7 +64,7 @@ export const CONTACT_FORM_URL = 'https://forms.gle/B4ZPTdQife4LfHJt5'
  * それがこの仕組みの目的なので、**軽い直しで動かさないこと**
  * （誤字の修正で全員に同意を求め直すのは筋が悪い）。
  */
-export const LEGAL_EFFECTIVE_DATE = '2026-08-21'
+export const LEGAL_EFFECTIVE_DATE = '2026-09-01'
 
 /** `2026-08-21` → `2026年8月21日`。**画面に出すのはこちら。** */
 export function formatLegalDate(value: string): string {
