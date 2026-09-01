@@ -80,6 +80,13 @@ export function PrivacyPage() {
             ],
           },
           {
+            term: '同意の記録',
+            rows: [
+              { label: '項目', value: '同意した規約の版と、同意した日時' },
+              { label: '取得の方法', value: '確認画面で「同意して始める」を押した際に記録します' },
+            ],
+          },
+          {
             term: 'お問い合わせ',
             rows: [
               { label: '項目', value: '種別、内容、返信先として記入された連絡先' },
