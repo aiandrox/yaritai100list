@@ -202,12 +202,22 @@ export function exportFileName(
  * - `checklist`: `- [x] グランピング`。GitHub / Zenn / Qiita ではチェックボックスになる
  * - `numbered`: `1. グランピング`。番号を振りたい転載先向け
  */
-export type MarkdownStyle = 'checklist' | 'numbered'
+export type MarkdownStyle = 'checklist' | 'numbered' | 'heading'
 
 export interface MarkdownOptions {
   style: MarkdownStyle
   /** 達成日を行に出すか。**出さなくても「完了かどうか」は消さない**（`buildMarkdown`） */
   showCompletedDate: boolean
+
+  /**
+   * メモを出すか（#329）。**既定は出さない。**
+   *
+   * 🔴 **メモは自分だけが読むもの**（`PRODUCT_SPEC.md` §4.4）。
+   * 共有ページや取り入れ面には**出す手段そのものが無い**が、
+   * こちらは**自分がファイルを受け取る操作**なので、
+   * 持ち出す先を決めるのは本人。**選べるようにして、既定は出さない。**
+   */
+  showMemo: boolean
 }
 
 /**
@@ -219,6 +229,8 @@ export interface MarkdownOptions {
 export const DEFAULT_MARKDOWN_OPTIONS: MarkdownOptions = {
   style: 'checklist',
   showCompletedDate: true,
+  // 🔴 **メモは既定で出さない**（#329）。出したい人が選ぶ
+  showMemo: false,
 }
 
 /**
@@ -267,7 +279,29 @@ export function buildMarkdown(
   ]
 
   file.list.items.forEach((item, index) => {
+    /*
+     * 🔴 **見出しの形は行ではなく段落**（#329）。
+     * `### 1. やりたいこと` の下にメモを本文として置く。
+     * 転載先で**やりたいことごとに節を作りたい**ときの形。
+     */
+    if (options.style === 'heading') {
+      lines.push(`### ${String(index + 1)}. ${item.text}${suffix(item)}`)
+      if (memoOf(item) !== null) lines.push('', memoOf(item) ?? '')
+      lines.push('')
+      return
+    }
+
     lines.push(`${mark(item, index)} ${item.text}${suffix(item)}`)
+
+    /*
+     * ⚠️ **箇条書きの中に入れる**（2スペース下げ）。
+     * 下げないと、**次の行が箇条書きから外れて別の段落になる。**
+     * 改行を含むメモもあるので、行ごとに下げる。
+     */
+    const memo = memoOf(item)
+    if (memo !== null) {
+      for (const line of memo.split('\n')) lines.push(`  ${line}`)
+    }
   })
 
   // 末尾を改行で終える。貼り付けた先で次の行とくっつかない
@@ -285,6 +319,13 @@ export function buildMarkdown(
     return isCompleted(completedPrecisionOf(item)) ? '- [x]' : '- [ ]'
   }
 
+  /** 出すメモ。**出さない設定なら常に `null`。** */
+  function memoOf(item: ExportedItem): string | null {
+    if (!options.showMemo) return null
+
+    return item.memo ?? null
+  }
+
   function suffix(item: ExportedItem): string {
     const precision = completedPrecisionOf(item)
     if (!isCompleted(precision)) return ''
@@ -300,9 +341,9 @@ export function buildMarkdown(
 
     if (options.showCompletedDate && date !== '') return `（${date} 達成）`
 
-    // 🔴 **連番のときだけ、日付が無くても完了の印を残す。**
-    // 連番には `- [x]` にあたるものが無いので、日付まで消すと
-    // **完了かどうかを表す手段が行から全部無くなる**（#209）
-    return options.style === 'numbered' ? '（達成済）' : ''
+    // 🔴 **連番と見出しのときは、日付が無くても完了の印を残す。**
+    // どちらにも `- [x]` にあたるものが無いので、日付まで消すと
+    // **完了かどうかを表す手段が行から全部無くなる**（#209 / #329）
+    return options.style === 'checklist' ? '' : '（達成済）'
   }
 }
