@@ -20,9 +20,9 @@ import { LegalHeading, LegalList, LegalPage, LegalText } from './LegalPage'
  * （全部免除の条項は無効とされうる）。それを承知のうえでの方針なので、
  * **勝手に «故意・重過失を除く» に戻さないこと。**
  */
-export function TermsPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}) {
+export function TermsPage() {
   return (
-    <LegalPage title="利用規約" heading={heading ?? 'h1'}>
+    <LegalPage title="利用規約">
       <LegalText>
         この規約は「やりたいことリスト100」（以下「本サービス」）の利用条件を定めるものです。
         本サービスを利用した時点で、この規約に同意したものとみなします。

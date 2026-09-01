@@ -24,9 +24,9 @@ import { LegalHeading, LegalList, LegalPage, LegalRecords, LegalText } from './L
  * 委託先の名前は求めに応じて開示する形にしているが、
  * **自動で判定していること**と**第三者の閲覧で本文が外に出ること**は書く。
  */
-export function PrivacyPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}) {
+export function PrivacyPage() {
   return (
-    <LegalPage title="プライバシーポリシー" heading={heading ?? 'h1'}>
+    <LegalPage title="プライバシーポリシー">
       <LegalText>
         「やりたいことリスト100」（以下「本サービス」）における個人情報の取り扱いについて定めます。
       </LegalText>
