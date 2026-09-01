@@ -2,7 +2,6 @@ import * as Sentry from '@sentry/cloudflare'
 import {
   BROWSABLE_GENRES,
   buildExportFile,
-  COMPLETED_ON_TIME_ZONE_OFFSET_MS,
   type CompletedPrecision,
   completedOnSchema,
   completedPrecisionOf,
@@ -17,7 +16,6 @@ import {
   isFutureCompletedAt,
   parseCompletedOn,
   ITEMS_PER_LIST_MAX,
-  LEGAL_EFFECTIVE_DATE,
   LISTS_PER_USER_MAX,
   SHARE_HIDDEN_ITEM_LABEL,
   SHARED_VISIBILITIES,
@@ -36,7 +34,7 @@ import { z } from 'zod'
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { agreements, items, lists, pool, users, wishTexts } from './db/schema'
+import { items, lists, pool, users, wishTexts } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
@@ -277,13 +275,7 @@ const app = new Hono<AppEnv>()
     const auth = createAuth(createDb(c.env.DB), c.env)
 
     const res = await auth.api.signInSocial({
-      /*
-       * 🔴 **ログイン直後かどうかを、戻り先の印で見分ける**（#325）。
-       * 新規の人が同意しないままリロードしたら**アカウントごと捨てる**が、
-       * **初回の読み込みだけはモーダルを出す**必要がある。
-       * 画面側がこの印を読んで、すぐ URL から消す（リロードすると印が無い）。
-       */
-      body: { provider: 'google', callbackURL: '/?welcome=1' },
+      body: { provider: 'google', callbackURL: '/' },
       asResponse: true,
     })
 
@@ -641,73 +633,6 @@ const app = new Hono<AppEnv>()
       .where(eq(lists.id, c.get('list').id))
 
     return c.json({ deleted: true } as const)
-  })
-
-  /**
-   * 同意が済んでいるか（#319）。**ログイン後に1回だけ聞く。**
-   *
-   * 🔴 **「いまの版の行があるか」で見る。** 規約を改定して
-   * `LEGAL_EFFECTIVE_DATE` を動かすと、**全員がまた未同意になる**（それが目的）。
-   */
-  .get('/api/account', requireUser, async (c) => {
-    const [agreed] = await createDb(c.env.DB)
-      .select({ id: agreements.id })
-      .from(agreements)
-      .where(
-        and(
-          eq(agreements.userId, c.get('userId')),
-          eq(agreements.effectiveOn, LEGAL_EFFECTIVE_DATE),
-        ),
-      )
-      .limit(1)
-
-    /*
-     * 🔴 **規約ができた後に登録した人か**（#325）。
-     * この人が同意しないなら**アカウントを残さない**（まだ何も書いていない）。
-     * 規約より前から居る人は**消さない**（データがある）。
-     *
-     * ⚠️ **境目は日本時間の 0 時。** 完了日と同じ扱いにする（`COMPLETED_ON_TIME_ZONE_OFFSET_MS`）。
-     */
-    const [user] = await createDb(c.env.DB)
-      .select({ createdAt: users.createdAt })
-      .from(users)
-      .where(eq(users.id, c.get('userId')))
-      .limit(1)
-
-    const termsSince = new Date(
-      Date.parse(`${LEGAL_EFFECTIVE_DATE}T00:00:00.000Z`) - COMPLETED_ON_TIME_ZONE_OFFSET_MS,
-    )
-
-    return c.json({
-      agreed: agreed !== undefined,
-      joinedAfterTerms: user !== undefined && user.createdAt >= termsSince,
-    } as const)
-  })
-
-  /**
-   * 同意を記録する（#319）。
-   *
-   * 🔴 **どの版に同意したかはサーバーが決める。** 画面から版を受け取らない。
-   * 受け取ると、**古い版に同意したことにして確認画面を飛ばせる。**
-   *
-   * ⚠️ **2回押されても1行のまま。** 先に見てから入れる
-   * （**同意は数えるものではない**ので、行が増えても害は無いが、揃えておく）。
-   */
-  .post('/api/account/agree', requireUser, async (c) => {
-    const db = createDb(c.env.DB)
-    const userId = c.get('userId')
-
-    const [already] = await db
-      .select({ id: agreements.id })
-      .from(agreements)
-      .where(and(eq(agreements.userId, userId), eq(agreements.effectiveOn, LEGAL_EFFECTIVE_DATE)))
-      .limit(1)
-
-    if (already === undefined) {
-      await db.insert(agreements).values({ id: newId(), userId, effectiveOn: LEGAL_EFFECTIVE_DATE })
-    }
-
-    return c.json({ agreed: true } as const)
   })
 
   /**
