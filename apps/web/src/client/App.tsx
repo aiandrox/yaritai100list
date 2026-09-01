@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Route, Switch, useLocation } from 'wouter'
 
 import { AgreementGate } from './AgreementGate'
@@ -24,16 +24,15 @@ import { signOutRequestInit, toSessionState, type SessionState } from './model'
  * **`/lists/xxx` を直接開いてもこの SPA が起動する。**
  */
 /**
- * 同意の確認より先に開けるページ（#319）。
+ * ログイン直後の読み込みに付く印（#325）。**`/api/login/google` が付ける。**
  *
- * 🔴 **規約とポリシーを塞がない。** ここを通さないと、
- * **確認画面から全文を読みに行けない**（読ませるための画面なのに読めない）。
- * 実際に一度そうなった。
+ * 🔴 **読んだらすぐ URL から消す。** 消さないとリロードでも残ってしまい、
+ * 「**リロードしたら初回ではない**」という判定が効かなくなる。
  */
-const LEGAL_PATHS = new Set(['/terms', '/privacy'])
+const WELCOME_PARAM = 'welcome'
 
 export function App() {
-  const [location, navigate] = useLocation()
+  const [, navigate] = useLocation()
   const [session, setSession] = useState<SessionState>({ status: 'loading' })
   const [signOutFailed, setSignOutFailed] = useState(false)
 
@@ -69,6 +68,45 @@ export function App() {
    */
   const [agreement, setAgreement] = useState<'unknown' | 'agreed' | 'required'>('unknown')
 
+  /**
+   * 断ったときにアカウントごと捨てるか（#325）。
+   *
+   * 🔴 **規約ができた後に登録した人だけ捨てる。** まだ何も書いていないため。
+   * **前から居る人は捨てない**（データがある）。断ってもログアウトするだけ。
+   */
+  const [discardable, setDiscardable] = useState(false)
+
+  /**
+   * この読み込みがログイン直後か（#325）。
+   *
+   * 🔴 **すぐ URL から消す。** 残すとリロードでも「初回」に見えてしまう。
+   * **消した後の状態が「リロードした後」と同じ**になるのが要点。
+   */
+  const justSignedIn = useRef(false)
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has(WELCOME_PARAM)) return
+
+    justSignedIn.current = true
+    url.searchParams.delete(WELCOME_PARAM)
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [])
+
+  /**
+   * アカウントごと捨てて、未ログインの状態に戻す（#325）。
+   *
+   * ⚠️ **画面を開き直す。** セッションごと消えているので、
+   * React の state を1つずつ戻すより確実（アカウント削除と同じ）。
+   */
+  const discardAccount = useCallback(async () => {
+    try {
+      await api.api.account.$delete()
+    } finally {
+      window.location.href = '/'
+    }
+  }, [])
+
   useEffect(() => {
     if (session.status !== 'authenticated') {
       setAgreement('unknown')
@@ -84,12 +122,29 @@ export function App() {
         }
 
         const body = await res.json()
-        setAgreement(body.agreed ? 'agreed' : 'required')
+        if (body.agreed) {
+          setAgreement('agreed')
+          return
+        }
+
+        setDiscardable(body.joinedAfterTerms)
+
+        /*
+         * 🔴 **同意しないまま読み込み直したら、アカウントごと捨てる**（#325）。
+         * 対象は規約ができた後に登録した人で、**まだ何も書いていない。**
+         * ログイン直後の1回だけモーダルを出し、そこで決めてもらう。
+         */
+        if (body.joinedAfterTerms && !justSignedIn.current) {
+          await discardAccount()
+          return
+        }
+
+        setAgreement('required')
       } catch {
         setAgreement('agreed')
       }
     })()
-  }, [session.status])
+  }, [session.status, discardAccount])
 
   const agree = useCallback(async () => {
     const res = await api.api.account.agree.$post()
@@ -121,80 +176,78 @@ export function App() {
       <SessionArea session={session} onRetry={() => void loadSession()} />
 
       {/*
-        規約の確認（#319）。**同意するまで先へ進ませない。**
-        ⚠️ **聞いている最中（`unknown`）は何も出さない。** 出すと、
-        同意が要る人に一瞬リストが見えてから画面が入れ替わる
+        規約の確認（#319 / #325）。**画面の一番手前に出す。**
+        🔴 **下の画面を差し替えない。** モーダルなので、どの経路を直接開いても
+        同意するまでこれが手前にある（既存の利用者はログイン状態のまま）
       */}
-      {session.status === 'authenticated' &&
-      agreement !== 'agreed' &&
-      !LEGAL_PATHS.has(location) ? (
-        agreement === 'required' ? (
-          <AgreementGate onAgree={agree} onDecline={() => void signOut()} />
-        ) : (
-          <p className="py-8 text-center text-slate-500">読み込み中</p>
-        )
-      ) : (
-        <Switch>
-          {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
-            リストを1つしか持っていない人に無駄な1タップを作らない */}
-          <Route path="/">
-            <ListPage session={session} />
-          </Route>
+      {session.status === 'authenticated' && agreement === 'required' && (
+        <AgreementGate
+          onAgree={agree}
+          onDecline={() => (discardable ? void discardAccount() : void signOut())}
+          declineLabel={discardable ? '同意しない（登録をやめる）' : '同意しない（ログアウトする）'}
+        />
+      )}
 
-          {/*
+      <Switch>
+        {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
+            リストを1つしか持っていない人に無駄な1タップを作らない */}
+        <Route path="/">
+          <ListPage session={session} />
+        </Route>
+
+        {/*
           取り入れ面（#235 / 親 #10）。**ログインは要らない。**
           書き始める前の人こそ対象なので、ここで認証を求めない
         */}
-          <Route path="/discover">
-            <DiscoverPage session={session} />
-          </Route>
+        <Route path="/discover">
+          <DiscoverPage session={session} />
+        </Route>
 
-          <Route path="/lists">
-            {/* ログアウトはここに置く。日常的に押すものではないので、
+        <Route path="/lists">
+          {/* ログアウトはここに置く。日常的に押すものではないので、
               編集画面には出さない（#114） */}
-            <ListsPage
-              session={session}
-              signOutFailed={signOutFailed}
-              onSignOut={() => void signOut()}
-            />
-          </Route>
+          <ListsPage
+            session={session}
+            signOutFailed={signOutFailed}
+            onSignOut={() => void signOut()}
+          />
+        </Route>
 
-          {/* :listId より先に置かなくても段数が違うので当たらないが、
+        {/* :listId より先に置かなくても段数が違うので当たらないが、
             関係のある経路を近くに並べておく */}
-          <Route path="/lists/:listId/export">
-            {(params) => <ExportPage session={session} listId={params.listId} />}
-          </Route>
+        <Route path="/lists/:listId/export">
+          {(params) => <ExportPage session={session} listId={params.listId} />}
+        </Route>
 
-          <Route path="/lists/:listId/share">
-            {(params) => <SharePage session={session} listId={params.listId} />}
-          </Route>
+        <Route path="/lists/:listId/share">
+          {(params) => <SharePage session={session} listId={params.listId} />}
+        </Route>
 
-          <Route path="/lists/:listId">
-            {(params) => <ListPage session={session} listId={params.listId} />}
-          </Route>
+        <Route path="/lists/:listId">
+          {(params) => <ListPage session={session} listId={params.listId} />}
+        </Route>
 
-          {/*
+        {/*
           規約とポリシー（#304）。**ログインの有無で出し分けない。**
           読むのに何も要らない
         */}
-          <Route path="/terms">
-            <TermsPage />
-          </Route>
+        <Route path="/terms">
+          <TermsPage />
+        </Route>
 
-          <Route path="/privacy">
-            <PrivacyPage />
-          </Route>
+        <Route path="/privacy">
+          <PrivacyPage />
+        </Route>
 
-          <Route>
-            <Notice tone="warn">
-              このページはありません。
-              <Link href="/" className="underline">
-                トップへ戻る
-              </Link>
-            </Notice>
-          </Route>
-        </Switch>
-      )}
+        <Route>
+          <Notice tone="warn">
+            このページはありません。
+            <Link href="/" className="underline">
+              トップへ戻る
+            </Link>
+          </Notice>
+        </Route>
+      </Switch>
     </Layout>
   )
 }
