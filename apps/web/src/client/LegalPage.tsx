@@ -1,4 +1,4 @@
-import { LEGAL_EFFECTIVE_DATE } from '@yaritai100list/shared'
+import { formatLegalDate, LEGAL_EFFECTIVE_DATE } from '@yaritai100list/shared'
 
 /**
  * 利用規約とプライバシーポリシーの枠（#304）。
@@ -69,7 +69,9 @@ export function LegalPage({ title, children }: { title: string; children: React.
       {children}
 
       {/* 🔴 **いつからのものかを出す。**「掲載した時点から適用する」と書く以上、必須 */}
-      <p className="mt-10 text-xs text-slate-500">制定日: {LEGAL_EFFECTIVE_DATE}</p>
+      <p className="mt-10 text-xs text-slate-500">
+        制定日: {formatLegalDate(LEGAL_EFFECTIVE_DATE)}
+      </p>
     </div>
   )
 }

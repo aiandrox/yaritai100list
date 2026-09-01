@@ -127,6 +127,13 @@
       "when": 1786749395379,
       "tag": "0017_add_items_memo",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788226684365,
+      "tag": "0018_add_agreements",
+      "breakpoints": true
     }
   ]
 }

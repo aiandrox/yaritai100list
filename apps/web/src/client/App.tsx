@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Route, Switch, useLocation } from 'wouter'
 
+import { AgreementGate } from './AgreementGate'
+import { api } from './api'
 import { DiscoverPage } from './DiscoverPage'
 import { ExportPage } from './ExportPage'
 import { Layout } from './Layout'
@@ -21,8 +23,17 @@ import { signOutRequestInit, toSessionState, type SessionState } from './model'
  * `not_found_handling: single-page-application` が index.html を返すので、
  * **`/lists/xxx` を直接開いてもこの SPA が起動する。**
  */
+/**
+ * 同意の確認より先に開けるページ（#319）。
+ *
+ * 🔴 **規約とポリシーを塞がない。** ここを通さないと、
+ * **確認画面から全文を読みに行けない**（読ませるための画面なのに読めない）。
+ * 実際に一度そうなった。
+ */
+const LEGAL_PATHS = new Set(['/terms', '/privacy'])
+
 export function App() {
-  const [, navigate] = useLocation()
+  const [location, navigate] = useLocation()
   const [session, setSession] = useState<SessionState>({ status: 'loading' })
   const [signOutFailed, setSignOutFailed] = useState(false)
 
@@ -47,6 +58,46 @@ export function App() {
     void loadSession()
   }, [loadSession])
 
+  // --- 規約への同意（#319） ---
+
+  /**
+   * 同意が済んでいるか。**ログイン中のときだけ聞く。**
+   *
+   * 🔴 **確かめられなかったときは通す**（`agreed` のまま）。
+   * これは押させるための画面であって**認可ではない**ので、
+   * 通信の不調でリストが開けなくなる方が害が大きい。
+   */
+  const [agreement, setAgreement] = useState<'unknown' | 'agreed' | 'required'>('unknown')
+
+  useEffect(() => {
+    if (session.status !== 'authenticated') {
+      setAgreement('unknown')
+      return
+    }
+
+    void (async () => {
+      try {
+        const res = await api.api.account.$get()
+        if (!res.ok) {
+          setAgreement('agreed')
+          return
+        }
+
+        const body = await res.json()
+        setAgreement(body.agreed ? 'agreed' : 'required')
+      } catch {
+        setAgreement('agreed')
+      }
+    })()
+  }, [session.status])
+
+  const agree = useCallback(async () => {
+    const res = await api.api.account.agree.$post()
+    if (!res.ok) throw new Error('同意を記録できなかった')
+
+    setAgreement('agreed')
+  }, [])
+
   const signOut = useCallback(async () => {
     setSignOutFailed(false)
 
@@ -69,66 +120,81 @@ export function App() {
     <Layout showListsLink={session.status === 'authenticated'}>
       <SessionArea session={session} onRetry={() => void loadSession()} />
 
-      <Switch>
-        {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
+      {/*
+        規約の確認（#319）。**同意するまで先へ進ませない。**
+        ⚠️ **聞いている最中（`unknown`）は何も出さない。** 出すと、
+        同意が要る人に一瞬リストが見えてから画面が入れ替わる
+      */}
+      {session.status === 'authenticated' &&
+      agreement !== 'agreed' &&
+      !LEGAL_PATHS.has(location) ? (
+        agreement === 'required' ? (
+          <AgreementGate onAgree={agree} onDecline={() => void signOut()} />
+        ) : (
+          <p className="py-8 text-center text-slate-500">読み込み中</p>
+        )
+      ) : (
+        <Switch>
+          {/* トップは一覧ではなく**最後に更新したリスト**（PRODUCT_SPEC.md §4.3）。
             リストを1つしか持っていない人に無駄な1タップを作らない */}
-        <Route path="/">
-          <ListPage session={session} />
-        </Route>
+          <Route path="/">
+            <ListPage session={session} />
+          </Route>
 
-        {/*
+          {/*
           取り入れ面（#235 / 親 #10）。**ログインは要らない。**
           書き始める前の人こそ対象なので、ここで認証を求めない
         */}
-        <Route path="/discover">
-          <DiscoverPage session={session} />
-        </Route>
+          <Route path="/discover">
+            <DiscoverPage session={session} />
+          </Route>
 
-        <Route path="/lists">
-          {/* ログアウトはここに置く。日常的に押すものではないので、
+          <Route path="/lists">
+            {/* ログアウトはここに置く。日常的に押すものではないので、
               編集画面には出さない（#114） */}
-          <ListsPage
-            session={session}
-            signOutFailed={signOutFailed}
-            onSignOut={() => void signOut()}
-          />
-        </Route>
+            <ListsPage
+              session={session}
+              signOutFailed={signOutFailed}
+              onSignOut={() => void signOut()}
+            />
+          </Route>
 
-        {/* :listId より先に置かなくても段数が違うので当たらないが、
+          {/* :listId より先に置かなくても段数が違うので当たらないが、
             関係のある経路を近くに並べておく */}
-        <Route path="/lists/:listId/export">
-          {(params) => <ExportPage session={session} listId={params.listId} />}
-        </Route>
+          <Route path="/lists/:listId/export">
+            {(params) => <ExportPage session={session} listId={params.listId} />}
+          </Route>
 
-        <Route path="/lists/:listId/share">
-          {(params) => <SharePage session={session} listId={params.listId} />}
-        </Route>
+          <Route path="/lists/:listId/share">
+            {(params) => <SharePage session={session} listId={params.listId} />}
+          </Route>
 
-        <Route path="/lists/:listId">
-          {(params) => <ListPage session={session} listId={params.listId} />}
-        </Route>
+          <Route path="/lists/:listId">
+            {(params) => <ListPage session={session} listId={params.listId} />}
+          </Route>
 
-        {/*
+          {/*
           規約とポリシー（#304）。**ログインの有無で出し分けない。**
           読むのに何も要らない
         */}
-        <Route path="/terms">
-          <TermsPage />
-        </Route>
+          <Route path="/terms">
+            <TermsPage />
+          </Route>
 
-        <Route path="/privacy">
-          <PrivacyPage />
-        </Route>
+          <Route path="/privacy">
+            <PrivacyPage />
+          </Route>
 
-        <Route>
-          <Notice tone="warn">
-            このページはありません。
-            <Link href="/" className="underline">
-              トップへ戻る
-            </Link>
-          </Notice>
-        </Route>
-      </Switch>
+          <Route>
+            <Notice tone="warn">
+              このページはありません。
+              <Link href="/" className="underline">
+                トップへ戻る
+              </Link>
+            </Notice>
+          </Route>
+        </Switch>
+      )}
     </Layout>
   )
 }

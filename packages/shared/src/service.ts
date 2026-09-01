@@ -52,12 +52,30 @@ export const OPERATOR_URL = 'https://x.com/aiandrox'
 export const CONTACT_FORM_URL = 'https://forms.gle/B4ZPTdQife4LfHJt5'
 
 /**
- * 規約・ポリシーの制定日（#304）。**画面に出す。**
+ * 規約・ポリシーの版（#304 / #319）。**制定日そのものを版として使う。**
  *
- * ⚠️ **中身を変えたら日付も変える。** 変えた事実が利用者から見えないと、
- * 「掲載した時点から適用する」と書いてある意味が無い。
+ * 🔴 **ISO で持つ。** 同意の記録（`agreements.effective_on`）と突き合わせるので、
+ * **機械で比べられる形**でなければならない（#319）。
+ * 画面に出す文字列は `formatLegalDate` が作る。
+ * **表示用と判定用を別々に持たない**（2つあると必ずずれる）。
+ *
+ * ⚠️ **中身を変えたら日付も変える。** 変えると
+ * **同意の記録が古い版のものになり、全員にもう一度確認画面が出る。**
+ * それがこの仕組みの目的なので、**軽い直しで動かさないこと**
+ * （誤字の修正で全員に同意を求め直すのは筋が悪い）。
  */
-export const LEGAL_EFFECTIVE_DATE = '2026年8月21日'
+export const LEGAL_EFFECTIVE_DATE = '2026-08-21'
+
+/** `2026-08-21` → `2026年8月21日`。**画面に出すのはこちら。** */
+export function formatLegalDate(value: string): string {
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const [, year, month, day] = parsed ?? []
+
+  // 読めない形はそのまま返す。**黙って別の日付にしない**
+  if (year === undefined || month === undefined || day === undefined) return value
+
+  return `${year}年${String(Number(month))}月${String(Number(day))}日`
+}
 
 /**
  * サービスを一言で言ったもの。**OGP 画像に載せる**（#229）。
