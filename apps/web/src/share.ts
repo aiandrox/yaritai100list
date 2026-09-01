@@ -70,6 +70,11 @@ const PAGE_STYLE = `
   .date { color: var(--brand-deep); font-size: .65rem; font-variant-numeric: tabular-nums; }
 
   /* 下の導線（#225）。**人のリストの続きに見えないよう、はっきり離す** */
+  .site-footer {
+    margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--brand);
+    text-align: center; font-size: .75rem; color: #64748b;
+  }
+  .site-footer a { color: inherit; }
   .invite { margin-top: 2.5rem; padding: 1.25rem 1rem; background: #fff; border-radius: .25rem; text-align: center; }
   .invite h2 { font-size: 1rem; margin: 0; }
   .invite p { font-size: .75rem; color: #475569; margin: .5rem 0 0; }
@@ -168,6 +173,17 @@ function layout(options: {
         <div class="page">
           <header><a href="/">${SERVICE_NAME}</a></header>
           <main>${options.body}</main>
+
+          <!--
+            フッター（#304）。🔴 SPA 側（src/client/Layout.tsx）にも同じものがある。
+            共有ページは別実装なので、片方だけ直すとここだけ規約に行けなくなる。
+            ⚠️ この中でバッククォートを使わないこと（テンプレートリテラルが閉じる）
+          -->
+          <footer class="site-footer">
+            <a href="/terms">利用規約</a>
+            <span> · </span>
+            <a href="/privacy">プライバシーポリシー</a>
+          </footer>
         </div>
       </body>
     </html>`
