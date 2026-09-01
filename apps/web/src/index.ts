@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/cloudflare'
 import {
   BROWSABLE_GENRES,
   buildExportFile,
+  COMPLETED_ON_TIME_ZONE_OFFSET_MS,
   type CompletedPrecision,
   completedOnSchema,
   completedPrecisionOf,
@@ -276,7 +277,13 @@ const app = new Hono<AppEnv>()
     const auth = createAuth(createDb(c.env.DB), c.env)
 
     const res = await auth.api.signInSocial({
-      body: { provider: 'google', callbackURL: '/' },
+      /*
+       * 🔴 **ログイン直後かどうかを、戻り先の印で見分ける**（#325）。
+       * 新規の人が同意しないままリロードしたら**アカウントごと捨てる**が、
+       * **初回の読み込みだけはモーダルを出す**必要がある。
+       * 画面側がこの印を読んで、すぐ URL から消す（リロードすると印が無い）。
+       */
+      body: { provider: 'google', callbackURL: '/?welcome=1' },
       asResponse: true,
     })
 
@@ -654,7 +661,27 @@ const app = new Hono<AppEnv>()
       )
       .limit(1)
 
-    return c.json({ agreed: agreed !== undefined } as const)
+    /*
+     * 🔴 **規約ができた後に登録した人か**（#325）。
+     * この人が同意しないなら**アカウントを残さない**（まだ何も書いていない）。
+     * 規約より前から居る人は**消さない**（データがある）。
+     *
+     * ⚠️ **境目は日本時間の 0 時。** 完了日と同じ扱いにする（`COMPLETED_ON_TIME_ZONE_OFFSET_MS`）。
+     */
+    const [user] = await createDb(c.env.DB)
+      .select({ createdAt: users.createdAt })
+      .from(users)
+      .where(eq(users.id, c.get('userId')))
+      .limit(1)
+
+    const termsSince = new Date(
+      Date.parse(`${LEGAL_EFFECTIVE_DATE}T00:00:00.000Z`) - COMPLETED_ON_TIME_ZONE_OFFSET_MS,
+    )
+
+    return c.json({
+      agreed: agreed !== undefined,
+      joinedAfterTerms: user !== undefined && user.createdAt >= termsSince,
+    } as const)
   })
 
   /**

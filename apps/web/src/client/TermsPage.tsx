@@ -19,7 +19,7 @@ import { LegalHeading, LegalList, LegalPage, LegalText } from './LegalPage'
  * 「一切の責任を負わない」と書くと**無効になりうる**ので、
  * 故意・重過失を除く形にしてある。**軽くしようとして書き換えないこと。**
  */
-export function TermsPage({ heading }: { heading?: 'h1' | 'h2' } = {}) {
+export function TermsPage({ heading }: { heading?: 'h1' | 'h2' | 'none' } = {}) {
   return (
     <LegalPage title="利用規約" heading={heading ?? 'h1'}>
       <LegalText>

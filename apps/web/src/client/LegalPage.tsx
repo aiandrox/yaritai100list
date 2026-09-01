@@ -68,19 +68,23 @@ export function LegalPage({
 }: {
   title: string
   /**
-   * 見出しの段（#322）。
+   * 見出しの段（#322 / #325）。
    *
    * 🔴 **同意の確認画面（`AgreementGate`）の中にも同じ本文を出す。**
-   * あちらでは画面の見出しが別にあるので、**`h1` が2つにならないよう `h2` にする。**
+   * あちらは**見出しを枠の外に置く**ので `'none'` を渡す
+   * （枠の中に入れると、スクロールで見出しが流れて何の文書か分からなくなる）。
    */
-  heading?: 'h1' | 'h2'
+  heading?: 'h1' | 'h2' | 'none'
   children: React.ReactNode
 }) {
-  const Heading = heading
-
   return (
     <div className="pb-8">
-      <Heading className="text-xl font-bold text-slate-900">{title}</Heading>
+      {heading !== 'none' &&
+        (heading === 'h1' ? (
+          <h1 className="text-xl font-bold text-slate-900">{title}</h1>
+        ) : (
+          <h2 className="text-xl font-bold text-slate-900">{title}</h2>
+        ))}
 
       {children}
 
