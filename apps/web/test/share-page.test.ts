@@ -16,6 +16,21 @@ import { createTestUser, testBaseUrl, testDb } from './helpers'
 const request = (path: string) => exports.default.fetch(new Request(`${testBaseUrl()}${path}`))
 
 /** 公開範囲を指定してリストを1つ作る。 */
+/**
+ * 項目の一覧の部分だけを取り出す（#322）。
+ *
+ * 🔴 **ページ全体から年を探さない。** 共有ページには **OGP 画像の URL** が入っていて、
+ * そこに**更新日時がミリ秒で載っている**（`ogImageUrl`。キャッシュ破棄のため）。
+ * エポックミリ秒の数字の並びに**偶然 `2026` が含まれる瞬間**があり、
+ * **時刻によってだけ落ちるテスト**になっていた。
+ *
+ * 見たいのは「**伏せた項目の行に、いつ叶えたかが出ていないこと**」なので、
+ * 一覧の中だけを見る。
+ */
+function itemsHtml(body: string): string {
+  return body.slice(body.indexOf('<ol'), body.indexOf('</ol>'))
+}
+
 async function createList(options: {
   visibility: 'private' | 'unlisted' | 'public'
   title?: string
@@ -468,9 +483,9 @@ describe('見えてはいけないもの', () => {
         },
       ])
 
-      const body = await (await request(`/share/${list.shareId}`)).text()
-
-      expect(body).not.toContain('2026')
+      expect(itemsHtml(await (await request(`/share/${list.shareId}`)).text())).not.toContain(
+        '2026',
+      )
     })
 
     // 🔴 粒度も伏せる（#279）。「2026年」だけでも「いつ」の情報
@@ -488,7 +503,7 @@ describe('見えてはいけないもの', () => {
       const body = await (await request(`/share/${list.shareId}`)).text()
 
       expect(body).toContain('1 / 1 達成')
-      expect(body).not.toContain('2026')
+      expect(itemsHtml(body)).not.toContain('2026')
     })
 
     it('隠していない項目は今までどおり本文と完了日時が出る（回帰確認）', async () => {
