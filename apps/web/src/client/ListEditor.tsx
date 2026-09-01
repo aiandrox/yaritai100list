@@ -5,6 +5,7 @@ import {
   daysInMonth,
   formatCompletedOn,
   isCompleted,
+  ITEM_MEMO_MAX_LENGTH,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
@@ -55,6 +56,8 @@ interface ListEditorProps {
   onRenameList: (title: string) => Promise<boolean>
   onAddItem: (text: string) => Promise<boolean>
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
+  /** メモを書き換える（#294）。`null` で消す */
+  onChangeMemo: (id: string, memo: string | null) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
   /**
    * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使わない。**
@@ -73,6 +76,7 @@ export function ListEditor({
   onRenameList,
   onAddItem,
   onUpdateItemText,
+  onChangeMemo,
   onToggleItem,
   onChangeCompletedOn,
   onRemoveItem,
@@ -97,6 +101,15 @@ export function ListEditor({
    * 「押せない」と「完了済み」が両方成り立つ項目は存在しない。
    */
   const [promptedId, setPromptedId] = useState<string | null>(null)
+
+  /**
+   * メモ欄が開いている行（#294）。**`promptedId` とは別に持つ。**
+   *
+   * 🔴 **こちらは外側を押しても閉じない。** 書いている途中に閉じると、
+   * **書いたものが消えたように見える**（完了の案内は読むだけなので閉じてよい）。
+   * 同じ状態にまとめると、この違いを表せない。
+   */
+  const [memoId, setMemoId] = useState<string | null>(null)
 
   /**
    * 案内の**外側を押したら閉じる**（#83）。閉じ方が「同じ ✓ をもう一度押す」しか
@@ -221,6 +234,12 @@ export function ListEditor({
                   item={slot.item}
                   completion={completion}
                   prompted={promptedId === slot.item.id}
+                  memoOpen={memoId === slot.item.id}
+                  onToggleMemo={() => {
+                    const id = slot.item?.id ?? null
+                    setMemoId((current) => (current === id ? null : id))
+                  }}
+                  onChangeMemo={onChangeMemo}
                   onCommit={onUpdateItemText}
                   onToggle={(item) => {
                     // **できないことを黙って無効化しない。** 無効化だけだと、
@@ -425,6 +444,9 @@ function ItemRow({
   item,
   completion,
   prompted,
+  memoOpen,
+  onToggleMemo,
+  onChangeMemo,
   onCommit,
   onToggle,
   onUncomplete,
@@ -435,6 +457,10 @@ function ItemRow({
   item: Item
   completion: CompletionPermission
   prompted: boolean
+  /** メモ欄が開いているか（#294）。**完了の案内とは別の状態** */
+  memoOpen: boolean
+  onToggleMemo: () => void
+  onChangeMemo: (id: string, memo: string | null) => Promise<boolean>
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onUncomplete: (item: Item) => void
@@ -442,6 +468,7 @@ function ItemRow({
   onRemove: (id: string) => void
 }) {
   const [draft, setDraft] = useState(item.text)
+  const hasMemo = item.memo !== null
   // 🔴 **完了は粒度で判定する**（#279）。日付なしの完了も「済み」の見た目にする
   const done = isCompleted(item.completedPrecision)
 
@@ -560,6 +587,21 @@ function ItemRow({
         )}
 
         {/*
+          メモ（#294）。**✓ と同じ考え方で、無くてもうっすら出す**（#208）。
+          🔴 **書いてある行だけに出すと、書き足す入口が無くなる。**
+          書いてあるときは濃くして、**どこに書いたかが一覧で分かる**ようにする。
+        */}
+        <button
+          type="button"
+          aria-label={`${number} 番目のメモ${hasMemo ? '（あり）' : ''}`}
+          aria-expanded={memoOpen}
+          onClick={onToggleMemo}
+          className={`shrink-0 px-1 text-sm ${hasMemo ? 'text-brand-deep' : 'text-brand'}`}
+        >
+          ✎
+        </button>
+
+        {/*
           掴む場所（#166）。**行全体を掴めるようにしない。**
           本文を選ぼうとしただけでドラッグが始まってしまう。
 
@@ -590,6 +632,19 @@ function ItemRow({
           ×
         </button>
       </div>
+
+      {/*
+        メモ（#294）。**行の下に開く。**
+        🔴 **閉じている行の高さは変えない**（`PRODUCT_SPEC.md` §4.5）。
+        開いた行だけ背が伸びる
+      */}
+      {memoOpen && (
+        <MemoField
+          value={item.memo}
+          onSave={(memo) => onChangeMemo(item.id, memo)}
+          onClose={onToggleMemo}
+        />
+      )}
 
       {/*
         浮かぶものは2つあるが**同時には出ない**（ListEditor の promptedId の注意書き）。
@@ -943,5 +998,62 @@ function EmptyRow({ number }: { number: string }) {
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand/50" />
       <span className="flex-1" />
     </li>
+  )
+}
+
+/**
+ * メモの入力欄（#294）。**行の下に開く。**
+ *
+ * 🔴 **離れたときに保存する**（本文の入力欄と同じ）。
+ * 「保存」を押させると、押し忘れて消える。
+ *
+ * ⚠️ **外側を押しただけでは閉じない**（完了の案内とはここが違う）。
+ * 書いている途中に閉じると、**書いたものが消えたように見える。**
+ * 閉じるのは ✎ をもう一度押すか、この中の「閉じる」から。
+ */
+function MemoField({
+  value,
+  onSave,
+  onClose,
+}: {
+  value: string | null
+  onSave: (memo: string | null) => Promise<boolean>
+  onClose: () => void
+}) {
+  const [draft, setDraft] = useState(value ?? '')
+
+  const save = async () => {
+    const next = draft.trim() === '' ? null : draft
+    if (next === value) return
+
+    if (!(await onSave(next))) setDraft(value ?? '')
+  }
+
+  return (
+    <div className="pb-3 pl-8">
+      <textarea
+        value={draft}
+        autoFocus
+        aria-label="メモ"
+        maxLength={ITEM_MEMO_MAX_LENGTH}
+        rows={3}
+        placeholder="なぜやりたいか、叶えたときのことなど"
+        onChange={(event) => {
+          setDraft(event.target.value)
+        }}
+        onBlur={() => void save()}
+        className="w-full rounded border border-brand bg-white px-2 py-1.5 text-sm leading-6 text-slate-900 focus:outline-2 focus:outline-brand-deep"
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          void save().then(onClose)
+        }}
+        className="mt-1 text-xs text-slate-500 underline"
+      >
+        閉じる
+      </button>
+    </div>
   )
 }

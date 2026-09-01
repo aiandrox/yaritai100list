@@ -17,6 +17,7 @@ import {
   isCompleted,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
+  itemMemoSchema,
   itemTextSchema,
   LIST_TITLE_MAX_LENGTH,
   listTitleSchema,
@@ -155,6 +156,14 @@ export interface Item {
    * 未ログインのリストでは常に `null`（未ログインでは印を付けられない。#77）。
    */
   completedPrecision: CompletedPrecision | null
+
+  /**
+   * 自分だけが読むメモ（#294）。書いていなければ `null`。
+   *
+   * 🔴 **空文字を持たない。**「書いていない」は `null` 1つで表す
+   * （サーバー側の `itemMemoSchema` が空を `null` に寄せているのと揃える）。
+   */
+  memo: string | null
 }
 
 /**
@@ -227,7 +236,7 @@ export function addItem(list: LocalList, item: { id: string; text: string }): Li
       ...list,
       items: [
         ...list.items,
-        { id: item.id, text: text.data, completedAt: null, completedPrecision: null },
+        { id: item.id, text: text.data, completedAt: null, completedPrecision: null, memo: null },
       ],
     },
   }
@@ -263,6 +272,22 @@ export function setItemCompletion(
   if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 
   return { ok: true, list: mapItem(list, id, (item) => ({ ...item, ...completion })) }
+}
+
+/**
+ * メモを書き換える（#294）。**`null` で消す。**
+ *
+ * 🔴 **上限はここで効かせる**（`itemMemoSchema`）。画面側に別の上限を書かない。
+ * ⚠️ **空文字は `null` に寄る**（スキーマがそうしている）。
+ * 「書いていない」の表し方を1つにする。
+ */
+export function setItemMemo(list: LocalList, id: string, memo: string | null): ListResult {
+  if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
+
+  const parsed = itemMemoSchema.safeParse(memo)
+  if (!parsed.success) return { ok: false, reason: 'text-too-long' }
+
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, memo: parsed.data })) }
 }
 
 /**
@@ -647,6 +672,14 @@ const storedListSchema = z.object({
       id: z.string(),
       text: z.string(),
       completedAt: z.number().nullable(),
+
+      /**
+       * メモ（#294）。**古い保存には無いので省略できる。**
+       *
+       * 必須にすると、#294 より前に書いた人の保存が丸ごと `broken` に落ちる
+       * （完了日の粒度と同じ扱い）。
+       */
+      memo: z.string().nullable().optional(),
       /**
        * 完了日の粒度（#279）。**古い保存には無いので省略できる。**
        *
@@ -684,6 +717,8 @@ export function parseStoredList(raw: string | null): StoredListResult {
       items: parsed.data.items.map((item) => ({
         ...item,
         completedPrecision: item.completedPrecision ?? (item.completedAt === null ? null : 'day'),
+        // 🔴 **古い保存にはメモが無い**（#294）。無いだけで壊れていない
+        memo: item.memo ?? null,
       })),
     },
   }
@@ -712,6 +747,8 @@ export interface RemoteItem {
   completedAt: string | null
   /** 完了日の粒度（#279）。**`null` は未完了** */
   completedPrecision: CompletedPrecision | null
+  /** メモ（#294）。書いていなければ `null` */
+  memo: string | null
 }
 
 /**
@@ -762,6 +799,7 @@ export function toLocalList(list: { title: string }, items: RemoteItem[]): Local
       text: item.text,
       completedAt: item.completedAt === null ? null : Date.parse(item.completedAt),
       completedPrecision: item.completedPrecision,
+      memo: item.memo,
     })),
   }
 }

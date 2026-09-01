@@ -245,6 +245,7 @@ function ListPageBody({
             onRenameList={controller.renameList}
             onAddItem={controller.addItem}
             onUpdateItemText={controller.updateItemText}
+            onChangeMemo={controller.changeMemo}
             onToggleItem={controller.toggleItem}
             onChangeCompletedOn={controller.changeCompletedOn}
             onRemoveItem={controller.removeItem}

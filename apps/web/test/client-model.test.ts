@@ -1,5 +1,6 @@
 import {
   DEFAULT_LIST_TITLE,
+  ITEM_MEMO_MAX_LENGTH,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
@@ -40,6 +41,7 @@ import {
   COMPLETION_WITHOUT_DATE,
   NOT_COMPLETED,
   setItemCompletion,
+  setItemMemo,
   toCompletionPermission,
   toImportBody,
   toLocalList,
@@ -153,7 +155,7 @@ describe('addItem', () => {
     const list = expectOk(addItem(createEmptyList(), { id: 'i1', text: '南極に行く' }))
 
     expect(list.items).toEqual([
-      { id: 'i1', text: '南極に行く', completedAt: null, completedPrecision: null },
+      { id: 'i1', text: '南極に行く', completedAt: null, completedPrecision: null, memo: null },
     ])
   })
 
@@ -230,6 +232,7 @@ describe('updateItemText', () => {
       text: '北極に行く',
       completedAt: 1_700_000_000_000,
       completedPrecision: 'day',
+      memo: null,
     })
   })
 
@@ -394,7 +397,13 @@ describe('toSlots / formatItemNumber / filledCount', () => {
 
     expect(slots[0]).toEqual({
       number: '001',
-      item: { id: 'i1', text: '南極に行く', completedAt: null, completedPrecision: null },
+      item: {
+        id: 'i1',
+        text: '南極に行く',
+        completedAt: null,
+        completedPrecision: null,
+        memo: null,
+      },
     })
     expect(slots[1]).toEqual({ number: '002', item: null })
   })
@@ -456,6 +465,59 @@ describe('pickCurrentListId', () => {
 
   it('1つも無ければ null（呼び出し側が作る）', () => {
     expect(pickCurrentListId([])).toBeNull()
+  })
+})
+
+/**
+ * メモ（#294）。**上限と「空の表し方」をここで固定する。**
+ *
+ * 🔴 **空文字を持たない。**「書いていない」は `null` 1つ。
+ * 2通りあると、画面もサーバーも両方を気にすることになる。
+ */
+describe('setItemMemo', () => {
+  it('メモを書ける', () => {
+    const list = expectOk(setItemMemo(listOf('南極に行く'), 'i1', '寒そう'))
+
+    expect(list.items[0]?.memo).toBe('寒そう')
+  })
+
+  it('null で消せる', () => {
+    const written = expectOk(setItemMemo(listOf('南極に行く'), 'i1', '寒そう'))
+
+    expect(expectOk(setItemMemo(written, 'i1', null)).items[0]?.memo).toBeNull()
+  })
+
+  it('🔴 空白だけなら null に寄る', () => {
+    const list = expectOk(setItemMemo(listOf('南極に行く'), 'i1', '\u3000 '))
+
+    expect(list.items[0]?.memo).toBeNull()
+  })
+
+  it('🔴 上限を超えたら断る（画面側に別の上限を書かない）', () => {
+    const justFits = 'あ'.repeat(ITEM_MEMO_MAX_LENGTH)
+    const tooLong = 'あ'.repeat(ITEM_MEMO_MAX_LENGTH + 1)
+
+    expect(expectOk(setItemMemo(listOf('南極に行く'), 'i1', justFits)).items[0]?.memo).toBe(
+      justFits,
+    )
+    expect(setItemMemo(listOf('南極に行く'), 'i1', tooLong)).toEqual({
+      ok: false,
+      reason: 'text-too-long',
+    })
+  })
+
+  it('無い ID なら not-found', () => {
+    expect(setItemMemo(listOf('南極に行く'), 'nope', 'x')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    })
+  })
+
+  it('元のリストを書き換えない', () => {
+    const before = listOf('南極に行く')
+    setItemMemo(before, 'i1', '寒そう')
+
+    expect(before.items[0]?.memo).toBeNull()
   })
 })
 
@@ -724,10 +786,17 @@ describe('toLocalList', () => {
         text: '南極に行く',
         completedAt: '2026-08-07T00:00:00.000Z',
         completedPrecision: 'day',
+        memo: null,
       },
-      { id: 'i2', text: 'オーロラを見る', completedAt: null, completedPrecision: null },
+      { id: 'i2', text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
       // 日付なしの完了（#279）。**日時が無いまま完了として渡ってくる**
-      { id: 'i3', text: '富士山に登る', completedAt: null, completedPrecision: 'unknown' },
+      {
+        id: 'i3',
+        text: '富士山に登る',
+        completedAt: null,
+        completedPrecision: 'unknown',
+        memo: null,
+      },
     ])
 
     expect(list).toEqual({
@@ -738,17 +807,42 @@ describe('toLocalList', () => {
           text: '南極に行く',
           completedAt: Date.parse('2026-08-07T00:00:00.000Z'),
           completedPrecision: 'day',
+          memo: null,
         },
-        { id: 'i2', text: 'オーロラを見る', completedAt: null, completedPrecision: null },
-        { id: 'i3', text: '富士山に登る', completedAt: null, completedPrecision: 'unknown' },
+        {
+          id: 'i2',
+          text: 'オーロラを見る',
+          completedAt: null,
+          completedPrecision: null,
+          memo: null,
+        },
+        {
+          id: 'i3',
+          text: '富士山に登る',
+          completedAt: null,
+          completedPrecision: 'unknown',
+          memo: null,
+        },
       ],
     })
   })
 
   it('🔴 並べ替えない（並び順の情報源をサーバーに1本化する）', () => {
     const list = toLocalList({ title: 'x' }, [
-      { id: 'i2', text: '2番目に入っている', completedAt: null, completedPrecision: null },
-      { id: 'i1', text: '1番目に入っている', completedAt: null, completedPrecision: null },
+      {
+        id: 'i2',
+        text: '2番目に入っている',
+        completedAt: null,
+        completedPrecision: null,
+        memo: null,
+      },
+      {
+        id: 'i1',
+        text: '1番目に入っている',
+        completedAt: null,
+        completedPrecision: null,
+        memo: null,
+      },
     ])
 
     expect(list.items.map((item) => item.id)).toEqual(['i2', 'i1'])
