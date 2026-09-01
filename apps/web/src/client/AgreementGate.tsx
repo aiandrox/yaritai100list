@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { Link } from 'wouter'
+
+import { PrivacyPage } from './PrivacyPage'
+import { TermsPage } from './TermsPage'
 
 /**
- * 規約とポリシーの確認（#319）。**同意の記録が無い人にだけ出す。**
+ * 規約とポリシーの確認（#319 / #322）。**同意の記録が無い人にだけ出す。**
  *
- * 🔴 **全文を出さない。** 出しても読まれない。
- * **知らずに使うと困ることだけ**を並べて、全文はリンクにする。
- * 一番効くのは「**全体に公開すると、他の人に取り入れられる**」。
+ * 🔴 **要約を置かない**（2026-09-01 の利用者の判断）。
+ * 最初は要点3つを並べていたが、**中身を更新したときに要約だけ古くなる。**
+ * ずれても気づける仕組みが無い以上、**全文をそのまま出す**方が安全。
+ *
+ * 🔴 **同じ本文を2箇所に書かない。** `/terms` と `/privacy` の中身を
+ * **そのまま読み込んで**枠の中に出す。片方だけ直す事故が起きない。
  *
  * 🔴 **「同意しない」の出口を必ず置く。** ログアウトしてトップへ戻る。
  * **このアプリは未ログインでも書ける**ので、断っても何も失わない。
@@ -21,6 +26,7 @@ export function AgreementGate({
   onAgree: () => Promise<void>
   onDecline: () => void
 }) {
+  const [checked, setChecked] = useState(false)
   const [sending, setSending] = useState(false)
   const [failed, setFailed] = useState(false)
 
@@ -42,29 +48,36 @@ export function AgreementGate({
       <h1 className="text-lg font-bold text-slate-900">はじめる前に</h1>
 
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        利用規約とプライバシーポリシーを用意しました。要点は次の3つです。
+        利用規約とプライバシーポリシーを確認してください。
       </p>
 
-      <ul className="mt-4 flex flex-col gap-2">
-        <Point>書いたものは、あなたのものです</Point>
-        <Point>
-          <strong className="font-bold text-slate-900">「全体に公開」にしたやりたいこと</strong>
-          は、作者を伏せた形で「さがす」に並び、ほかの人が自分のリストに取り入れられます
-        </Point>
-        <Point>アカウントはいつでも削除できます。書いたものもすべて消えます</Point>
-      </ul>
+      {/*
+        🔴 **枠の中だけを流す。** 画面ごと長くすると、
+        **同意のチェックとボタンが下に押し出されて見えなくなる。**
 
-      <p className="mt-4 text-sm leading-6 text-slate-600">
-        全文は
-        <Link href="/terms" className="font-bold text-brand-deep underline">
-          利用規約
-        </Link>
-        と
-        <Link href="/privacy" className="font-bold text-brand-deep underline">
-          プライバシーポリシー
-        </Link>
-        をご覧ください。
-      </p>
+        ⚠️ 高さは `50dvh`。電話の縦幅の半分で、**枠の下に何があるかが見えている**
+        （チェックとボタンが同時に視界に入る）
+      */}
+      <div className="mt-4 max-h-[50dvh] overflow-y-auto rounded border border-brand bg-brand-soft px-4 py-2">
+        <TermsPage heading="h2" />
+        <PrivacyPage heading="h2" />
+      </div>
+
+      {/*
+        🔴 **押させる前に、押した意味を明示する。**
+        ボタンだけだと「読んだ」のか「同意した」のかが曖昧になる
+      */}
+      <label className="mt-4 flex cursor-pointer items-start gap-2 text-sm leading-6 text-slate-700">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => {
+            setChecked(event.target.checked)
+          }}
+          className="mt-1.5 shrink-0"
+        />
+        <span>利用規約とプライバシーポリシーに同意します</span>
+      </label>
 
       {failed && (
         <p role="alert" className="mt-3 text-sm text-brand-deep">
@@ -72,11 +85,15 @@ export function AgreementGate({
         </p>
       )}
 
+      {/*
+        ⚠️ **チェックするまで押せない。**
+        `disabled` にしているので、押しても何も起きない状態は作らない
+      */}
       <button
         type="button"
-        disabled={sending}
+        disabled={!checked || sending}
         onClick={agree}
-        className="mt-5 w-full rounded-lg bg-brand-deep px-3 py-3 font-bold text-white disabled:opacity-50"
+        className="mt-4 w-full rounded-lg bg-brand-deep px-3 py-3 font-bold text-white disabled:opacity-50"
       >
         同意して始める
       </button>
@@ -89,13 +106,5 @@ export function AgreementGate({
         同意しない（ログアウトする）
       </button>
     </div>
-  )
-}
-
-function Point({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="rounded-lg bg-brand-soft px-3 py-3 text-sm leading-6 text-slate-700">
-      {children}
-    </li>
   )
 }

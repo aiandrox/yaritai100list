@@ -19,9 +19,9 @@ import { LegalHeading, LegalList, LegalPage, LegalText } from './LegalPage'
  * 「一切の責任を負わない」と書くと**無効になりうる**ので、
  * 故意・重過失を除く形にしてある。**軽くしようとして書き換えないこと。**
  */
-export function TermsPage() {
+export function TermsPage({ heading }: { heading?: 'h1' | 'h2' } = {}) {
   return (
-    <LegalPage title="利用規約">
+    <LegalPage title="利用規約" heading={heading ?? 'h1'}>
       <LegalText>
         この規約は「やりたいことリスト100」（以下「本サービス」）の利用条件を定めるものです。
         本サービスを利用した時点で、この規約に同意したものとみなします。
