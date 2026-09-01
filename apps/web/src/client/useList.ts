@@ -16,6 +16,7 @@ import {
   NOT_COMPLETED,
   serializeList,
   setItemCompletion,
+  setItemMemo,
   toImportBody,
   toLocalList,
   updateItemText,
@@ -106,6 +107,8 @@ export interface ListController {
   renameList: (title: string) => Promise<boolean>
   addItem: (text: string) => Promise<boolean>
   updateItemText: (id: string, text: string) => Promise<boolean>
+  /** メモを書き換える（#294）。**`null` で消す** */
+  changeMemo: (id: string, memo: string | null) => Promise<boolean>
   toggleItem: (item: Item) => Promise<boolean>
   /**
    * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使えない。**
@@ -477,6 +480,27 @@ export function useList(
         await loadFromServer()
         return false
       }
+    },
+
+    /**
+     * メモを書き換える（#294）。
+     *
+     * ⚠️ **未ログインでも書ける。** 完了（#77）とは違い、ログインの動機にしない。
+     * 保存先が localStorage になるだけで、画面の作りは同じ。
+     */
+    changeMemo: async (itemId, memo) => {
+      if (list === null) return false
+
+      const next = setItemMemo(list, itemId, memo)
+
+      return onServer
+        ? applyOptimistic(next, (id) =>
+            api.api.lists[':listId'].items[':itemId'].$patch({
+              param: { listId: id, itemId },
+              json: { memo },
+            }),
+          )
+        : applyLocal(next)
     },
 
     updateItemText: async (itemId, text) => {
