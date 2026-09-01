@@ -134,6 +134,13 @@
       "when": 1788226684365,
       "tag": "0018_add_agreements",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1788248102362,
+      "tag": "0019_drop_agreements",
+      "breakpoints": true
     }
   ]
 }
