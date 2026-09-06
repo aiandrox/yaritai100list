@@ -34,3 +34,8 @@ GOOGLE_CLIENT_SECRET=
 # URL の方は wrangler.jsonc の vars にある（秘密ではないため）。
 # ローカルから別の生成サービスを見たいときだけ、ここで RENDER_URL を上書きする。
 RENDER_HMAC_SECRET=
+
+# 取り入れ面の判定に使う Gemini API のキー（#342。Google AI Studio で発行）。
+# **development 用のキーを入れる**（production とは別に発行する。docs/console-settings.md）。
+# **未設定なら判定バッチは動かない**（プールは古い判定のまま。ローカルでは空でよい）。
+GEMINI_API_KEY=
