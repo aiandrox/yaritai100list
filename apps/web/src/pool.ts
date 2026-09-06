@@ -34,6 +34,41 @@ const publicVisibilities = sql.raw(
 )
 
 /**
+ * 数量だけが違う代表表現を1つの束にするためのキー（#337）。
+ *
+ * 🔴 **数字の並びを1つの `#` に潰す。** 「体重を70kgにする」「体重を65kgにする」は
+ * どちらも `体重を#kgにする` になり、同じ行にまとまる。桁数が違っても
+ * （「10万円」「100万円」）畳んだあとは同じ `#` になる。
+ *
+ * 🔴 **単位は残す。** 数字だけを消すので「50キロ歩く」（距離）と「75キロ」（体重）は
+ * `#キロ歩く` と `#キロ` で別のまま。語尾が違うもの（「カラオケで90点」と
+ * 「カラオケで95点を取る」）も別のまま。**まとめるのは「数字以外は同じ」ものだけ**
+ * （2026-09-06 の利用者の判断。埋め込みや AI は使わない）。
+ *
+ * 🔴 **数字だけの代表表現は伏せない。** 「2024」「100」まで `#` にすると
+ * **無関係なものが1行に潰れる。** 伏せた結果が `#` と空白しか残らないなら、
+ * 代表表現そのものをキーにする（＝今までどおり完全一致）。
+ *
+ * ⚠️ **SQLite に正規表現が無い**ので、桁ごとの `replace` を10個重ねて数字を `#` にし、
+ * さらに `##` → `#` を数回かけて連桁を1つに畳む（本文は `normalizePoolText` 済みで
+ * 数字は半角）。5回畳めば 32 桁まで1つになる。代表表現の数字はせいぜい数桁。
+ */
+const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+function maskDigitsExpr(column: string): string {
+  const toHash = DIGITS.reduce((expr, digit) => `replace(${expr}, '${digit}', '#')`, column)
+  return Array.from({ length: 5 }).reduce<string>((expr) => `replace(${expr}, '##', '#')`, toHash)
+}
+
+function familyKeyExpr(column: string): string {
+  const masked = maskDigitsExpr(column)
+  const rest = `replace(replace(${masked}, '#', ''), ' ', '')`
+  return `case when ${rest} = '' then ${column} else ${masked} end`
+}
+
+const judgedFamilyKey = sql.raw(familyKeyExpr('judged.canonical'))
+
+/**
  * プールの中身を作る SQL。
  *
  * 🔴 **出す本文と、数える範囲が違う**（2026-08-10 の利用者の判断）。
@@ -51,15 +86,19 @@ const publicVisibilities = sql.raw(
  * 候補にもしないし、人数にも数えない。`writers` は応答に出ないとはいえ、
  * 他人の同じ本文の並び順には影響するため、**隠した本人の分だけそこにも残らないようにする。**
  *
- * ⚠️ **ジャンルは `min()` で1つに決めている。** 同じ代表表現に別のジャンルが
- * 付くことがある（AI が本文ごとに答えるため）。多数決にすると SQL が一段深くなるわりに、
- * **実際にはほぼ揃う。** 揺れるようなら #255 で作り直す。
- * 大事なのは**毎回同じものを選ぶこと**で、`min()` はそれを満たす。
+ * ⚠️ **ジャンルも代表表現も `min()` で1つに決めている。** 同じ束に別のジャンルや
+ * （数量だけ違う）別の表記が入ることがある。多数決にすると SQL が一段深くなるわりに、
+ * **実際にはほぼ揃う。** 大事なのは**毎回同じものを選ぶこと**で、`min()` はそれを満たす。
+ *
+ * 🔴 **まとめる単位は「数量を伏せた代表表現」**（`familyKeyExpr`。#337）。
+ * 「体重を70kgにする」「体重を65kgにする」は1行になり、`min()` で
+ * 「体重を65kgにする」が見出しになる。**候補にするのは今までどおり全公開の本文だけ**
+ * （`in (...)` は伏せる前の代表表現で引く）。数量を含まない代表表現は完全一致のまま。
  */
 const insertPool = sql`
   insert into pool (canonical, genre, writers)
   select
-      judged.canonical,
+      min(judged.canonical),
       min(judged.genre),
       count(distinct owner.user_id)
     from items as written
@@ -78,7 +117,7 @@ const insertPool = sql`
               and public_owner.visibility in (${publicVisibilities})
               and public_written.hidden_in_share = 0
          )
-   group by judged.canonical
+   group by ${judgedFamilyKey}
 `
 
 /**
