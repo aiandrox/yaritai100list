@@ -18,11 +18,11 @@ import { createTestUser, testDb } from './helpers'
  * 取り入れ面に出してよいかの判定（#253 / 親 #252）。
  *
  * 🔴 見るのは **「迷ったら出さないに倒れること」。**
- * Cloudflare 自身が「**スキーマ通りに返る保証はない**」と書いているので、
+ * Google 自身が「**スキーマ通りに返る保証はない**」と書いているので、
  * **読めない応答が来たときにどうなるか**が、この機能の本体と言っていい。
  *
- * ⚠️ **Workers AI のバインディングはテスト環境に無い。**
- * だから `judgeUnjudged` は AI を引数で受け取る形にしてある（差し替えられる）。
+ * ⚠️ **判定は Gemini API への fetch**（#342）。テストでは `judgeUnjudged` に
+ * `PoolJudge` を差し替えて渡す（`createGeminiJudge` は本番でだけ組む）。
  */
 
 describe('normalizePoolText', () => {
@@ -299,8 +299,16 @@ describe('poolJudgementPrompt / poolJudgeInput', () => {
   it('判定する本文を user のメッセージに載せる', () => {
     const input = poolJudgeInput('富士山登頂')
 
-    expect(input.messages[1]).toEqual({ role: 'user', content: '富士山登頂' })
-    expect(input.response_format.type).toBe('json_schema')
+    expect(input.contents[0]).toEqual({ role: 'user', parts: [{ text: '富士山登頂' }] })
+    expect(input.systemInstruction.parts[0].text).toBe(poolJudgementPrompt())
+  })
+
+  it('JSON を強制し、揺れないよう temperature 0 で投げる', () => {
+    const { generationConfig } = poolJudgeInput('x')
+
+    expect(generationConfig.responseMimeType).toBe('application/json')
+    expect(generationConfig.responseSchema.required).toEqual(['publishable', 'canonical', 'genre'])
+    expect(generationConfig.temperature).toBe(0)
   })
 })
 
@@ -445,7 +453,17 @@ async function judged(
 }
 
 describe('judgeUnjudged', () => {
-  const answer = (value: unknown) => ({ run: vi.fn().mockResolvedValue({ response: value }) })
+  /** Gemini の応答の形（`candidates[0].content.parts[].text` に JSON 文字列）を作る。 */
+  const geminiResponse = (value: unknown) => ({
+    candidates: [
+      {
+        content: {
+          parts: [{ text: typeof value === 'string' ? value : JSON.stringify(value) }],
+        },
+      },
+    ],
+  })
+  const answer = (value: unknown) => ({ run: vi.fn().mockResolvedValue(geminiResponse(value)) })
 
   it('判定を貯める', async () => {
     await seedPublic('p1', ['富士山登頂'])
@@ -469,6 +487,34 @@ describe('judgeUnjudged', () => {
     const ai = answer(
       JSON.stringify({ publishable: true, canonical: '富士山に登る', genre: 'travel' }),
     )
+
+    await judgeUnjudged(testDb(), ai)
+
+    expect((await testDb().select().from(wishTexts))[0]?.canonical).toBe('富士山に登る')
+  })
+
+  it('🔴 思考パートが混じっても本文パートを拾う', async () => {
+    await seedPublic('p1', ['富士山登頂'])
+    const ai = {
+      run: vi.fn().mockResolvedValue({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: '考え中…', thought: true },
+                {
+                  text: JSON.stringify({
+                    publishable: true,
+                    canonical: '富士山に登る',
+                    genre: 'travel',
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    }
 
     await judgeUnjudged(testDb(), ai)
 
@@ -511,12 +557,12 @@ describe('judgeUnjudged', () => {
   it('🔴 全部落ちたときに気づけるよう、最後のエラーを持ち帰る', async () => {
     // 呼び出し側がこれを見て Sentry に送る（モデルが非推奨になったときの唯一の手掛かり）
     await seedPublic('p1', ['なにか'])
-    const ai = { run: vi.fn().mockRejectedValue(new Error('5028: deprecated')) }
+    const ai = { run: vi.fn().mockRejectedValue(new Error('gemini 404')) }
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const result = await judgeUnjudged(testDb(), ai)
 
-    expect(String(result.lastError)).toContain('5028')
+    expect(String(result.lastError)).toContain('404')
 
     logged.mockRestore()
   })
@@ -526,7 +572,7 @@ describe('judgeUnjudged', () => {
     const run = vi
       .fn()
       .mockRejectedValueOnce(new Error('unavailable'))
-      .mockResolvedValue({ response: { publishable: true, canonical: 'B', genre: 'other' } })
+      .mockResolvedValue(geminiResponse({ publishable: true, canonical: 'B', genre: 'other' }))
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const result = await judgeUnjudged(testDb(), { run })
@@ -583,7 +629,7 @@ describe('judgeUnjudged', () => {
     })
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
-    await judgeUnjudged(testDb(), { run: vi.fn().mockRejectedValue(new Error('5028')) })
+    await judgeUnjudged(testDb(), { run: vi.fn().mockRejectedValue(new Error('gemini 503')) })
 
     expect((await testDb().select().from(wishTexts))[0]).toMatchObject({
       verdict: 'ok',
@@ -615,7 +661,21 @@ describe('wish_texts', () => {
     await seedPublic('p1', ['富士山に登る'])
     const ai = {
       run: vi.fn().mockResolvedValue({
-        response: { publishable: true, canonical: '富士山に登る', genre: 'travel' },
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    publishable: true,
+                    canonical: '富士山に登る',
+                    genre: 'travel',
+                  }),
+                },
+              ],
+            },
+          },
+        ],
       }),
     }
     await judgeUnjudged(testDb(), ai)

@@ -26,70 +26,58 @@ import { items, lists, wishTexts } from './db/schema'
 /**
  * 1回のバッチで判定する本文の数。
  *
- * 🔴 **Neurons の1日の枠から決めている**（2026-08-11 に実測）。
- * 1時間ごとに動くので **× 24 が1日の消費**になる。
+ * 🔴 **無料枠のサブリクエスト上限から決めている**（Cloudflare Free は
+ * **1実行あたり 50**、2026-08-10 に確認）。1件につき Gemini へ fetch 1回 + D1 書き込み1回
+ * なので 12 件で約 24。倍以上の余地はあるが、プールの作り直しは急がないので詰めない。
  *
- * 実測値（`@cf/meta/llama-3.3-70b-instruct-fp8-fast`、いまのプロンプト）:
- * **入力 804 トークン・出力 25 トークン = 1件あたり 約 26.6 Neurons。**
+ * ⚠️ **コストの目安**（#342 の検証で実測。`gemini-3.5-flash-lite`、いまのプロンプト）:
+ * **入力 約 800 トークン・出力 約 25 トークン/件。** 12 件/時 × 24 = 288 件/日 で
+ * 月およそ 入力 7.5M / 出力 0.25M トークン ≒ **月 $1〜3**。
+ * 暗黙のプロンプトキャッシュ（同一システムプロンプト）で入力側はさらに下がる。
  *
- * | 件数 | 1日 | Neurons/日 |
- * |---|---|---|
- * | 6 | 144 | 3,800 |
- * | **12** | **288** | **7,700** … 無料枠 10,000 の内側 |
- * | 15 | 360 | 9,600 … 枠には入るが、検証を1回回すと超える |
- *
- * ⚠️ **無料枠は 10,000 Neurons/日。** 超えると `AiError 4006` で
- * **その日はもう1件も判定できない**（2026-08-10 に踏んだ）。
- * 判定が止まってもプールは古い判定で埋まったままなので画面は壊れないが、
- * **新しく書かれた本文がいつまでも出てこない。**
- *
- * 🔴 **プロンプトを長くしたら、ここも見直すこと。** 精度と件数は同じ枠を取り合う。
- * ⚠️ **見積もりで決めない。** 応答の `usage.neurons` に実測値が入っている。
- * 文字数から見積もったときは 6 割も外した。
- *
- * ⚠️ **有料プランでも 12 のままにする**（2026-08-11 に一時的に Workers Paid にした）。
- * 15 に上げると、**無料へ戻したとたんにまた枠を焼く。**
- * 有料は «余裕» であって «前提» ではない。
+ * 🔴 **プロンプトを長くしたら入力トークンが増える。** コストと件数は連動する。
+ * ⚠️ **Neurons の枠はもう関係ない**（Workers AI をやめた。#342）。
  */
 export const POOL_JUDGE_BATCH_SIZE = 12
 
 /**
- * Workers AI のモデル。
+ * 判定に使うモデル（#342）。**Google AI Studio の Gemini API。**
  *
- * 🔴 **JSON モードに対応しているものを選ぶ**（2026-08-10 に確認）。
- * ⚠️ ただし Cloudflare 自身が「**スキーマ通りに返る保証はない**」と書いているので、
- * 受け取った後に必ず検証する（`toPoolJudgement`）。
+ * 🔴 **Workers AI（Llama 3.3 70B fp8）から移した理由は文字化け**（#336 / #340）。
+ * fp8 量子化＋日本語の弱さで canonical を別字に化けさせる事故が本番で ~18/250 出ていた。
+ * #342 の検証（本番 `wish_texts` 250 行）で `gemini-3.5-flash-lite` は
+ * **化け 0/250**・プライバシー判定は Llama 以上・外し方は「正規化しなさすぎ」側で
+ * #264 的に安全、と確認した。
  *
- * ⚠️ **モデルは非推奨になる。** 最初に選んだ `llama-3.1-8b-instruct` は
- * **2026-05-30 に非推奨**になっていて、呼ぶと 5028 で落ちた（2026-08-10 に踏んだ）。
- * 落ちたときは保存しないので `ng` が焼き付くことはないが、
- * **判定が全く進まなくなる。** ログの `pool-judge: failed=` を見ること。
+ * ⚠️ **`responseSchema` で JSON を強制するが**、Google 自身「スキーマ通りに返る保証はない」
+ * としているので受けた後に必ず検証する（`toPoolJudgement`）。
  *
- * 🔴 **モデルを変えても `wish_texts` を一括で消さないこと。**
- * 消せば作り直されるが、**判定は1日 288 件しか進まない**（`POOL_JUDGE_BATCH_SIZE`）。
- * その間**プールが空になる**（プールは `wish_texts` から作り直すため）。
- * 1万件あれば35日間、取り入れ面が空になる。
+ * ⚠️ **モデルは提供終了する。** `gemini-2.5-flash-lite` は #342 の検証中に
+ * 「新規ユーザーには提供しない」で 404 になった。落ちても保存しないので `ng` が
+ * 焼き付くことはないが判定が止まる。ログの `pool-judge: ... すべて失敗した` を見ること。
  *
- * **ここの値を書き換えるだけでよい**（#254）。`wish_texts.model` と突き合わせて
- * 古い行を少しずつ拾い直す（`selectUnjudged`）。**上書きされるまで古い判定が使われる**ので、
- * 入れ替えの最中もプールは埋まったままになる。
- *
- * 手元で確かめた結果（2026-08-10）:
- * - 「富士山登頂」「富士山に登りたい」→ どちらも `富士山に登る` に寄った
- * - 「田中太郎に告白する」→ `ng`
+ * 🔴 **モデルを変えても `wish_texts` を一括で消さないこと**（#254）。値を書き換えるだけで
+ * `selectUnjudged` が `wish_texts.model` と突き合わせて古い行を少しずつ拾い直す。
+ * **上書きされるまで古い判定が使われる**ので、入れ替え中もプールは埋まったまま。
  */
-export const POOL_JUDGE_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+export const POOL_JUDGE_MODEL = 'gemini-3.5-flash-lite'
 
-/** AI に渡す形。**呼び出し側から組み立てを見えなくする。** */
+/** Gemini API のベース URL。キーはクエリで渡す（Google のやり方）。 */
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
+
+/**
+ * AI に渡す形（#342）。**呼び出し側から組み立てを見えなくする。**
+ *
+ * Gemini `generateContent` の body。`responseSchema` で JSON を強制し、
+ * `temperature: 0` で呼び出しごとの揺れを抑える。
+ */
 export function poolJudgeInput(normalized: string) {
   return {
-    messages: [
-      { role: 'system', content: poolJudgementPrompt() },
-      { role: 'user', content: normalized },
-    ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
+    systemInstruction: { parts: [{ text: poolJudgementPrompt() }] },
+    contents: [{ role: 'user', parts: [{ text: normalized }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
         type: 'object',
         properties: {
           publishable: { type: 'boolean' },
@@ -98,8 +86,46 @@ export function poolJudgeInput(normalized: string) {
         },
         required: ['publishable', 'canonical', 'genre'],
       },
+      temperature: 0,
     },
   } as const
+}
+
+/** 判定に必要なシークレット。**`Env` に入らない**ので他の秘密と同じくここで宣言する。 */
+export interface PoolJudgeEnv {
+  /**
+   * Google AI Studio の Gemini API キー（#342。`wrangler secret`）。
+   * **無ければ判定バッチは動かない**（プールは古い判定のまま。`index.ts` の `runPoolBatch`）。
+   */
+  readonly GEMINI_API_KEY?: string
+}
+
+/** 判定を1件返すもの。**HTTP を `judgeUnjudged` から切り離す**（テストで差し替える）。 */
+export interface PoolJudge {
+  run(input: unknown): Promise<unknown>
+}
+
+/**
+ * Gemini API を叩く `PoolJudge`。
+ *
+ * 🔴 **キーはクエリに載る。** 失敗時に URL や本文をログに出さない（status だけ）。
+ * ⚠️ **失敗は投げる。** `judgeUnjudged` が捕まえて「保存しない」に倒す
+ * （一時的な失敗が恒久的な除外にならないように）。
+ */
+export function createGeminiJudge(apiKey: string, model = POOL_JUDGE_MODEL): PoolJudge {
+  return {
+    async run(input: unknown): Promise<unknown> {
+      const res = await fetch(`${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+
+      if (!res.ok) throw new Error(`gemini ${String(res.status)}`)
+
+      return res.json()
+    },
+  }
 }
 
 /**
@@ -194,7 +220,7 @@ export function saveJudgement(db: Db, rawText: string, judgement: PoolJudgement)
  */
 export async function judgeUnjudged(
   db: Db,
-  ai: { run: (model: string, input: unknown) => Promise<unknown> },
+  judge: PoolJudge,
   limit = POOL_JUDGE_BATCH_SIZE,
 ): Promise<{ judged: number; failed: number; lastError?: unknown }> {
   const targets = await selectUnjudged(db, limit)
@@ -208,7 +234,7 @@ export async function judgeUnjudged(
     let raw: unknown
 
     try {
-      raw = await ai.run(POOL_JUDGE_MODEL, poolJudgeInput(normalized))
+      raw = await judge.run(poolJudgeInput(normalized))
     } catch (error) {
       // 呼び出せなかっただけ。**除外として保存しない**
       console.error(`pool-judge: ${String(error)}`)
@@ -225,19 +251,26 @@ export async function judgeUnjudged(
 }
 
 /**
- * Workers AI の応答から中身を取り出す。
+ * Gemini の応答から中身を取り出す（#342）。
  *
- * ⚠️ **`response` は JSON の**文字列**で返ることがある**（モデルによる）。
- * オブジェクトで来ることもあるので、両方を受ける。
+ * `candidates[0].content.parts[].text` が JSON 文字列。思考する版だと思考パートが
+ * 混ざるので `thought` でないテキストを拾う。
  * 読めなければ `undefined` を返し、`toPoolJudgement` に「出さない」と判断させる。
  */
 function toResponseObject(raw: unknown): unknown {
-  const response = (raw as { response?: unknown }).response
+  const parts =
+    (
+      raw as {
+        candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[]
+      }
+    ).candidates?.[0]?.content?.parts ?? []
 
-  if (typeof response !== 'string') return response
+  const text = parts.find((part) => typeof part.text === 'string' && part.thought !== true)?.text
+
+  if (typeof text !== 'string') return undefined
 
   try {
-    return JSON.parse(response)
+    return JSON.parse(text)
   } catch {
     return undefined
   }
