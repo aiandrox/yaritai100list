@@ -58,7 +58,32 @@ export function Layout({
         </header>
 
         {children}
+
+        <SiteFooter />
       </div>
     </div>
+  )
+}
+
+/**
+ * フッター（#304）。**規約とポリシーへの入口。**
+ *
+ * 🔴 **共有ページ（`src/share.ts`）にも同じものを置く。** あちらは別実装なので、
+ * ここに足しただけでは出ない（`Layout` の冒頭のコメント）。
+ *
+ * ⚠️ **目立たせない。** 日常的に押すものではないので、
+ * 本文の邪魔をしない大きさと色にする。
+ */
+function SiteFooter() {
+  return (
+    <footer className="mt-16 border-t border-brand/40 pt-4 text-center text-xs text-slate-500">
+      <Link href="/terms" className="underline">
+        利用規約
+      </Link>
+      <span className="px-2">·</span>
+      <Link href="/privacy" className="underline">
+        プライバシーポリシー
+      </Link>
+    </footer>
   )
 }

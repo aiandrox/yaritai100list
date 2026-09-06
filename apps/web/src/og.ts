@@ -1,4 +1,9 @@
-import { OG_SIGNATURE_TTL_SECONDS, type OgPayload } from '@yaritai100list/shared'
+import {
+  type CompletedPrecision,
+  isCompleted,
+  OG_SIGNATURE_TTL_SECONDS,
+  type OgPayload,
+} from '@yaritai100list/shared'
 
 /**
  * OGP 画像の入口（#171）。**認可はここで済ませる。**
@@ -35,12 +40,14 @@ export interface RenderEnv {
  */
 export function buildOgPayload(
   list: { title: string },
-  items: { completedAt: Date | null }[],
+  items: { completedPrecision: CompletedPrecision | null }[],
   now: Date,
 ): OgPayload {
   return {
     title: list.title,
-    completed: items.filter((item) => item.completedAt !== null).length,
+    // 🔴 **粒度で数える**（#279）。`completedAt` で数えると
+    // 日付なしの完了（粒度 `unknown`）が達成数から落ちる
+    completed: items.filter((item) => isCompleted(item.completedPrecision)).length,
     filled: items.length,
     exp: Math.floor(now.getTime() / 1000) + OG_SIGNATURE_TTL_SECONDS,
   }

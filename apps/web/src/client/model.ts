@@ -11,9 +11,13 @@
  */
 
 import {
+  type CompletedPrecision,
+  completedPrecisionSchema,
   DEFAULT_LIST_TITLE,
+  isCompleted,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
+  itemMemoSchema,
   itemTextSchema,
   LIST_TITLE_MAX_LENGTH,
   listTitleSchema,
@@ -140,8 +144,26 @@ export interface Item {
    */
   id: string
   text: string
-  /** 完了日時（epoch ms）。未完了なら `null`。 */
+  /**
+   * 完了日時（epoch ms）。未完了と**日付なしの完了**（#279）なら `null`。
+   *
+   * 🔴 **完了しているかはここでは分からない**（#279）。`completedPrecision` で見る。
+   */
   completedAt: number | null
+  /**
+   * 完了日の粒度（#279）。**`null` は未完了。**
+   *
+   * 未ログインのリストでは常に `null`（未ログインでは印を付けられない。#77）。
+   */
+  completedPrecision: CompletedPrecision | null
+
+  /**
+   * 自分だけが読むメモ（#294）。書いていなければ `null`。
+   *
+   * 🔴 **空文字を持たない。**「書いていない」は `null` 1つで表す
+   * （サーバー側の `itemMemoSchema` が空を `null` に寄せているのと揃える）。
+   */
+  memo: string | null
 }
 
 /**
@@ -210,7 +232,13 @@ export function addItem(list: LocalList, item: { id: string; text: string }): Li
 
   return {
     ok: true,
-    list: { ...list, items: [...list.items, { id: item.id, text: text.data, completedAt: null }] },
+    list: {
+      ...list,
+      items: [
+        ...list.items,
+        { id: item.id, text: text.data, completedAt: null, completedPrecision: null, memo: null },
+      ],
+    },
   }
 }
 
@@ -227,72 +255,55 @@ export function updateItemText(list: LocalList, id: string, text: string): ListR
 }
 
 /**
- * 完了にする / 取り消す。
+ * 完了にする / 取り消す / 完了日を変える（#279）。
  *
- * `completedAt` に `null` を渡すと取り消し。**リスト内の位置は動かさない**
+ * `completedPrecision` に `null` を渡すと取り消し。**リスト内の位置は動かさない**
  * （`PRODUCT_SPEC.md` §4.5。番号 = 並び順が動くと、どれを完了したのか分からなくなる）。
+ *
+ * 🔴 **日時と粒度を必ず一緒に渡す。** 片方だけ変えられる形にすると、
+ * 「粒度は `day` なのに日時が無い」という組み合わせが画面の中に作れてしまう
+ * （サーバーは DB のトリガーで止めるが、画面の表示はそこまで待たない）。
  */
-export function setItemCompletedAt(
+export function setItemCompletion(
   list: LocalList,
   id: string,
-  completedAt: number | null,
+  completion: { completedAt: number | null; completedPrecision: CompletedPrecision | null },
 ): ListResult {
   if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 
-  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, completedAt })) }
-}
-
-// ---------------------------------------------------------------------------
-// 完了日の直し（#207）
-// ---------------------------------------------------------------------------
-
-/**
- * `<input type="date">` に入れる値（`YYYY-MM-DD`）。
- *
- * **その端末の時間帯での日付**にする。画面に出している日付
- * （`toLocaleDateString`）と同じものが入力欄に出ないと、
- * **開いた瞬間に「1日ずれている」ように見える。**
- *
- * ⚠️ **`toISOString().slice(0, 10)` を使わない。** あれは UTC の日付なので、
- * 日本時間の朝9時より前に完了した項目が前日として出る。
- */
-export function toDateInputValue(completedAt: number): string {
-  const date = new Date(completedAt)
-  const pad = (value: number) => String(value).padStart(2, '0')
-
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, ...completion })) }
 }
 
 /**
- * 完了日時の**日付だけ**を差し替える。時刻は元のまま。
+ * メモを書き換える（#294）。**`null` で消す。**
  *
- * 🔴 **その日の 00:00 にしない**（2026-08-08 の判断、#207）。
- * 00:00 にすると、端末の時間帯によっては共有ページ（`Asia/Tokyo` 固定）で前日に見える。
- * 元の時刻（＝✓ を押した瞬間の時刻。たいてい日中）を保てば、
- * 時間帯が多少ずれても日付が動かない。
- *
- * 差し替えは**端末の時間帯**で行う（`setFullYear`）ので、
- * 入力欄に入れた日付がそのまま画面に出ることは保証される。
- *
- * 読めない値なら `null`。`<input type="date">` は空にできるし、
- * 手で打てるブラウザもあるので、**画面から来る値を信用しない。**
+ * 🔴 **上限はここで効かせる**（`itemMemoSchema`）。画面側に別の上限を書かない。
+ * ⚠️ **空文字は `null` に寄る**（スキーマがそうしている）。
+ * 「書いていない」の表し方を1つにする。
  */
-export function withDatePart(completedAt: number, dateInput: string): number | null {
-  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput)
-  if (parts === null) return null
+export function setItemMemo(list: LocalList, id: string, memo: string | null): ListResult {
+  if (!list.items.some((item) => item.id === id)) return { ok: false, reason: 'not-found' }
 
-  const [year, month, day] = parts.slice(1).map(Number) as [number, number, number]
+  const parsed = itemMemoSchema.safeParse(memo)
+  if (!parsed.success) return { ok: false, reason: 'text-too-long' }
 
-  const next = new Date(completedAt)
-  next.setFullYear(year, month - 1, day)
-
-  // 存在しない日（2026-02-30 など）は別の日に繰り上がる。**黙って別の日にしない**
-  if (next.getFullYear() !== year || next.getMonth() !== month - 1 || next.getDate() !== day) {
-    return null
-  }
-
-  return next.getTime()
+  return { ok: true, list: mapItem(list, id, (item) => ({ ...item, memo: parsed.data })) }
 }
+
+/**
+ * 日付を覚えていない完了（#279）。**完了しているが日時を持たない。**
+ *
+ * ⚠️ **「やった」印を付けたときの既定ではない**（2026-08-15、#298）。
+ * ✓ を押したときはその日が入る。ここに落ちるのは、
+ * 完了の設定で**年を空にした**ときだけ（`changeCompletedOn(null)`）。
+ */
+export const COMPLETION_WITHOUT_DATE = {
+  completedAt: null,
+  completedPrecision: 'unknown',
+} as const
+
+/** 未完了に戻すときの値。 */
+export const NOT_COMPLETED = { completedAt: null, completedPrecision: null } as const
 
 /**
  * 断られた理由。**ローカルの検証結果とサーバーの応答を同じ形にまとめる。**
@@ -449,7 +460,181 @@ export function filledCount(list: LocalList): number {
  * 「書けた」の分母が 100 なのは、**あちらが枠の空き具合を見せる数字**だから。
  */
 export function completedCount(list: LocalList): number {
-  return list.items.filter((item) => item.completedAt !== null).length
+  // 🔴 **粒度で数える**（#279）。`completedAt` で数えると
+  // 日付なしの完了が「やった」に入らない
+  return list.items.filter((item) => isCompleted(item.completedPrecision)).length
+}
+
+// --- 共有のお誘い（#276） ---------------------------------------------------
+
+/**
+ * 何をきっかけに誘うか（#276）。
+ *
+ * **人が貼りたくなるのは、空のリストではなく達成したとき。**
+ * それまでの導線は「共有の設定を開く → 公開範囲を変える → URL をコピー」だけで、
+ * **一番気分が乗っている瞬間には何も起きなかった。**
+ */
+export type ShareInviteTrigger =
+  /** 「やった」印を1つ増やした */
+  | 'completed'
+  /** 100個すべて埋まった。**書き上げた瞬間で、見せるものが揃った瞬間** */
+  | 'filled'
+
+/** 誘うかどうかの判定に使う分だけの進み具合。 */
+export interface ListProgress {
+  completed: number
+  filled: number
+}
+
+export function listProgress(list: LocalList): ListProgress {
+  return { completed: completedCount(list), filled: filledCount(list) }
+}
+
+/**
+ * 進み具合の変化から、誘うきっかけを決める（#276）。
+ *
+ * 🔴 **増えたときだけ。** 減ったとき（完了の取り消し、項目の削除）には出さない。
+ * ⚠️ **100個目を消して書き直すたびに出さない**のは、ここでは止めきれない
+ * （また `filled` が上限に達するため）。**間隔の方で吸収する**（`canInviteToShare`）。
+ *
+ * 両方が同時に起きたら `filled` を選ぶ。**100個書き上げた方が大きな節目。**
+ */
+export function shareInviteTrigger(
+  before: ListProgress,
+  after: ListProgress,
+): ShareInviteTrigger | null {
+  if (after.filled >= ITEMS_PER_LIST_MAX && before.filled < ITEMS_PER_LIST_MAX) return 'filled'
+  if (after.completed > before.completed) return 'completed'
+
+  return null
+}
+
+/**
+ * 節目に出すお誘いの種類。**ログインしているかで次の一歩が違う。**
+ *
+ * | | 次の一歩 |
+ * |---|---|
+ * | `share` | 共有する（#276） |
+ * | `sign-in` | まずログインする（#284） |
+ */
+export type InviteKind = 'share' | 'sign-in'
+
+/**
+ * どちらのお誘いを出すか（#284）。**出さないなら `null`。**
+ *
+ * 🔴 **未ログインは「書き終えたとき」だけ。**
+ * 共有設定はログインの向こう側にあるので、共有へ誘っても**その場では何もできない。**
+ * 一方 100個書き終えるのは一番大きな節目なので、そこは**ログインへ誘う**。
+ *
+ * ⚠️ 未ログインでは完了にできない（#77）ので `completed` は本来来ないが、
+ * **来ても誘わない**と書いておく（完了の条件が変わったときに勝手に増えないように）。
+ */
+export function inviteKind(trigger: ShareInviteTrigger, shared: boolean): InviteKind | null {
+  if (shared) return 'share'
+
+  return trigger === 'filled' ? 'sign-in' : null
+}
+
+/**
+ * **何が起きて出たのか**（#306）。モーダルの見出しになる。
+ *
+ * 🔴 **見出しで「いま自分が何をしたか」を言う**（2026-08-15 の利用者の指摘）。
+ * 以前は「みんなにもリストを見せませんか？」から始まっていて、
+ * **なぜ出たのか分からず、押し間違いで出た広告のように見えた。**
+ * 共有を促す文は本文の先頭へ移した（文言はそのまま。#276）。
+ */
+export type Achievement =
+  /** 1つ叶えた。**その項目の本文を持つ**（どれを達成したかを見出しで言うため） */
+  | { kind: 'completed'; text: string }
+  /** 100個すべて書き終えた */
+  | { kind: 'filled' }
+
+/**
+ * 100個書き終えたときの見出し。
+ *
+ * 🔴 **未ログインのお誘い（#284）と同じ文言を使う。** 書き分けると必ずずれる
+ * （利用者が書いた文をそのまま使う、という #276 / #284 の扱いも変えない）。
+ */
+export const WROTE_ALL_TITLE = '100個、書き終わりました！'
+
+/**
+ * モーダルの見出し（#306）。
+ *
+ * 🔴 **利用者が指示した形をそのまま使う**（2026-08-15）:
+ * 「〈やりたいこと〉を達成しました」。言い換えない。
+ */
+export function achievementTitle(achievement: Achievement): string {
+  return achievement.kind === 'filled' ? WROTE_ALL_TITLE : `${achievement.text}を達成しました`
+}
+
+/**
+ * 直前の状態と見比べて、**新しく完了した項目の本文**を返す（#306）。
+ *
+ * 見出しに「どれを達成したか」を出すために要る。お誘いの判定は達成数の増減
+ * （`shareInviteTrigger`）だけを見ているので、**項目はここで特定する。**
+ *
+ * 🔴 **`completedPrecision` で見る**（#279）。日付なしの完了も達成に入る。
+ * ⚠️ **同時に2つ以上完了していたら、リストで先に来るものを返す。**
+ * 1回の操作で1つしか完了できないので、実際には起きない
+ * （起きるとしたら別の端末での操作が同時に届いたとき）。
+ *
+ * 分からなければ `null`。**呼び出し側はそのときお誘いを出さない**
+ * （「なぜ出たか」を言えないなら出さない方がよい。#306）。
+ */
+export function newlyCompletedText(before: LocalList, after: LocalList): string | null {
+  const completedBefore = new Set(
+    before.items.filter((item) => isCompleted(item.completedPrecision)).map((item) => item.id),
+  )
+
+  const item = after.items.find(
+    (candidate) => isCompleted(candidate.completedPrecision) && !completedBefore.has(candidate.id),
+  )
+
+  return item?.text ?? null
+}
+
+/**
+ * 同じリストで続けて出さない間隔。**30日**（2026-08-14 の利用者の指示）。
+ *
+ * 🔴 **「1回きり」にしない。** そのとき断っただけの人を、一生誘わないのはやりすぎ。
+ * ⚠️ **きっかけごとに分けない。** リスト単位で「最後に出した日」を1つ持つ。
+ * 分けると、叶えた直後に100個目を書いた人に**続けて2回出る。**
+ */
+export const SHARE_INVITE_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * いま誘ってよいか（#276）。
+ *
+ * `invitedAt` は**そのリストで最後に出した時刻**。まだ一度も出していなければ `null`。
+ */
+export function canInviteToShare({
+  invitedAt,
+  now,
+}: {
+  invitedAt: number | null
+  now: number
+}): boolean {
+  return invitedAt === null || now - invitedAt >= SHARE_INVITE_INTERVAL_MS
+}
+
+/**
+ * 最後に誘った時刻の保存先。**読み書きそのものは `*.tsx` 側**（`LIST_STORAGE_KEY` と同じ）。
+ *
+ * 🔴 **リストごとに分ける。** 1つにまとめると、リストを5つ持っている人は
+ * **どれか1つで断ったら全部で30日出なくなる。**
+ */
+export function shareInviteStorageKey(listId: string): string {
+  return `yaritai100list:share-invite:v1:${listId}`
+}
+
+/** 保存されていなければ `null` を渡す（`getItem` の戻り値をそのまま）。 */
+export function parseInvitedAt(raw: string | null): number | null {
+  if (raw === null) return null
+
+  const value = Number(raw)
+
+  // 壊れていたら「出したことが無い」に倒す。**誘いを1回多く出すだけ**で害が無い
+  return Number.isFinite(value) ? value : null
 }
 
 // --- 保存 -------------------------------------------------------------------
@@ -487,6 +672,22 @@ const storedListSchema = z.object({
       id: z.string(),
       text: z.string(),
       completedAt: z.number().nullable(),
+
+      /**
+       * メモ（#294）。**古い保存には無いので省略できる。**
+       *
+       * 必須にすると、#294 より前に書いた人の保存が丸ごと `broken` に落ちる
+       * （完了日の粒度と同じ扱い）。
+       */
+      memo: z.string().nullable().optional(),
+      /**
+       * 完了日の粒度（#279）。**古い保存には無いので省略できる。**
+       *
+       * 必須にすると、#279 より前に書いた人の保存が丸ごと `broken` に落ちる
+       * （このスキーマの注意書きのとおり、既にあるものは救う）。
+       * 無いときの補い方は**マイグレーション `0016` と同じ**（日時があれば `day`）。
+       */
+      completedPrecision: completedPrecisionSchema.nullable().optional(),
     }),
   ),
 })
@@ -509,7 +710,18 @@ export function parseStoredList(raw: string | null): StoredListResult {
   const parsed = storedListSchema.safeParse(json)
   if (!parsed.success) return { status: 'broken' }
 
-  return { status: 'loaded', list: parsed.data }
+  return {
+    status: 'loaded',
+    list: {
+      title: parsed.data.title,
+      items: parsed.data.items.map((item) => ({
+        ...item,
+        completedPrecision: item.completedPrecision ?? (item.completedAt === null ? null : 'day'),
+        // 🔴 **古い保存にはメモが無い**（#294）。無いだけで壊れていない
+        memo: item.memo ?? null,
+      })),
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +745,10 @@ export interface RemoteItem {
   id: string
   text: string
   completedAt: string | null
+  /** 完了日の粒度（#279）。**`null` は未完了** */
+  completedPrecision: CompletedPrecision | null
+  /** メモ（#294）。書いていなければ `null` */
+  memo: string | null
 }
 
 /**
@@ -582,6 +798,8 @@ export function toLocalList(list: { title: string }, items: RemoteItem[]): Local
       id: item.id,
       text: item.text,
       completedAt: item.completedAt === null ? null : Date.parse(item.completedAt),
+      completedPrecision: item.completedPrecision,
+      memo: item.memo,
     })),
   }
 }
@@ -595,6 +813,30 @@ export function toLocalList(list: { title: string }, items: RemoteItem[]): Local
  */
 export function shareUrl(origin: string, shareId: string): string {
   return `${origin}/share/${shareId}`
+}
+
+/**
+ * 共有シート（`navigator.share`）が使えるか（#275）。
+ *
+ * 🔴 **使えない環境がある。** デスクトップの Firefox など。
+ * 見て判断してから出す。**押せるのに何も起きないボタンを作らない。**
+ *
+ * `navigator` を引数で受け取るのは、`window` を `model.ts` に持ち込まないため
+ * （`shareUrl` と同じ理由。`TECH_STACK.md` §10）。
+ */
+export function canUseShareSheet(target: { share?: unknown }): boolean {
+  return typeof target.share === 'function'
+}
+
+/**
+ * 共有シートを**閉じただけ**か（#275）。
+ *
+ * 🔴 **これは失敗ではない。** 開いてやめた人にエラーを見せない。
+ * `navigator.share` は取り消しでも拒否されるので、区別しないと
+ * **やめた人全員に「共有できませんでした」が出る。**
+ */
+export function isShareCancelled(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 /**

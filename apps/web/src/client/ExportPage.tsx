@@ -86,6 +86,7 @@ function ExportPageBody({ listId }: { listId: string }) {
   const [showCompletedDate, setShowCompletedDate] = useState(
     DEFAULT_MARKDOWN_OPTIONS.showCompletedDate,
   )
+  const [showMemo, setShowMemo] = useState(DEFAULT_MARKDOWN_OPTIONS.showMemo)
 
   const load = useCallback(async () => {
     try {
@@ -114,18 +115,16 @@ function ExportPageBody({ listId }: { listId: string }) {
   /**
    * 貼るための文字列。**形式を変えたらその場で作り直す。**
    *
-   * 組み立ては shared の純関数（テストしてある）。ここから渡すのは
-   * **日付の整形だけ**で、これは時間帯のため（`buildMarkdown`）。
+   * 組み立ては shared の純関数（テストしてある）。
+   * 🔴 **日付の整形も渡さない**（#279）。完了日は日本時間の暦日として扱うので、
+   * 画面・共有ページと同じ整形（`formatCompletedOn`）を `buildMarkdown` が使う。
    */
   const markdown = useMemo(
     () =>
       state.status === 'ready'
-        ? buildMarkdown(state.file, (iso) => new Date(iso).toLocaleDateString('ja-JP'), {
-            style,
-            showCompletedDate,
-          })
+        ? buildMarkdown(state.file, { style, showCompletedDate, showMemo })
         : '',
-    [state, style, showCompletedDate],
+    [state, style, showCompletedDate, showMemo],
   )
 
   // 中身が変われば「コピーしました」は嘘になる。**貼るのはいま見えているもの**
@@ -279,6 +278,8 @@ function ExportPageBody({ listId }: { listId: string }) {
         <MarkdownOptionsForm
           style={style}
           showCompletedDate={showCompletedDate}
+          showMemo={showMemo}
+          onShowMemoChange={setShowMemo}
           onStyleChange={setStyle}
           onShowCompletedDateChange={setShowCompletedDate}
         />
@@ -332,6 +333,8 @@ function ExportPageBody({ listId }: { listId: string }) {
 const STYLES: { value: MarkdownStyle; label: string }[] = [
   { value: 'checklist', label: 'チェックリスト' },
   { value: 'numbered', label: '連番' },
+  // やりたいことごとに節を作る（#329）。メモを本文として置ける
+  { value: 'heading', label: '見出し' },
 ]
 
 /**
@@ -343,13 +346,17 @@ const STYLES: { value: MarkdownStyle; label: string }[] = [
 function MarkdownOptionsForm({
   style,
   showCompletedDate,
+  showMemo,
   onStyleChange,
   onShowCompletedDateChange,
+  onShowMemoChange,
 }: {
   style: MarkdownStyle
   showCompletedDate: boolean
+  showMemo: boolean
   onStyleChange: (style: MarkdownStyle) => void
   onShowCompletedDateChange: (show: boolean) => void
+  onShowMemoChange: (show: boolean) => void
 }) {
   return (
     <div className="mt-3 rounded bg-brand-soft px-2 py-2">
@@ -383,6 +390,21 @@ function MarkdownOptionsForm({
           }}
         />
         達成日を出す
+      </label>
+
+      {/*
+        🔴 **メモは既定で出さない**（#329）。**自分だけが読むもの**なので、
+        人に見せる形に混ぜるかは本人が決める
+      */}
+      <label className="mt-1 flex items-center gap-1 text-xs text-slate-700">
+        <input
+          type="checkbox"
+          checked={showMemo}
+          onChange={(e) => {
+            onShowMemoChange(e.target.checked)
+          }}
+        />
+        メモを出す
       </label>
     </div>
   )

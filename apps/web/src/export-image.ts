@@ -1,7 +1,9 @@
 import {
+  type CompletedPrecision,
   EXPORT_IMAGE_SIGNATURE_HEADER,
   EXPORT_IMAGE_SIGNATURE_TTL_SECONDS,
   type ExportImagePayload,
+  isCompleted,
 } from '@yaritai100list/shared'
 
 /**
@@ -22,12 +24,17 @@ import {
  */
 export function buildExportImagePayload(
   list: { title: string },
-  items: { text: string; completedAt: Date | null }[],
+  items: { text: string; completedPrecision: CompletedPrecision | null }[],
   now: Date,
 ): ExportImagePayload {
   return {
     title: list.title,
-    items: items.map((item) => ({ text: item.text, completed: item.completedAt !== null })),
+    // 🔴 **粒度で判定する**（#279）。`completedAt` で見ると
+    // 日付なしの完了（粒度 `unknown`）が画像の上で未完了になる
+    items: items.map((item) => ({
+      text: item.text,
+      completed: isCompleted(item.completedPrecision),
+    })),
     exp: Math.floor(now.getTime() / 1000) + EXPORT_IMAGE_SIGNATURE_TTL_SECONDS,
   }
 }

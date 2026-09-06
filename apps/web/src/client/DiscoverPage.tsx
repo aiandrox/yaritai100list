@@ -53,10 +53,22 @@ interface GenreEntry {
 type PoolState =
   | { status: 'loading' }
   | { status: 'failed' }
-  | { status: 'ready'; items: PoolItem[]; hasNext: boolean; genres: GenreEntry[] }
+  | { status: 'ready'; items: PoolItem[]; hasNext: boolean }
 
 export function DiscoverPage({ session }: { session: SessionState }) {
   const [pool, setPool] = useState<PoolState>({ status: 'loading' })
+
+  /**
+   * ジャンルの入口（#255）。**一覧と別の状態にする**（#271）。
+   *
+   * 🔴 **読み込み中に消さないため。** 一覧と同じ状態に入れていたときは、
+   * ジャンルを選ぶと `loading` に戻って `<nav>` が DOM から消えていた。
+   * **横スクロールの位置は要素が持っている**ので、消えた時点で失われる。
+   * 右へ流して奥のジャンルを押すと、**押した先が画面の外へ出ていた。**
+   *
+   * ⚠️ **読み込みに失敗しても消さない。** 入口だけ残っていれば選び直せる。
+   */
+  const [genres, setGenres] = useState<GenreEntry[]>([])
 
   /**
    * ページとジャンルは URL に載せる（`?page=2&genre=travel`）。
@@ -137,11 +149,11 @@ export function DiscoverPage({ session }: { session: SessionState }) {
          * ⚠️ ログイン中はサーバーが既に並べているので、ここは効かない。
          * **未ログインのため**に残してある（サーバーは localStorage を知らない）。
          */
+        setGenres(body.genres)
         setPool({
           status: 'ready',
           items: list === null ? body.items : sortAdoptedLast(body.items, list),
           hasNext: body.hasNext,
-          genres: body.genres,
         })
       } catch {
         setPool({ status: 'failed' })
@@ -161,6 +173,14 @@ export function DiscoverPage({ session }: { session: SessionState }) {
         </p>
       )}
 
+      {/*
+        🔴 **一覧より先に、条件を付けずに置く**（#271）。
+        `pool.status` で出し分けると、ジャンルを選ぶたびに消えて描き直され、
+        **横スクロールの位置が左端に戻る。** 1件目を読むまでは中身が空なので、
+        `GenreNav` 自身が何も描かない
+      */}
+      <GenreNav genres={genres} current={genre} />
+
       {pool.status === 'loading' && <p className="mt-4 text-sm text-slate-600">読み込み中…</p>}
 
       {pool.status === 'failed' && (
@@ -168,8 +188,6 @@ export function DiscoverPage({ session }: { session: SessionState }) {
           読み込めませんでした。通信を確かめて、ページを開き直してください
         </Notice>
       )}
-
-      {pool.status === 'ready' && <GenreNav genres={pool.genres} current={genre} />}
 
       {pool.status === 'ready' && pool.items.length === 0 && <EmptyPool genre={genre} />}
 
@@ -247,6 +265,10 @@ function discoverHref({ page = 1, genre }: { page?: number; genre?: string | nul
  *
  * ⚠️ **ジャンルを変えたら1ページ目に戻す**（`discoverHref` に `page` を渡さない）。
  * 3ページ目から件数の少ないジャンルへ移ると、**空の画面に着地する。**
+ *
+ * 🔴 **描き続けること。読み込み中に消さない**（#271）。
+ * 横スクロールの位置は `<nav>` が持っているので、**一度消すと左端に戻る。**
+ * 空のときにここが `null` を返すのは、**まだ1件も読めていないときだけ**にする。
  */
 function GenreNav({ genres, current }: { genres: GenreEntry[]; current: string | null }) {
   // 1つも無ければ入口ごと出さない（「すべて」だけの行に意味が無い）

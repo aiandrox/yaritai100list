@@ -1,4 +1,5 @@
 import { exports } from 'cloudflare:workers'
+import type { CompletedPrecision } from '@yaritai100list/shared'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -15,6 +16,21 @@ import { createTestUser, testBaseUrl, testDb } from './helpers'
 const request = (path: string) => exports.default.fetch(new Request(`${testBaseUrl()}${path}`))
 
 /** 公開範囲を指定してリストを1つ作る。 */
+/**
+ * 項目の一覧の部分だけを取り出す（#322）。
+ *
+ * 🔴 **ページ全体から年を探さない。** 共有ページには **OGP 画像の URL** が入っていて、
+ * そこに**更新日時がミリ秒で載っている**（`ogImageUrl`。キャッシュ破棄のため）。
+ * エポックミリ秒の数字の並びに**偶然 `2026` が含まれる瞬間**があり、
+ * **時刻によってだけ落ちるテスト**になっていた。
+ *
+ * 見たいのは「**伏せた項目の行に、いつ叶えたかが出ていないこと**」なので、
+ * 一覧の中だけを見る。
+ */
+function itemsHtml(body: string): string {
+  return body.slice(body.indexOf('<ol'), body.indexOf('</ol>'))
+}
+
 async function createList(options: {
   visibility: 'private' | 'unlisted' | 'public'
   title?: string
@@ -37,9 +53,19 @@ async function createList(options: {
   return { id, shareId, userId }
 }
 
+/**
+ * 粒度（#279）は**省略できる。日時があれば `day`。**
+ * 日付なしの完了・年だけの完了を作るときは明示する。
+ */
 async function addItems(
   listId: string,
-  rows: { text: string; completedAt?: Date; hiddenInShare?: boolean }[],
+  rows: {
+    text: string
+    completedAt?: Date
+    completedPrecision?: CompletedPrecision
+    hiddenInShare?: boolean
+    memo?: string
+  }[],
 ) {
   await testDb()
     .insert(items)
@@ -50,7 +76,10 @@ async function addItems(
         text: row.text,
         position,
         completedAt: row.completedAt ?? null,
+        completedPrecision:
+          row.completedPrecision ?? (row.completedAt === undefined ? null : 'day'),
         hiddenInShare: row.hiddenInShare ?? false,
+        memo: row.memo ?? null,
       })),
     )
 }
@@ -86,8 +115,49 @@ describe('公開されているリスト', () => {
 
     expect(body).toContain('done')
     // 日本時間で描く（サーバーは閲覧者の時間帯を知らない）
-    expect(body).toContain('2026')
+    expect(body).toContain('2026/05/01')
     expect(body).toContain('1 / 2 達成')
+  })
+
+  /** 粒度（#279）。**出す単位が粒度どおりであること** */
+  describe('完了日の粒度（#279）', () => {
+    it('年だけ・年月だけの完了は、その単位で出る', async () => {
+      const list = await createList({ visibility: 'unlisted', title: 'テスト用のリスト' })
+      await addItems(list.id, [
+        // 2026-01-01 00:00 JST / 2026-08-01 00:00 JST
+        {
+          text: '年だけ',
+          completedAt: new Date('2025-12-31T15:00:00.000Z'),
+          completedPrecision: 'year',
+        },
+        {
+          text: '年月だけ',
+          completedAt: new Date('2026-07-31T15:00:00.000Z'),
+          completedPrecision: 'month',
+        },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('2026年<')
+      expect(body).toContain('2026年8月<')
+      expect(body).toContain('2 / 2 達成')
+    })
+
+    it('🔴 日付なしの完了は、達成数に入るが日付の欄が出ない', async () => {
+      const list = await createList({ visibility: 'unlisted', title: 'テスト用のリスト' })
+      await addItems(list.id, [
+        { text: '日付なしで達成', completedPrecision: 'unknown' },
+        { text: '未達成' },
+      ])
+
+      const body = await (await request(`/share/${list.shareId}`)).text()
+
+      expect(body).toContain('1 / 2 達成')
+      expect(body).toContain('done')
+      // 完了は打ち消し線と達成数が伝える。日付の欄そのものを出さない
+      expect(body).not.toContain('class="date"')
+    })
   })
 
   it('項目を並び順で出す', async () => {
@@ -215,6 +285,20 @@ describe('公開されているリスト', () => {
     expect(await res.text()).toContain('0 / 0 達成')
   })
 
+  /**
+   * 🔴 **共有ページは SPA と別実装**（`src/share.ts`）。
+   * SPA 側のフッターを足しただけでは出ないので、**ここだけ規約に行けない**状態が作れる。
+   */
+  it('🔴 フッターから規約とポリシーに行ける（共有ページは別実装）', async () => {
+    const list = await createList({ visibility: 'unlisted' })
+    await addItems(list.id, [{ text: '南極に行く' }])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('href="/terms"')
+    expect(body).toContain('href="/privacy"')
+  })
+
   describe('自分のリストを作る導線（#225）', () => {
     it('下にトップへのリンクが出る', async () => {
       const list = await createList({ visibility: 'unlisted' })
@@ -246,6 +330,38 @@ describe('公開されているリスト', () => {
 })
 
 describe('見えてはいけないもの', () => {
+  /**
+   * 🔴 **メモは自分だけが読むもの**（#294、`PRODUCT_SPEC.md` §4.4 の表）。
+   *
+   * 共有ページの `SharedItem` は本文と完了だけを持つ形なので構造上載らないが、
+   * **「載せてもよいもの」を後から足すときにここが歯止めになる。**
+   */
+  it('🔴 メモは共有ページに出ない', async () => {
+    const list = await createList({ visibility: 'public' })
+    await addItems(list.id, [{ text: '南極に行く', memo: 'ここは自分だけのメモ' }])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('南極に行く')
+    expect(body).not.toContain('ここは自分だけのメモ')
+  })
+
+  it('🔴 完了した項目でもメモは出ない（叶えたときのことを書く場所なので）', async () => {
+    const list = await createList({ visibility: 'unlisted' })
+    await addItems(list.id, [
+      {
+        text: '富士山に登る',
+        completedAt: new Date('2026-08-01T00:00:00.000Z'),
+        memo: 'ご来光が見えた',
+      },
+    ])
+
+    const body = await (await request(`/share/${list.shareId}`)).text()
+
+    expect(body).toContain('富士山に登る')
+    expect(body).not.toContain('ご来光が見えた')
+  })
+
   it('🔴 非公開は share_id を知っていても見えない', async () => {
     const list = await createList({ visibility: 'private' })
     await addItems(list.id, [{ text: '見えてはいけない' }])
@@ -367,9 +483,27 @@ describe('見えてはいけないもの', () => {
         },
       ])
 
+      expect(itemsHtml(await (await request(`/share/${list.shareId}`)).text())).not.toContain(
+        '2026',
+      )
+    })
+
+    // 🔴 粒度も伏せる（#279）。「2026年」だけでも「いつ」の情報
+    it('隠した項目は、年だけの完了でも年が出ない', async () => {
+      const list = await createList({ visibility: 'public', title: 'テスト用のリスト' })
+      await addItems(list.id, [
+        {
+          text: '隠して達成',
+          completedAt: new Date('2025-12-31T15:00:00.000Z'),
+          completedPrecision: 'year',
+          hiddenInShare: true,
+        },
+      ])
+
       const body = await (await request(`/share/${list.shareId}`)).text()
 
-      expect(body).not.toContain('2026')
+      expect(body).toContain('1 / 1 達成')
+      expect(itemsHtml(body)).not.toContain('2026')
     })
 
     it('隠していない項目は今までどおり本文と完了日時が出る（回帰確認）', async () => {

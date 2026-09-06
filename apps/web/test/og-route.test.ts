@@ -43,13 +43,25 @@ describe('buildOgPayload', () => {
   it('達成状況を数える。分母は書いた数', () => {
     const payload = buildOgPayload(
       { title: '2026年の目標' },
-      [{ completedAt: new Date() }, { completedAt: null }, { completedAt: new Date() }],
+      [{ completedPrecision: 'day' }, { completedPrecision: null }, { completedPrecision: 'day' }],
       now,
     )
 
     expect(payload.title).toBe('2026年の目標')
     expect(payload.completed).toBe(2)
     expect(payload.filled).toBe(3)
+  })
+
+  // 🔴 日付なしの完了（#279）を落とさない。落とすと OGP だけ達成数が減る
+  it('日付を覚えていない完了も達成数に入る', () => {
+    const payload = buildOgPayload(
+      { title: '2026年の目標' },
+      [{ completedPrecision: 'unknown' }, { completedPrecision: null }],
+      now,
+    )
+
+    expect(payload.completed).toBe(1)
+    expect(payload.filled).toBe(2)
   })
 
   it('期限が入る', () => {

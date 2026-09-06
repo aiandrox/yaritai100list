@@ -1,5 +1,7 @@
 import { exports } from 'cloudflare:workers'
 import {
+  type CompletedPrecision,
+  completedPrecisionOf,
   DEFAULT_MARKDOWN_OPTIONS,
   EXPORT_VERSION,
   ITEMS_PER_LIST_MAX,
@@ -26,7 +28,10 @@ const request = (path: string, init?: RequestInit) =>
 interface ExportBody {
   version: number
   exportedAt: string
-  list: { title: string; items: { text: string; completedAt: string | null }[] }
+  list: {
+    title: string
+    items: { text: string; completedAt: string | null; completedPrecision: string | null }[]
+  }
 }
 
 async function twoUsers() {
@@ -56,17 +61,104 @@ describe('buildExportFile', () => {
       {
         title: 'x',
         items: [
-          { text: '南極に行く', completedAt: new Date(1_700_000_000_000) },
-          { text: 'オーロラを見る', completedAt: null },
+          {
+            text: '南極に行く',
+            completedAt: new Date(1_700_000_000_000),
+            completedPrecision: 'day',
+            memo: null,
+          },
+          { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
         ],
       },
       new Date(0),
     )
 
     expect(file.list.items).toEqual([
-      { text: '南極に行く', completedAt: new Date(1_700_000_000_000).toISOString() },
-      { text: 'オーロラを見る', completedAt: null },
+      {
+        text: '南極に行く',
+        completedAt: new Date(1_700_000_000_000).toISOString(),
+        completedPrecision: 'day',
+        memo: null,
+      },
+      { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
     ])
+  })
+
+  /**
+   * 🔴 **JSON にはメモを入れる**（#294）。ここだけが入れる側。
+   * 落とすと、書き出して取り込んだときに**メモだけが消える。**
+   */
+  it('🔴 メモを含める（落とすと往復でメモだけ消える）', () => {
+    const file = buildExportFile(
+      {
+        title: 'x',
+        items: [
+          { text: '南極に行く', completedAt: null, completedPrecision: null, memo: '寒そう' },
+          { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
+        ],
+      },
+      new Date(0),
+    )
+
+    expect(file.list.items.map((item) => item.memo)).toEqual(['寒そう', null])
+  })
+
+  // 🔴 落とすと、日付なしの完了が読み込んだ先で未完了になる（#279）
+  it('🔴 粒度を含める。日付なしの完了は日時が無いまま完了として出る', () => {
+    const file = buildExportFile(
+      {
+        title: 'x',
+        items: [
+          { text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null },
+        ],
+      },
+      new Date(0),
+    )
+
+    expect(file.list.items).toEqual([
+      { text: '南極に行く', completedAt: null, completedPrecision: 'unknown', memo: null },
+    ])
+    expect(exportFileSchema.safeParse(file).success).toBe(true)
+  })
+
+  it('🔴 粒度と完了日時が食い違うファイルは読み込まない', () => {
+    // 手で編集したファイルを通すと、DB のトリガー（0016）に弾かれて 500 になる
+    for (const item of [
+      { text: 'x', completedAt: null, completedPrecision: 'day' },
+      { text: 'x', completedAt: new Date(0).toISOString(), completedPrecision: 'unknown' },
+      { text: 'x', completedAt: new Date(0).toISOString(), completedPrecision: null },
+    ]) {
+      const file = {
+        version: EXPORT_VERSION,
+        exportedAt: new Date(0).toISOString(),
+        list: { title: 'x', items: [item] },
+      }
+
+      expect(exportFileSchema.safeParse(file).success).toBe(false)
+    }
+  })
+
+  describe('completedPrecisionOf（粒度を持たない古いファイル。#279）', () => {
+    it('完了日時があれば day', () => {
+      expect(completedPrecisionOf({ text: 'x', completedAt: new Date(0).toISOString() })).toBe(
+        'day',
+      )
+    })
+
+    it('完了日時が無ければ未完了', () => {
+      expect(completedPrecisionOf({ text: 'x', completedAt: null })).toBeNull()
+    })
+
+    it('粒度があればそちらを使う', () => {
+      expect(
+        completedPrecisionOf({
+          text: 'x',
+          completedAt: null,
+          completedPrecision: 'unknown',
+          memo: null,
+        }),
+      ).toBe('unknown')
+    })
   })
 
   it('渡された順のまま。並べ替えない', () => {
@@ -74,8 +166,8 @@ describe('buildExportFile', () => {
       {
         title: 'x',
         items: [
-          { text: 'b', completedAt: null },
-          { text: 'a', completedAt: null },
+          { text: 'b', completedAt: null, completedPrecision: null, memo: null },
+          { text: 'a', completedAt: null, completedPrecision: null, memo: null },
         ],
       },
       new Date(0),
@@ -88,7 +180,12 @@ describe('buildExportFile', () => {
     // 通らないと、自分で書き出したファイルを自分で読めない（#122）。
     // 版・日時の形式・文字数の上限まで含めて、ここで往復を固定する
     const file = buildExportFile(
-      { title: '2026年の目標', items: [{ text: '南極に行く', completedAt: new Date(0) }] },
+      {
+        title: '2026年の目標',
+        items: [
+          { text: '南極に行く', completedAt: new Date(0), completedPrecision: 'day', memo: null },
+        ],
+      },
       new Date(1_700_000_000_000),
     )
 
@@ -97,16 +194,22 @@ describe('buildExportFile', () => {
 })
 
 describe('buildMarkdown', () => {
-  /** 時間帯に左右されないよう、テストでは日付部分をそのまま使う */
-  const formatDate = (iso: string) => iso.slice(0, 10)
-
-  const file = (items: { text: string; completedAt: string | null }[]) =>
+  /**
+   * 粒度は省略できる。**日時があれば `day`**（#279 より前と同じ意味）。
+   * 日付なしの完了を作るときだけ `'unknown'` を明示する
+   */
+  const file = (
+    items: { text: string; completedAt: string | null; completedPrecision?: CompletedPrecision }[],
+  ) =>
     buildExportFile(
       {
         title: '2026年の目標',
         items: items.map((item) => ({
           text: item.text,
           completedAt: item.completedAt === null ? null : new Date(item.completedAt),
+          completedPrecision: item.completedPrecision ?? (item.completedAt === null ? null : 'day'),
+          // マークダウンにメモは出さない（#294）。ここでは常に空
+          memo: null,
         })),
       },
       new Date(0),
@@ -118,7 +221,6 @@ describe('buildMarkdown', () => {
         { text: '南極に行く', completedAt: '2026-05-01T00:00:00.000Z' },
         { text: 'オーロラを見る', completedAt: null },
       ]),
-      formatDate,
     )
 
     expect(markdown).toBe(
@@ -127,7 +229,7 @@ describe('buildMarkdown', () => {
         '',
         '1 / 2 達成済み',
         '',
-        '- [x] 南極に行く（2026-05-01 達成）',
+        '- [x] 南極に行く（2026/05/01 達成）',
         '- [ ] オーロラを見る',
         '',
       ].join('\n'),
@@ -143,7 +245,6 @@ describe('buildMarkdown', () => {
         { text: 'b', completedAt: '2026-05-02T00:00:00.000Z' },
         { text: 'c', completedAt: null },
       ]),
-      formatDate,
     )
 
     expect(markdown).toContain('2 / 3 達成済み')
@@ -152,33 +253,225 @@ describe('buildMarkdown', () => {
   })
 
   it('🔴 見出しは `##`（転載先の記事にはすでに `#` がある）', () => {
-    expect(buildMarkdown(file([]), formatDate).startsWith('## ')).toBe(true)
+    expect(buildMarkdown(file([])).startsWith('## ')).toBe(true)
   })
 
   it('🔴 既定では番号を振らない（#209 で選べるようにしたが、既定は変えていない）', () => {
-    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]), formatDate)
+    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]))
 
     expect(markdown).not.toContain('001')
     expect(markdown).not.toMatch(/^1\./m)
   })
 
   it('🔴 未入力の枠を出さない（100行の空行は転載に向かない）', () => {
-    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]), formatDate)
+    const markdown = buildMarkdown(file([{ text: '南極に行く', completedAt: null }]))
 
     expect(markdown.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(1)
   })
 
   it('末尾が改行で終わる（貼った先で次の行とくっつかない）', () => {
-    expect(buildMarkdown(file([]), formatDate).endsWith('\n')).toBe(true)
+    expect(buildMarkdown(file([])).endsWith('\n')).toBe(true)
   })
 
-  it('日付の整形を外から受け取る（時間帯を画面と揃えるため）', () => {
-    const markdown = buildMarkdown(
-      file([{ text: 'x', completedAt: '2026-05-01T15:00:00.000Z' }]),
-      () => '2026年5月2日',
+  // 🔴 **日本時間の暦日で出す**（2026-08-14 の判断、#279）。
+  // 以前は整形を外から受け取っていたが、画面・共有ページと同じ文字列にした
+  it('日本時間の暦日で出す（UTC で日付を切らない）', () => {
+    // UTC では 5/1、日本時間では 5/2
+    const markdown = buildMarkdown(file([{ text: 'x', completedAt: '2026-05-01T15:00:00.000Z' }]))
+
+    expect(markdown).toContain('（2026/05/02 達成）')
+  })
+
+  /**
+   * 🔴 **既定では出さない**（#294 → #329）。
+   * メモは**自分だけが読むもの**なので、人に見せる形に混ぜるかは本人が決める。
+   */
+  it('🔴 既定ではメモを出さない', () => {
+    const built = buildExportFile(
+      {
+        title: 'x',
+        items: [
+          {
+            text: '南極に行く',
+            completedAt: null,
+            completedPrecision: null,
+            memo: 'ここは自分だけのメモ',
+          },
+        ],
+      },
+      new Date(0),
     )
 
-    expect(markdown).toContain('（2026年5月2日 達成）')
+    const markdown = buildMarkdown(built)
+
+    expect(markdown).toContain('南極に行く')
+    expect(markdown).not.toContain('ここは自分だけのメモ')
+  })
+
+  describe('メモ（#329）', () => {
+    const withMemo = () =>
+      buildExportFile(
+        {
+          title: 'x',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '寒そうだけど見たい',
+            },
+            { text: 'オーロラを見る', completedAt: null, completedPrecision: null, memo: null },
+          ],
+        },
+        new Date(0),
+      )
+
+    it('出すと決めれば出る', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('寒そうだけど見たい')
+    })
+
+    it('🔴 箇条書きの中に入れる（下げないと別の段落になる）', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('- [ ] 南極に行く\n  寒そうだけど見たい')
+    })
+
+    it('改行を含むメモも、行ごとに下げる', () => {
+      const file = buildExportFile(
+        {
+          title: 'x',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '1行目\n2行目',
+            },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'checklist',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('  1行目\n  2行目')
+    })
+
+    it('メモが無い項目は何も足さない', () => {
+      const markdown = buildMarkdown(withMemo(), {
+        style: 'numbered',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('2. オーロラを見る\n')
+    })
+  })
+
+  describe('見出しの形（#329）', () => {
+    it('やりたいことが見出しになり、メモが本文になる', () => {
+      const file = buildExportFile(
+        {
+          title: '人生でやりたいことリスト',
+          items: [
+            {
+              text: '南極に行く',
+              completedAt: null,
+              completedPrecision: null,
+              memo: '寒そうだけど見たい',
+            },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'heading',
+        showCompletedDate: true,
+        showMemo: true,
+      })
+
+      expect(markdown).toContain('## 人生でやりたいことリスト')
+      expect(markdown).toContain('### 1. 南極に行く')
+      expect(markdown).toContain('### 1. 南極に行く\n\n寒そうだけど見たい')
+    })
+
+    it('🔴 日付なしの完了に印が残る（見出しには [x] にあたるものが無い）', () => {
+      const file = buildExportFile(
+        {
+          title: 'x',
+          items: [
+            { text: '日付なし', completedAt: null, completedPrecision: 'unknown', memo: null },
+          ],
+        },
+        new Date(0),
+      )
+
+      const markdown = buildMarkdown(file, {
+        style: 'heading',
+        showCompletedDate: true,
+        showMemo: false,
+      })
+
+      expect(markdown).toContain('### 1. 日付なし（達成済）')
+    })
+  })
+
+  describe('粒度どおりに出す（#279）', () => {
+    it('年だけ・年月だけの完了は、その単位で出る', () => {
+      const markdown = buildMarkdown(
+        file([
+          // 2026-01-01 00:00 JST / 2026-08-01 00:00 JST
+          { text: '年だけ', completedAt: '2025-12-31T15:00:00.000Z', completedPrecision: 'year' },
+          {
+            text: '年月だけ',
+            completedAt: '2026-07-31T15:00:00.000Z',
+            completedPrecision: 'month',
+          },
+        ]),
+      )
+
+      expect(markdown).toContain('- [x] 年だけ（2026年 達成）')
+      expect(markdown).toContain('- [x] 年月だけ（2026年8月 達成）')
+    })
+
+    it('🔴 日付なしの完了も達成数に入り、`- [x]` が付く', () => {
+      const markdown = buildMarkdown(
+        file([
+          { text: '日付なし', completedAt: null, completedPrecision: 'unknown' },
+          { text: '未完了', completedAt: null },
+        ]),
+      )
+
+      expect(markdown).toContain('1 / 2 達成済み')
+      // 日付の欄には何も足さない（2026-08-14 の判断）
+      expect(markdown).toContain('- [x] 日付なし\n')
+      expect(markdown).toContain('- [ ] 未完了')
+    })
+
+    it('🔴 連番のときは、日付なしの完了に `（達成済）` が付く', () => {
+      // 連番には `- [x]` にあたるものが無いので、これが無いと完了が消える（#209）
+      const markdown = buildMarkdown(
+        file([{ text: '日付なし', completedAt: null, completedPrecision: 'unknown' }]),
+        { style: 'numbered', showCompletedDate: true, showMemo: false },
+      )
+
+      expect(markdown).toContain('1. 日付なし（達成済）')
+    })
   })
 
   describe('形式を選ぶ（#209）', () => {
@@ -196,56 +489,59 @@ describe('buildMarkdown', () => {
         .filter((line) => line !== '' && !line.startsWith('## ') && !line.endsWith('達成済み'))
 
     it('既定は #124 の出力そのまま（チェックリスト・達成日あり）', () => {
-      expect(buildMarkdown(both(), formatDate, DEFAULT_MARKDOWN_OPTIONS)).toBe(
-        buildMarkdown(both(), formatDate),
-      )
+      expect(buildMarkdown(both(), DEFAULT_MARKDOWN_OPTIONS)).toBe(buildMarkdown(both()))
     })
 
     it('チェックリスト × 達成日あり', () => {
-      const markdown = buildMarkdown(both(), formatDate, {
+      const markdown = buildMarkdown(both(), {
         style: 'checklist',
         showCompletedDate: true,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual([
-        '- [x] グランピング（2026-08-08 達成）',
+        '- [x] グランピング（2026/08/08 達成）',
         '- [ ] オーロラを見る',
       ])
     })
 
     it('チェックリスト × 達成日なし（`- [x]` が残るので、何も足さない）', () => {
-      const markdown = buildMarkdown(both(), formatDate, {
+      const markdown = buildMarkdown(both(), {
         style: 'checklist',
         showCompletedDate: false,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual(['- [x] グランピング', '- [ ] オーロラを見る'])
     })
 
     it('連番 × 達成日あり。番号は1から通しで振る（未完了も数える）', () => {
-      const markdown = buildMarkdown(both(), formatDate, {
+      const markdown = buildMarkdown(both(), {
         style: 'numbered',
         showCompletedDate: true,
+        showMemo: false,
       })
 
-      expect(rows(markdown)).toEqual(['1. グランピング（2026-08-08 達成）', '2. オーロラを見る'])
+      expect(rows(markdown)).toEqual(['1. グランピング（2026/08/08 達成）', '2. オーロラを見る'])
     })
 
     it('🔴 連番 × 達成日なしのとき、完了した項目に `（達成済）` が付く', () => {
       // 連番には `- [x]` にあたるものが無い。**日付まで消すと、
       // 完了かどうかを表す手段が行から全部無くなる**
-      const markdown = buildMarkdown(both(), formatDate, {
+      const markdown = buildMarkdown(both(), {
         style: 'numbered',
         showCompletedDate: false,
+        showMemo: false,
       })
 
       expect(rows(markdown)).toEqual(['1. グランピング（達成済）', '2. オーロラを見る'])
     })
 
     it('数の行は形式で変えない', () => {
-      for (const style of ['checklist', 'numbered'] as const) {
+      // 🔴 見出しの形（#329）も含めて、どの形式でも同じ行が出る
+      for (const style of ['checklist', 'numbered', 'heading'] as const) {
         for (const showCompletedDate of [true, false]) {
-          expect(buildMarkdown(both(), formatDate, { style, showCompletedDate })).toContain(
+          expect(buildMarkdown(both(), { style, showCompletedDate, showMemo: false })).toContain(
             '1 / 2 達成済み',
           )
         }
@@ -326,12 +622,16 @@ describe('GET /api/lists/:listId/export', () => {
         text: '南極に行く',
         position: 0,
         completedAt: new Date(1_700_000_000_000),
+        completedPrecision: 'day',
+        memo: null,
       })
 
     const res = await request('/api/lists/my-list/export', { headers: me.headers })
     const body = await res.json<ExportBody>()
 
     expect(body.list.items[0]?.completedAt).toBe(new Date(1_700_000_000_000).toISOString())
+    // 粒度も書き出す（#279）。落とすと読み込んだ先で日付なしの完了が未完了になる
+    expect(body.list.items[0]?.completedPrecision).toBe('day')
   })
 
   it('項目が0件でも壊れない', async () => {

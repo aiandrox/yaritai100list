@@ -1,7 +1,13 @@
 import { z } from 'zod'
 
+import {
+  type CompletedPrecision,
+  completedPrecisionSchema,
+  formatCompletedOn,
+  isCompleted,
+} from './completion'
 import { ITEMS_PER_LIST_MAX } from './limits'
-import { isFutureCompletedAt, itemTextSchema, listTitleSchema } from './validation'
+import { isFutureCompletedAt, itemMemoSchema, itemTextSchema, listTitleSchema } from './validation'
 
 /**
  * リストを持ち出すときの形式（#115）。
@@ -15,7 +21,7 @@ import { isFutureCompletedAt, itemTextSchema, listTitleSchema } from './validati
  *   （「一部だけ入って残りが入らない」という状態が起きない）
  * - **マークダウンでの書き出し（#124）と単位が揃う**
  *
- * ⚠️ **形式はこれだけではない。** ブログへの転載用にマークダウンでも書き出す予定があり、
+ * ⚠️ **形式はこれだけではない。** ブログへの転載用のマークダウン（#124、`buildMarkdown`）もある。
  * あちらは**人が読むためのもので読み込まない**。この JSON は「読み込める形式」の方。
  */
 
@@ -41,12 +47,62 @@ export const EXPORT_VERSION = 1
 export const exportedItemSchema = z
   .object({
     text: itemTextSchema,
-    /** 完了日時（ISO 8601）。未完了なら `null` */
+    /** 完了日時（ISO 8601）。未完了と**日付なしの完了**（#279）なら `null` */
     completedAt: z.iso.datetime().nullable(),
+
+    /**
+     * 完了の粒度（#279）。未完了なら `null`。
+     *
+     * 🔴 **省略できる。版（`EXPORT_VERSION`）を上げていない**（2026-08-14 の判断）。
+     * 上げると、**粒度を持たない既存のファイルが読めなくなる**（版が違えば断る作り）。
+     * 足したのは省略可能な1項目だけで、**古いファイルの意味は変わらない**
+     * （`completed_at` があれば `day`。`completedPrecisionOf` が補う）ので、
+     * 版で断る理由が無い。
+     */
+    completedPrecision: completedPrecisionSchema.nullable().optional(),
+
+    /**
+     * メモ（#294）。書いていなければ `null`。
+     *
+     * 🔴 **省略できる。版（`EXPORT_VERSION`）は上げていない**（#279 と同じ判断）。
+     * 上げると**メモを持たない既存のファイルが読めなくなる**（版が違えば断る作り）。
+     * 足したのは省略可能な1項目だけで、**古いファイルの意味は変わらない。**
+     *
+     * ⚠️ **マークダウン（`buildMarkdown`）には出さない。** あちらは人に見せるためのもので、
+     * メモは自分だけが読むもの（`PRODUCT_SPEC.md` §4.4 の表）。
+     * 🔴 **JSON にだけ入れるのは、書いたものを取り戻せるようにするため。**
+     * ここに入れないと、書き出して取り込んだときにメモだけが消える。
+     */
+    memo: itemMemoSchema.optional(),
   })
   .strict()
+  /**
+   * 🔴 **粒度と完了日時の食い違いを読み込まない**（#279）。
+   * ファイルは手で編集できる。`day` なのに日時が無い行を通すと、
+   * DB のトリガー（`0016`）に弾かれて 500 になる。**入口で断る。**
+   */
+  .refine(
+    (item) =>
+      item.completedPrecision === undefined ||
+      (item.completedPrecision === null || item.completedPrecision === 'unknown'
+        ? item.completedAt === null
+        : item.completedAt !== null),
+    { message: '完了の粒度と完了日時が合っていない' },
+  )
 
 export type ExportedItem = z.infer<typeof exportedItemSchema>
+
+/**
+ * 書き出された項目の粒度（#279）。**古いファイルを読むための補い。**
+ *
+ * 粒度が無いファイル（#279 より前に書き出したもの）は、
+ * **完了日時があれば `day`、無ければ未完了**。これは #279 のマイグレーションと同じ規則。
+ */
+export function completedPrecisionOf(item: ExportedItem): CompletedPrecision | null {
+  if (item.completedPrecision !== undefined) return item.completedPrecision
+
+  return item.completedAt === null ? null : 'day'
+}
 
 export const exportedListSchema = z
   .object({
@@ -72,7 +128,15 @@ export type ExportFile = z.infer<typeof exportFileSchema>
  * 項目は**渡された順のまま**。並べ替えない（並び順の情報源は呼び出し側の1箇所）。
  */
 export function buildExportFile(
-  list: { title: string; items: { text: string; completedAt: Date | null }[] },
+  list: {
+    title: string
+    items: {
+      text: string
+      completedAt: Date | null
+      completedPrecision: CompletedPrecision | null
+      memo: string | null
+    }[]
+  },
   exportedAt: Date,
 ): ExportFile {
   return {
@@ -83,6 +147,11 @@ export function buildExportFile(
       items: list.items.map((item) => ({
         text: item.text,
         completedAt: item.completedAt === null ? null : item.completedAt.toISOString(),
+        // 🔴 **粒度も書き出す**（#279）。落とすと、日付なしの完了が
+        // **読み込んだ先で未完了になる**（`completed_at` が無いため）
+        completedPrecision: item.completedPrecision,
+        // 🔴 **メモも書き出す**（#294）。落とすと、往復でメモだけ消える
+        memo: item.memo,
       })),
     },
   }
@@ -133,12 +202,22 @@ export function exportFileName(
  * - `checklist`: `- [x] グランピング`。GitHub / Zenn / Qiita ではチェックボックスになる
  * - `numbered`: `1. グランピング`。番号を振りたい転載先向け
  */
-export type MarkdownStyle = 'checklist' | 'numbered'
+export type MarkdownStyle = 'checklist' | 'numbered' | 'heading'
 
 export interface MarkdownOptions {
   style: MarkdownStyle
   /** 達成日を行に出すか。**出さなくても「完了かどうか」は消さない**（`buildMarkdown`） */
   showCompletedDate: boolean
+
+  /**
+   * メモを出すか（#329）。**既定は出さない。**
+   *
+   * 🔴 **メモは自分だけが読むもの**（`PRODUCT_SPEC.md` §4.4）。
+   * 共有ページや取り入れ面には**出す手段そのものが無い**が、
+   * こちらは**自分がファイルを受け取る操作**なので、
+   * 持ち出す先を決めるのは本人。**選べるようにして、既定は出さない。**
+   */
+  showMemo: boolean
 }
 
 /**
@@ -150,6 +229,8 @@ export interface MarkdownOptions {
 export const DEFAULT_MARKDOWN_OPTIONS: MarkdownOptions = {
   style: 'checklist',
   showCompletedDate: true,
+  // 🔴 **メモは既定で出さない**（#329）。出したい人が選ぶ
+  showMemo: false,
 }
 
 /**
@@ -176,16 +257,18 @@ export const DEFAULT_MARKDOWN_OPTIONS: MarkdownOptions = {
  *   転載を読む人が知りたいのは**どれだけ叶えたか**。分母も 100 ではなく
  *   **実際に書いた数**にする（書いていない枠を数に入れても意味がない）
  *
- * `formatDate` を外から受け取るのは**時間帯のため。**
- * 完了日時は UTC で持っているので、そのまま日付にすると閲覧者の日付と1日ずれうる。
- * **画面と同じ見え方にするため、ブラウザの時間帯で整形したものを渡す。**
+ * 🔴 **日付の整形を外から受け取らない**（2026-08-14、#279）。
+ * 以前はブラウザの時間帯で整形したものを渡していたが、**完了日は日本時間の暦日**
+ * として扱うことにしたので（`COMPLETED_ON_TIME_ZONE_OFFSET_MS`）、
+ * ここも画面・共有ページと同じ `formatCompletedOn` を使う。
+ * **同じ完了日が、どこで見ても同じ文字列で出る**方を採った。
  */
 export function buildMarkdown(
   file: ExportFile,
-  formatDate: (isoDate: string) => string,
   options: MarkdownOptions = DEFAULT_MARKDOWN_OPTIONS,
 ): string {
-  const completed = file.list.items.filter((item) => item.completedAt !== null).length
+  // 🔴 **粒度で数える**（#279）。`completedAt` で数えると日付なしの完了が落ちる
+  const completed = file.list.items.filter((item) => isCompleted(completedPrecisionOf(item))).length
 
   // 数の行は形式で変えない。**どの形式でも「どれだけ叶えたか」は同じ情報**（#129）
   const lines = [
@@ -196,7 +279,29 @@ export function buildMarkdown(
   ]
 
   file.list.items.forEach((item, index) => {
+    /*
+     * 🔴 **見出しの形は行ではなく段落**（#329）。
+     * `### 1. やりたいこと` の下にメモを本文として置く。
+     * 転載先で**やりたいことごとに節を作りたい**ときの形。
+     */
+    if (options.style === 'heading') {
+      lines.push(`### ${String(index + 1)}. ${item.text}${suffix(item)}`)
+      if (memoOf(item) !== null) lines.push('', memoOf(item) ?? '')
+      lines.push('')
+      return
+    }
+
     lines.push(`${mark(item, index)} ${item.text}${suffix(item)}`)
+
+    /*
+     * ⚠️ **箇条書きの中に入れる**（2スペース下げ）。
+     * 下げないと、**次の行が箇条書きから外れて別の段落になる。**
+     * 改行を含むメモもあるので、行ごとに下げる。
+     */
+    const memo = memoOf(item)
+    if (memo !== null) {
+      for (const line of memo.split('\n')) lines.push(`  ${line}`)
+    }
   })
 
   // 末尾を改行で終える。貼り付けた先で次の行とくっつかない
@@ -211,16 +316,34 @@ export function buildMarkdown(
   function mark(item: ExportedItem, index: number): string {
     if (options.style === 'numbered') return `${String(index + 1)}.`
 
-    return item.completedAt === null ? '- [ ]' : '- [x]'
+    return isCompleted(completedPrecisionOf(item)) ? '- [x]' : '- [ ]'
+  }
+
+  /** 出すメモ。**出さない設定なら常に `null`。** */
+  function memoOf(item: ExportedItem): string | null {
+    if (!options.showMemo) return null
+
+    return item.memo ?? null
   }
 
   function suffix(item: ExportedItem): string {
-    if (item.completedAt === null) return ''
-    if (options.showCompletedDate) return `（${formatDate(item.completedAt)} 達成）`
+    const precision = completedPrecisionOf(item)
+    if (!isCompleted(precision)) return ''
 
-    // 🔴 **連番のときだけ、日付を消しても完了の印を残す。**
-    // 連番には `- [x]` にあたるものが無いので、日付まで消すと
-    // **完了かどうかを表す手段が行から全部無くなる**（#209）
-    return options.style === 'numbered' ? '（達成済）' : ''
+    /**
+     * 粒度どおりに出す（#279）。`2026/08/14` / `2026年8月` / `2026年`。
+     *
+     * 🔴 **日付なしの完了では空になる。** そのときは下の「印を残す」に落ちる
+     * （`- [x]` があるチェックリストでは何も足さない、という #279 の判断）。
+     */
+    const date =
+      item.completedAt === null ? '' : formatCompletedOn(new Date(item.completedAt), precision)
+
+    if (options.showCompletedDate && date !== '') return `（${date} 達成）`
+
+    // 🔴 **連番と見出しのときは、日付が無くても完了の印を残す。**
+    // どちらにも `- [x]` にあたるものが無いので、日付まで消すと
+    // **完了かどうかを表す手段が行から全部無くなる**（#209 / #329）
+    return options.style === 'checklist' ? '' : '（達成済）'
   }
 }

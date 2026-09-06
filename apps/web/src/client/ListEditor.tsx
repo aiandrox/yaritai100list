@@ -1,7 +1,15 @@
 import {
+  buildCompletedOn,
+  COMPLETED_ON_MIN_YEAR,
+  type CompletedPrecision,
+  daysInMonth,
+  formatCompletedOn,
+  isCompleted,
+  ITEM_MEMO_MAX_LENGTH,
   ITEM_TEXT_MAX_LENGTH,
   ITEMS_PER_LIST_MAX,
   LIST_TITLE_MAX_LENGTH,
+  toCompletedOn,
 } from '@yaritai100list/shared'
 import {
   DndContext,
@@ -23,9 +31,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   completedCount,
   filledCount,
-  toDateInputValue,
   toSlots,
-  withDatePart,
   type CompletionPermission,
   type Item,
   type LocalList,
@@ -50,9 +56,15 @@ interface ListEditorProps {
   onRenameList: (title: string) => Promise<boolean>
   onAddItem: (text: string) => Promise<boolean>
   onUpdateItemText: (id: string, text: string) => Promise<boolean>
+  /** メモを書き換える（#294）。`null` で消す */
+  onChangeMemo: (id: string, memo: string | null) => Promise<boolean>
   onToggleItem: (item: Item) => Promise<boolean>
-  /** 完了日を直す（#207）。**完了済みの項目にしか使わない** */
-  onChangeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
+  /**
+   * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使わない。**
+   *
+   * 渡すのは `2026` / `2026-08` / `2026-08-14`（形が粒度を表す）。`null` は日付なし。
+   */
+  onChangeCompletedOn: (id: string, completedOn: string | null) => Promise<boolean>
   onRemoveItem: (id: string) => Promise<boolean>
   /** 移動先の位置（0 始まり）へ動かす。**ずらす量ではない**（#166） */
   onMoveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -64,8 +76,9 @@ export function ListEditor({
   onRenameList,
   onAddItem,
   onUpdateItemText,
+  onChangeMemo,
   onToggleItem,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
   onRemoveItem,
   onMoveItem,
 }: ListEditorProps) {
@@ -88,6 +101,15 @@ export function ListEditor({
    * 「押せない」と「完了済み」が両方成り立つ項目は存在しない。
    */
   const [promptedId, setPromptedId] = useState<string | null>(null)
+
+  /**
+   * メモ欄が開いている行（#294）。**`promptedId` とは別に持つ。**
+   *
+   * 🔴 **こちらは外側を押しても閉じない。** 書いている途中に閉じると、
+   * **書いたものが消えたように見える**（完了の案内は読むだけなので閉じてよい）。
+   * 同じ状態にまとめると、この違いを表せない。
+   */
+  const [memoId, setMemoId] = useState<string | null>(null)
 
   /**
    * 案内の**外側を押したら閉じる**（#83）。閉じ方が「同じ ✓ をもう一度押す」しか
@@ -212,6 +234,12 @@ export function ListEditor({
                   item={slot.item}
                   completion={completion}
                   prompted={promptedId === slot.item.id}
+                  memoOpen={memoId === slot.item.id}
+                  onToggleMemo={() => {
+                    const id = slot.item?.id ?? null
+                    setMemoId((current) => (current === id ? null : id))
+                  }}
+                  onChangeMemo={onChangeMemo}
                   onCommit={onUpdateItemText}
                   onToggle={(item) => {
                     // **できないことを黙って無効化しない。** 無効化だけだと、
@@ -225,13 +253,14 @@ export function ListEditor({
                     /**
                      * 🔴 **完了済みなら、その場では取り消さない**（#207）。
                      *
-                     * 取り消すと `completedAt` が消える。**いつ叶えたかは
-                     * 押し直しても戻らない**（サーバーが押した瞬間の時刻を入れるため）。
+                     * 取り消すと完了日が消える。**いつ叶えたかは押し直しても戻らない**
+                     * （押し直すとその日が入る。直した日付は戻ってこない）。
                      * 思い出として持っている値が、指が当たっただけで消えるのは重い。
                      *
                      * 増やす手数は**戻す側だけ。** 未完了の ✓ は今まで通り1回で付く。
+                     * 🔴 **判定は粒度で**（#279）。日付なしの完了もここに入る
                      */
-                    if (item.completedAt !== null) {
+                    if (isCompleted(item.completedPrecision)) {
                       setPromptedId((current) => (current === item.id ? null : item.id))
                       return
                     }
@@ -252,9 +281,10 @@ export function ListEditor({
                    *
                    * 開けたままにすれば、途中の値は最後の値で上書きされ、
                    * 直った日付がその行に出るのを見て自分で閉じられる。
+                   * **粒度を選び直す操作**（#279）でも同じ理由で閉じない。
                    */
-                  onChangeCompletedAt={(id, completedAt) => {
-                    void onChangeCompletedAt(id, completedAt)
+                  onChangeCompletedOn={(id, completedOn) => {
+                    void onChangeCompletedOn(id, completedOn)
                   }}
                   onRemove={(id) => void onRemoveItem(id)}
                 />
@@ -414,24 +444,36 @@ function ItemRow({
   item,
   completion,
   prompted,
+  memoOpen,
+  onToggleMemo,
+  onChangeMemo,
   onCommit,
   onToggle,
   onUncomplete,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
   onRemove,
 }: {
   number: string
   item: Item
   completion: CompletionPermission
   prompted: boolean
+  /** メモ欄が開いているか（#294）。**完了の案内とは別の状態** */
+  memoOpen: boolean
+  onToggleMemo: () => void
+  onChangeMemo: (id: string, memo: string | null) => Promise<boolean>
   onCommit: (id: string, text: string) => Promise<boolean>
   onToggle: (item: Item) => void
   onUncomplete: (item: Item) => void
-  onChangeCompletedAt: (id: string, completedAt: number) => void
+  onChangeCompletedOn: (id: string, completedOn: string | null) => void
   onRemove: (id: string) => void
 }) {
   const [draft, setDraft] = useState(item.text)
-  const done = item.completedAt !== null
+  const hasMemo = item.memo !== null
+  // 🔴 **完了は粒度で判定する**（#279）。日付なしの完了も「済み」の見た目にする
+  const done = isCompleted(item.completedPrecision)
+
+  const completedAtDate = item.completedAt === null ? null : new Date(item.completedAt)
+  const completedOn = formatCompletedOn(completedAtDate, item.completedPrecision)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
@@ -519,11 +561,45 @@ function ItemRow({
           className={`${TEXT_INPUT} ${done ? 'text-slate-400 line-through' : 'text-slate-900'}`}
         />
 
-        {done && item.completedAt !== null && (
-          <span className="shrink-0 text-[10px] text-brand-deep tabular-nums">
-            {new Date(item.completedAt).toLocaleDateString('ja-JP')}
-          </span>
+        {/*
+          完了日。**粒度どおりに出す**（#279）。`2026/08/14` / `2026年8月` / `2026年`。
+          🔴 **日付なしの完了では何も出さない**（欄そのものが出ない）。
+          完了は打ち消し線・番号の色・「やった」の数が伝えている
+
+          🔴 **押すと完了の設定が開く**（2026-08-15、#298）。
+          直したいのは日付なのに、入口が ✓ しか無かった。
+          `button` にしてキーボードからも押せるようにする。
+          `data-keep-prompt` は ✓ と同じ理由（押した瞬間に閉じると開き直せない）
+        */}
+        {completedOn !== '' && (
+          <button
+            type="button"
+            aria-label={`${number} 番目の完了日を直す`}
+            aria-expanded={prompted}
+            data-keep-prompt=""
+            onClick={() => {
+              onToggle(item)
+            }}
+            className="shrink-0 text-[10px] text-brand-deep underline tabular-nums"
+          >
+            {completedOn}
+          </button>
         )}
+
+        {/*
+          メモ（#294）。**✓ と同じ考え方で、無くてもうっすら出す**（#208）。
+          🔴 **書いてある行だけに出すと、書き足す入口が無くなる。**
+          書いてあるときは濃くして、**どこに書いたかが一覧で分かる**ようにする。
+        */}
+        <button
+          type="button"
+          aria-label={`${number} 番目のメモ${hasMemo ? '（あり）' : ''}`}
+          aria-expanded={memoOpen}
+          onClick={onToggleMemo}
+          className={`shrink-0 px-1 text-sm ${hasMemo ? 'text-brand-deep' : 'text-brand'}`}
+        >
+          ✎
+        </button>
 
         {/*
           掴む場所（#166）。**行全体を掴めるようにしない。**
@@ -558,19 +634,35 @@ function ItemRow({
       </div>
 
       {/*
+        メモ（#294）。**行の下に開く。**
+        🔴 **閉じている行の高さは変えない**（`PRODUCT_SPEC.md` §4.5）。
+        開いた行だけ背が伸びる
+      */}
+      {memoOpen && (
+        <MemoField
+          value={item.memo}
+          onSave={(memo) => onChangeMemo(item.id, memo)}
+          onClose={onToggleMemo}
+        />
+      )}
+
+      {/*
         浮かぶものは2つあるが**同時には出ない**（ListEditor の promptedId の注意書き）。
         未ログインでは完了にできないので、`!allowed` と `done` は両立しない
       */}
       {prompted &&
         (completion.allowed ? (
-          item.completedAt !== null && (
+          // 🔴 **`done` で出す**（#279）。`completedAt` で見ると
+          // 日付なしの完了で設定が開かず、**日付を入れる入口が無くなる**
+          done && (
             <CompletionMenu
-              completedAt={item.completedAt}
+              completedAt={completedAtDate}
+              completedPrecision={item.completedPrecision}
               onUncomplete={() => {
                 onUncomplete(item)
               }}
-              onChangeCompletedAt={(completedAt) => {
-                onChangeCompletedAt(item.id, completedAt)
+              onChangeCompletedOn={(completedOn) => {
+                onChangeCompletedOn(item.id, completedOn)
               }}
             />
           )
@@ -582,77 +674,226 @@ function ItemRow({
 }
 
 /**
- * 完了済みの ✓ を押したときに出る設定（#207）。
+ * 完了済みの ✓ を押したときに出る設定（#207 / #279）。
  *
  * 🔴 **2段にしない。** イシューの図は「未完了に戻す / 完了日時を変更する」の
  * 2択だったが、**日付の入力欄をその場に置く。** 押す回数が減る。
  *
  * 🔴 **「未完了に戻す」に確認を重ねない。** これを開いたこと自体が1段の確認。
  * 二重にすると、本当に戻したいときに邪魔になるだけ。
+ *
+ * 🔴 **粒度を選ばせない**（2026-08-15 の判断、#298）。
+ * **年・月・日をそれぞれ入れて、入った値から粒度が決まる**（`buildCompletedOn`）。
+ * 以前は粒度の `<select>` を先に選ばせていたが、**選んでから入れる順序が余計だった。**
+ *
+ * ```
+ * 完了日 [2026]年 [8]月 [14]日
+ * 日付なし / 未完了に戻す
+ * ```
+ *
+ * 🔴 **上位が空なら下位は `-` に追従する。** 年が空なら月は選べず、月が空なら日は選べない。
+ *
+ * 🔴 **「日付なし」は押せるものとして出す**（2026-08-15 の指摘、#310）。
+ * 年を空にしても日付なしになるが、**そう書いていないので暗黙すぎた。**
+ * 覚えていない人がたどり着ける口を、押せる形で1つ置く（完了は取り消さない）。
+ *
+ * ⚠️ **打っている途中は送らない。** 年の欄で「2」「20」「202」と打つ間に送ると、
+ * 途中の値が保存される（`1900` 年より前としてサーバーに断られる）。
+ * **空にしたときだけは送る**（日付なしにする操作なので）。
  */
 function CompletionMenu({
   completedAt,
+  completedPrecision,
   onUncomplete,
-  onChangeCompletedAt,
+  onChangeCompletedOn,
 }: {
-  completedAt: number
+  completedAt: Date | null
+  completedPrecision: CompletedPrecision | null
   onUncomplete: () => void
-  onChangeCompletedAt: (completedAt: number) => void
+  onChangeCompletedOn: (completedOn: string | null) => void
 }) {
+  const current = toCompletedOn(completedAt, completedPrecision)
+
+  // 既に入っている分を引き継ぐ（`2026-08-14` / `2026-08` / `2026` / null）
+  const [year, setYear] = useState(current?.slice(0, 4) ?? '')
+  const [month, setMonth] = useState(current?.slice(5, 7) ?? '')
+  const [day, setDay] = useState(current?.slice(8, 10) ?? '')
+
+  /**
+   * 未来を選ばせないための上限。**親切のためだけ**（本当に弾くのはサーバー）。
+   *
+   * 🔴 **日本時間の今日から数える**（`toCompletedOn`）。サーバーは日本時間の暦日で
+   * 判定するので（#279）、`getFullYear()` などで組み立てると
+   * **時間帯によって1日ずれ、通らない日を選ばせたり、選べる日を隠したりする。**
+   */
+  const todayJst = toCompletedOn(new Date(), 'day') ?? ''
+  const thisYear = Number(todayJst.slice(0, 4))
+  const thisMonth = Number(todayJst.slice(5, 7))
+  const today = Number(todayJst.slice(8, 10))
+
+  /**
+   * 年の欄が**送れる値になっているか。**
+   *
+   * 4桁揃っていることと、範囲（`1900` 〜 今年）を見る。
+   * 🔴 **上限も見る。** 「2030」を送っても未来なのでサーバーが断るが、
+   * **断られる要求をこちらから出さない**（画面が一瞬変わって戻るだけになる）。
+   */
+  const isYearFilled = (value: string) =>
+    /^\d{4}$/.test(value) && Number(value) >= COMPLETED_ON_MIN_YEAR && Number(value) <= thisYear
+
+  const inThisYear = (y: string) => isYearFilled(y) && Number(y) === thisYear
+  const inThisMonth = (y: string, m: string) => inThisYear(y) && Number(m) === thisMonth
+
+  /**
+   * 3つの欄をまとめて確定する。
+   *
+   * 🔴 **上位を変えたときに下位を落とす。** 年を今年にしたら未来の月は成り立たないし、
+   * うるう年を外れたら 2月29日は存在しない。**黙って別の日にしない**ために、
+   * 成り立たなくなった下位は捨てて1段粗い粒度に落とす。
+   */
+  const commit = (next: { year: string; month: string; day: string }) => {
+    const y = next.year
+    let m = next.month
+    let d = next.day
+
+    if (!isYearFilled(y)) {
+      // 年が無ければ月日は意味を持たない（空にしたなら日付なしとして送る）
+      m = ''
+      d = ''
+    } else if (m !== '' && inThisYear(y) && Number(m) > thisMonth) {
+      m = ''
+      d = ''
+    }
+
+    if (
+      d !== '' &&
+      (m === '' || Number(d) > daysInMonth(y, m) || (inThisMonth(y, m) && Number(d) > today))
+    ) {
+      d = ''
+    }
+
+    setYear(next.year)
+    setMonth(m)
+    setDay(d)
+
+    // 打っている途中（1〜3桁や範囲外）は送らない。**空にしたときは送る**
+    if (next.year !== '' && !isYearFilled(next.year)) return
+
+    onChangeCompletedOn(buildCompletedOn({ year: y, month: m, day: d }))
+  }
+
+  /** 月・日の選択肢。`-` は「そこまでは覚えていない」 */
+  const options = (values: number[]) => [
+    <option key="none" value="">
+      -
+    </option>,
+    ...values.map((value) => (
+      <option key={value} value={String(value).padStart(2, '0')}>
+        {value}
+      </option>
+    )),
+  ]
+
+  const months = Array.from({ length: 12 }, (_, index) => index + 1).filter(
+    // 今年なら、**まだ来ていない月は出さない**
+    (value) => !(inThisYear(year) && value > thisMonth),
+  )
+
+  const days = Array.from({ length: daysInMonth(year, month) }, (_, index) => index + 1).filter(
+    // 今月なら、**まだ来ていない日は出さない**
+    (value) => !(inThisMonth(year, month) && value > today),
+  )
+
   return (
     <PromptBox>
       {/* 横に並べる。入らない幅では折り返す（狭い端末で切れないように） */}
       <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="flex items-center gap-2">
-          <span className="shrink-0">完了日</span>
+        <span className="flex flex-wrap items-center gap-1">
+          <span className="mr-1 shrink-0">完了日</span>
 
           <input
-            type="date"
-            defaultValue={toDateInputValue(completedAt)}
-            aria-label="完了日"
+            type="number"
+            inputMode="numeric"
+            value={year}
+            aria-label="完了した年"
+            placeholder={String(thisYear)}
             /**
-             * 打っている途中の値を弾くための箍（`validity` で見る）。
-             *
-             * **未来**: 未来に叶えたことにはできない。
-             * **1900年より前**: 年の欄を打ち直すと `0002-05-03` のような値が一度出る。
-             *
-             * ⚠️ **どちらも親切のためだけ。** 手で組み立てた要求は通るので、
-             * 本当に弾くのはサーバー（`isFutureCompletedAt`）。
+             * ⚠️ **`min` / `max` は親切のためだけ。** 手で組み立てた要求は通るので、
+             * 本当に弾くのはサーバー（`isFutureCompletedAt` と `parseCompletedOn`）。
              */
-            min={COMPLETED_AT_MIN}
-            max={toDateInputValue(Date.now())}
+            min={COMPLETED_ON_MIN_YEAR}
+            max={thisYear}
             onChange={(event) => {
-              // 空にした・範囲外・読めない値は**何もしない。**
-              // 消す操作は「未完了に戻す」の方
-              if (!event.target.validity.valid) return
-
-              const next = withDatePart(completedAt, event.target.value)
-              if (next !== null) onChangeCompletedAt(next)
+              commit({ year: event.target.value, month, day })
             }}
-            className="min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900 tabular-nums"
+            className={`${FIELD} w-[4.5rem] tabular-nums`}
           />
+          <span className="shrink-0">年</span>
+
+          <select
+            value={month}
+            aria-label="完了した月"
+            // 🔴 **年が空なら選ばせない。** 月だけでは日付にならないので、
+            // 選べる形にしておくと「選んだのに何も起きない」ことになる
+            disabled={!isYearFilled(year)}
+            onChange={(event) => {
+              commit({ year, month: event.target.value, day })
+            }}
+            className={SELECT}
+          >
+            {options(months)}
+          </select>
+          <span className="shrink-0">月</span>
+
+          <select
+            value={day}
+            aria-label="完了した日"
+            // 月が空なら日は選ばせない（同じ理由）
+            disabled={month === ''}
+            onChange={(event) => {
+              commit({ year, month, day: event.target.value })
+            }}
+            className={SELECT}
+          >
+            {options(days)}
+          </select>
+          <span className="shrink-0">日</span>
         </span>
 
-        <button
-          type="button"
-          onClick={onUncomplete}
-          className="font-bold text-brand-deep underline"
-        >
-          未完了に戻す
-        </button>
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          {/*
+            🔴 **「日付なし」の入口**（#310）。年を空にするのと同じことをする。
+            **日付が入っているときだけ出す**（既に日付なしなら押しても何も起きない）。
+            文言は #279 で利用者が選んだ「日付なし」をそのまま使う
+          */}
+          {year !== '' && (
+            <button
+              type="button"
+              onClick={() => {
+                commit({ year: '', month: '', day: '' })
+              }}
+              className={ACTION}
+            >
+              日付なし
+            </button>
+          )}
+
+          <button type="button" onClick={onUncomplete} className={ACTION}>
+            未完了に戻す
+          </button>
+        </span>
       </span>
     </PromptBox>
   )
 }
 
-/**
- * 完了日として画面から入れられる下限。**規則ではなく、打ち間違いの箍**（#207）。
- *
- * サーバーには下限を置いていない（`isFutureCompletedAt` の注意書き）。
- * ここで切るのは、`<input type="date">` の年の欄を打ち直したときに
- * 通り過ぎる `0002-05-03` のような値を保存しないため。
- */
-const COMPLETED_AT_MIN = '1900-01-01'
+/** 完了の設定の押せる文字。**「日付なし」と「未完了に戻す」で同じ見た目にする**（#310） */
+const ACTION = 'font-bold text-brand-deep underline'
+
+/** 完了の設定の入力欄。**同じ見た目を3つで使う**（年・月・日） */
+const FIELD = 'min-w-0 rounded border border-brand bg-white px-1 py-0.5 text-xs text-slate-900'
+
+const SELECT = `${FIELD} shrink-0`
 
 /**
  * 完了を押したのに付けられなかったときの案内。**押した行のすぐ下に重ねて出す。**
@@ -757,5 +998,62 @@ function EmptyRow({ number }: { number: string }) {
       <span className="size-6 shrink-0 rounded-full border-2 border-dashed border-brand/50" />
       <span className="flex-1" />
     </li>
+  )
+}
+
+/**
+ * メモの入力欄（#294）。**行の下に開く。**
+ *
+ * 🔴 **離れたときに保存する**（本文の入力欄と同じ）。
+ * 「保存」を押させると、押し忘れて消える。
+ *
+ * ⚠️ **外側を押しただけでは閉じない**（完了の案内とはここが違う）。
+ * 書いている途中に閉じると、**書いたものが消えたように見える。**
+ * 閉じるのは ✎ をもう一度押すか、この中の「閉じる」から。
+ */
+function MemoField({
+  value,
+  onSave,
+  onClose,
+}: {
+  value: string | null
+  onSave: (memo: string | null) => Promise<boolean>
+  onClose: () => void
+}) {
+  const [draft, setDraft] = useState(value ?? '')
+
+  const save = async () => {
+    const next = draft.trim() === '' ? null : draft
+    if (next === value) return
+
+    if (!(await onSave(next))) setDraft(value ?? '')
+  }
+
+  return (
+    <div className="pb-3 pl-8">
+      <textarea
+        value={draft}
+        autoFocus
+        aria-label="メモ"
+        maxLength={ITEM_MEMO_MAX_LENGTH}
+        rows={3}
+        placeholder="なぜやりたいか、叶えたときのことなど"
+        onChange={(event) => {
+          setDraft(event.target.value)
+        }}
+        onBlur={() => void save()}
+        className="w-full rounded border border-brand bg-white px-2 py-1.5 text-sm leading-6 text-slate-900 focus:outline-2 focus:outline-brand-deep"
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          void save().then(onClose)
+        }}
+        className="mt-1 text-xs text-slate-500 underline"
+      >
+        閉じる
+      </button>
+    </div>
   )
 }

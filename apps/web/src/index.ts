@@ -2,6 +2,9 @@ import * as Sentry from '@sentry/cloudflare'
 import {
   BROWSABLE_GENRES,
   buildExportFile,
+  type CompletedPrecision,
+  completedOnSchema,
+  completedPrecisionOf,
   DEFAULT_LIST_TITLE,
   EXPORT_VERSION,
   exportFileSchema,
@@ -9,11 +12,14 @@ import {
   DISCOVER_MAX_PAGE,
   DISCOVER_PAGE_SIZE,
   hasFutureCompletedAt,
+  isCompleted,
   isFutureCompletedAt,
+  parseCompletedOn,
   ITEMS_PER_LIST_MAX,
   LISTS_PER_USER_MAX,
   SHARE_HIDDEN_ITEM_LABEL,
   SHARED_VISIBILITIES,
+  itemMemoSchema,
   itemTextSchema,
   signExportImagePayload,
   signOgPayload,
@@ -28,7 +34,7 @@ import { z } from 'zod'
 import { createAuth } from './auth'
 import { requireOwnedItem, requireOwnedList, requireUser } from './authorization'
 import { createDb, type Db } from './db'
-import { items, lists, pool, wishTexts } from './db/schema'
+import { items, lists, pool, users, wishTexts } from './db/schema'
 import type { AppEnv } from './env'
 import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
@@ -37,7 +43,7 @@ import { rebuildPool } from './pool'
 import { judgeUnjudged, POOL_JUDGE_MODEL } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
-import { sentryOptions, type SentryEnv } from './sentry'
+import { sentryOptions, shouldReportRenderFailure, type SentryEnv } from './sentry'
 
 /**
  * リストの更新で受け付ける内容。**上限は packages/shared の Zod スキーマが唯一の情報源。**
@@ -97,16 +103,20 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
 /**
  * 項目の変更。
  *
- * 🔴 **完了にする瞬間の日時はサーバーが決める。** `completed: true` で受けるのは
- * 真偽値だけで、日時は入れさせない。端末の時計は狂っていることがあり、
- * 送られた値をそのまま入れると「未来に叶えたこと」になる。
+ * 🔴 **`completed: true` は「その日・粒度 `day`」になる。日時はサーバーが決める**
+ * （2026-08-15 の判断、#298）。端末の時計は狂っていることがあるので値は受け取らない。
  *
- * 🔴 **後から日付を直すのは持ち主が決める**（#207）。`completedAt` を受け取る。
- * 境目は「**初回か、直しか**」。こう置くと
- * 「未完了の項目に好きな過去日を入れて完了にする」という抜け道ができない
- * （完了していない項目への `completedAt` は、下のハンドラが 409 で断る）。
+ * ⚠️ **#279 で一度「日付なし」を既定にしたが、戻した。**
+ * 「押した日が叶えた日とは限らない」のは確かでも、**記録のほとんどは今日やったこと**で、
+ * ふつうの完了で毎回日付を入れることになり手数が多かった。
+ * 覚えていない場合は、完了の設定で**年を空にすれば日付なしに戻せる**（#298）。
  *
- * ⚠️ **`completed` と `completedAt` は同時に送れない。**
+ * 🔴 **日付を直すのは持ち主が決める**（#207 / #279）。`completedOn` を受け取る。
+ * 形が粒度を表す（`2026` / `2026-08` / `2026-08-14`）。`null` で日付なしに戻せる。
+ * **完了していない項目には入れさせない**（下のハンドラが 409 で断る）。
+ * 「完了にする」と「いつ叶えたか」を2段に分けておくと、状態の組み合わせが増えない。
+ *
+ * ⚠️ **`completed` と `completedOn` は同時に送れない。**
  * 「取り消しつつ日付を直す」は意味を持たないし、どちらを勝たせるかを決めたくない。
  *
  * 未来かどうかはここでは見ない。**`now` を渡して判定する**必要があるので
@@ -118,18 +128,23 @@ const createItemSchema = z.object({ text: itemTextSchema }).strict()
  * 🔴 **`hiddenInShare`（#237）はリストの `visibility` とは別物。**
  * 「誰が見られるか」ではなく「見られる相手にこの1件の本文を見せるか」で、
  * 共有ページにだけ効く。ダウンロード画像・書き出しには適用しない。
+ *
+ * 🔴 **`memo`（#294）は本文と一緒に送れる。** 別の操作にしない
+ * （書きながら直すものなので、要求を分ける理由が無い）。
+ * `null` で消せる。省略は「変えない」（`itemMemoSchema`）。
  */
 const updateItemSchema = z
   .object({
     text: itemTextSchema.optional(),
     completed: z.boolean().optional(),
-    completedAt: z.iso.datetime().optional(),
+    completedOn: completedOnSchema.nullable().optional(),
     hiddenInShare: z.boolean().optional(),
+    memo: itemMemoSchema.optional(),
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0, { message: '変更する項目がない' })
-  .refine((patch) => patch.completed === undefined || patch.completedAt === undefined, {
-    message: 'completed と completedAt は同時に送れない',
+  .refine((patch) => patch.completed === undefined || patch.completedOn === undefined, {
+    message: 'completed と completedOn は同時に送れない',
   })
 
 /**
@@ -168,17 +183,52 @@ const importListSchema = z
  *
  * ⚠️ **D1 は1文あたりのバインド変数の上限が100個**（実測。#89 で踏んだ）。
  * 一番列の多い呼び出し（`POST /api/lists/restore`。`id` / `list_id` / `text` /
- * `completed_at` / `hidden_in_share`（#237） / `position` の6列。
- * `created_at` / `updated_at` は SQL 側の既定値なのでバインド変数を使わない）でも
- * 16行 × 6列 = 96個に収まるようにしてある。
+ * `completed_at` / `completed_precision`（#279） / `hidden_in_share`（#237） /
+ * `memo`（#294） / `position` の8列。`created_at` / `updated_at` は SQL 側の既定値なので
+ * バインド変数を使わない）でも 12行 × 8列 = 96個に収まるようにしてある。
  *
  * 🔴 **`hiddenInShare` を明示せずに `insert` しても、JS 側の既定値（`false`）が
  * バインド変数として1個乗る。** SQL 側の既定値（`sql\`...\`` で書いた列）と違い、
  * 省略しても列数には数えなければならない（#237 でここが100個の上限に触れて実測し直した）。
  *
+ * 🔴 **列を足したらここを見直す。** #279 で `completed_precision` を足したとき、
+ * 16行 × 7列 = 112個で上限を越えて**100件の読み込みだけが 500 になった**
+ * （少ない件数では1文に収まるので、テストの件数を減らすと気づけない）。
+ * #294 で `memo` を足したときも同じ計算で **14 → 12** に下げている。
+ *
  * 分けても `batch` に渡せば1トランザクションのまま。
  */
-const INSERT_CHUNK = 16
+const INSERT_CHUNK = 12
+
+/**
+ * 画像を出せなかったことを最後に通知した時刻（#290）。
+ *
+ * ⚠️ **isolate ごとに持つ。** Cloudflare は同じワーカーを複数の isolate で走らせるので、
+ * **1回の障害で isolate の数だけ通知が出うる。** それでも、
+ * 押されるたびに送るのに比べれば桁が違う（`shouldReportRenderFailure`）。
+ */
+let lastRenderFailureAt: number | null = null
+
+/**
+ * 画像を出せなかったことを通知する（#290）。
+ *
+ * 🔴 **`console.error` は Sentry に届かない。** SDK が拾うのは例外と明示的な通知だけで、
+ * ログは Cloudflare の中に流れて消える。**誰も見ないので、気づく手段がこれしか無い。**
+ *
+ * ⚠️ **画面は壊れて見えない。** 画像が出ないだけなので、
+ * これが無いと**利用者が言ってくるまで気づけない**（#290 で実際にそうなっていた）。
+ *
+ * 🔴 **生成サービス側には Sentry を入れていない。**
+ * こちら（呼ぶ側）で捕まえるのは、**繋がらないときも拾える**ため。
+ * 落ちている相手は自分の障害を報せられない。
+ */
+function reportRenderFailure(reason: string): void {
+  const now = Date.now()
+  if (!shouldReportRenderFailure(now, lastRenderFailureAt)) return
+
+  lastRenderFailureAt = now
+  Sentry.captureException(new Error(`画像を出せなかった: ${reason}`))
+}
 
 /** そのリストの項目を並び順で取る。 */
 function selectItems(db: Db, listId: string) {
@@ -415,6 +465,11 @@ const app = new Hono<AppEnv>()
       text: item.text,
       position,
       completedAt: item.completedAt === null ? null : new Date(item.completedAt),
+      // 🔴 **粒度が無い古いファイルを読めるようにする**（#279）。
+      // 補い方は `completedPrecisionOf`（日時があれば `day`）。ここで書かない
+      completedPrecision: completedPrecisionOf(item),
+      // メモが無い古いファイルは `undefined` で来る（#294）。**NULL に寄せる**
+      memo: item.memo ?? null,
     }))
 
     // 項目が0件のリストも書き出せるので、ここは空になりうる。
@@ -480,9 +535,9 @@ const app = new Hono<AppEnv>()
    * 形は `packages/shared` の `buildExportFile`。**版を持たせてある**ので、
    * 形を変えたら上げること（読み込み側が断れる）。
    *
-   * ⚠️ **形式は後から増える。** ブログへの転載用にマークダウンでも書き出す予定がある
-   * （#124）。そのときは**このルートの隣に足す**（`/export/markdown` など）。
-   * ここで分岐を増やして1本にまとめない。中身の作り方が違いすぎる
+   * ⚠️ **マークダウン（#124）のためのルートは無い。**
+   * あちらはこの JSON から**画面側で組み立てている**（`buildMarkdown`）ので、
+   * ここに分岐を増やさない。中身の作り方が違いすぎる
    * （あちらは人が読むもので、読み込まない）。
    */
   .get('/api/lists/:listId/export', requireUser, requireOwnedList, async (c) => {
@@ -512,6 +567,8 @@ const app = new Hono<AppEnv>()
     /** 出せないときの返し。**理由は利用者に見せず、ログに残す**（#180 と同じ）。 */
     const unavailable = (reason: string) => {
       console.error(`export: ${reason}`)
+      // 🔴 ログだけでは誰も気づかない（#290）
+      reportRenderFailure(`export: ${reason}`)
       return c.json({ error: 'Image Not Available' } as const, 503)
     }
 
@@ -579,6 +636,54 @@ const app = new Hono<AppEnv>()
   })
 
   /**
+   * アカウントを消す（#308）。**取り消せない。**
+   *
+   * 🔴 **自分のアカウントしか消せない。** `userId` を要求から受け取らず、
+   * **セッションから引く**（`requireUser`）。受け取る口を作らなければ、他人を消せない。
+   *
+   * 消えるもの:
+   *
+   * | | どうやって |
+   * |---|---|
+   * | `users` / `sessions` / `accounts` | `on delete cascade` |
+   * | `lists` → `items` | 同上（リスト1件の削除と同じ経路） |
+   * | `pool` | **作り直す**（下記） |
+   * | `wish_texts` | **参照されなくなった行を消す**（下記） |
+   *
+   * ⚠️ **セッションも消える**ので、この応答の後は同じ Cookie で何も通らない。
+   */
+  .delete('/api/account', requireUser, async (c) => {
+    const db = createDb(c.env.DB)
+
+    await db.delete(users).where(eq(users.id, c.get('userId')))
+
+    /*
+     * 🔴 **消し残る2つを片付ける。**
+     *
+     * `wish_texts` は**書かれたままの本文をキー**にしていて、誰が書いたかを持たない。
+     * アカウントを消しても**その人が書いた文章が残る**ので、
+     * **どこからも参照されなくなった行**を消す。
+     * ⚠️ 他の人が同じ本文を書いていれば残る（それはその人のもの）。
+     *
+     * `pool` はバッチが1時間ごとに作り直すので、放っておくと
+     * **「消したのに `/discover` に出ている」が最大1時間続く。** ここで作り直す。
+     *
+     * 🔴 **削除と同じトランザクションにしない。** ここが失敗しても
+     * **アカウントの削除は確定させる**（逆だと、消したはずのものが戻る）。
+     * 失敗しても次のバッチが直すので、記録だけ残して先へ進む。
+     */
+    try {
+      await db.run(sql`delete from wish_texts where raw_text not in (select text from items)`)
+      await rebuildPool(db)
+    } catch (error) {
+      Sentry.captureException(error)
+      console.error(`delete-account: 後片付けに失敗した: ${String(error)}`)
+    }
+
+    return c.json({ deleted: true } as const)
+  })
+
+  /**
    * 項目を末尾に足す。
    *
    * 🔴 **件数の判定・並び順の決定・挿入を1文で行う**（リストの作成と同じ理由）。
@@ -621,8 +726,8 @@ const app = new Hono<AppEnv>()
   /**
    * 項目の本文と完了を変える。
    *
-   * **完了にする瞬間の日時はサーバーが決める。後からの直しは受け取る**
-   * （`updateItemSchema` の注意書き。#207）。
+   * **✓ を押した時点では日付を作らない。日付は後から受け取る**
+   * （`updateItemSchema` の注意書き。#207 / #279）。
    * 完了しても並び順は動かさない（`PRODUCT_SPEC.md` §4.5）。
    */
   .patch(
@@ -637,23 +742,40 @@ const app = new Hono<AppEnv>()
       const patch = c.req.valid('json')
 
       /**
-       * 完了日の直し（#207）。**受け取る前に2つ断る。**
+       * 完了日の直し（#207 / #279）。**受け取る前に3つ断る。**
        *
-       * 🔴 **完了していない項目には入れさせない。** 入れられると
-       * 「好きな過去日を指定して完了にする」ことができ、
-       * 「完了にする瞬間はサーバーが決める」が要求の組み立てだけで迂回できる。
+       * 🔴 **完了していない項目には入れさせない。** 「完了にする」と
+       * 「いつ叶えたか」を2段に分けているので、順序を飛ばす要求は断る
+       * （`completed_at` だけが入って粒度が付かない行を作らせない）。
+       *
+       * 🔴 **読めない日付を弾く**（`parseCompletedOn`）。存在しない日
+       * （`2026-02-30`）や 1900年より前は入れさせない。
        *
        * 🔴 **未来を弾く**（`isFutureCompletedAt`）。取り込みと同じ判定を使う。
+       * 粒度が `year` / `month` のときは**その期間の頭**で判定するので、
+       * 「今年」は通り「来年」は通らない。
        */
-      let completedAt: Date | undefined
-      if (patch.completedAt !== undefined) {
-        if (item.completedAt === null) {
+      let completion:
+        { completedAt: Date | null; completedPrecision: CompletedPrecision } | undefined
+      if (patch.completedOn !== undefined) {
+        if (!isCompleted(item.completedPrecision)) {
           return c.json({ error: 'Not Completed' } as const, 409)
         }
 
-        completedAt = new Date(patch.completedAt)
-        if (isFutureCompletedAt(completedAt, new Date())) {
-          return c.json({ error: 'Future Completed At' } as const, 400)
+        if (patch.completedOn === null) {
+          // 日付なしに戻す。**完了は取り消さない**
+          completion = { completedAt: null, completedPrecision: 'unknown' }
+        } else {
+          const parsed = parseCompletedOn(patch.completedOn)
+          if (parsed === null) {
+            return c.json({ error: 'Bad Request' } as const, 400)
+          }
+
+          if (isFutureCompletedAt(parsed.at, new Date())) {
+            return c.json({ error: 'Future Completed At' } as const, 400)
+          }
+
+          completion = { completedAt: parsed.at, completedPrecision: parsed.precision }
         }
       }
 
@@ -661,11 +783,19 @@ const app = new Hono<AppEnv>()
         .update(items)
         .set({
           ...(patch.text === undefined ? {} : { text: patch.text }),
+          /**
+           * 🔴 **完了にした瞬間は「その日」**（2026-08-15、#298）。日時はサーバーが決める。
+           * 粒度も一緒に入れる（`completed_at` だけの行は DB が拒否する。`0016`）。
+           */
           ...(patch.completed === undefined
             ? {}
-            : { completedAt: patch.completed ? new Date() : null }),
-          ...(completedAt === undefined ? {} : { completedAt }),
+            : patch.completed
+              ? { completedAt: new Date(), completedPrecision: 'day' as const }
+              : { completedAt: null, completedPrecision: null }),
+          ...(completion ?? {}),
           ...(patch.hiddenInShare === undefined ? {} : { hiddenInShare: patch.hiddenInShare }),
+          // 空文字は `itemMemoSchema` が null に寄せてある（＝消す）
+          ...(patch.memo === undefined ? {} : { memo: patch.memo }),
           updatedAt: new Date(),
         })
         .where(eq(items.id, item.id))
@@ -799,12 +929,14 @@ const app = new Hono<AppEnv>()
         imageUrl: ogImageUrl(new URL(c.req.url).origin, list.shareId, list.updatedAt),
         // 🔴 **伏せる項目（#237）は、ここで本文を落としてから渡す。**
         // `renderSharePage` には見せてよいデータだけを渡す（`src/share.ts` の設計どおり）。
-        // 達成状況（`completed`）は伏せても見せてよいが、完了日時（「いつ」）は伏せる
+        // 達成状況（`completed`）は伏せても見せてよいが、完了日時（「いつ」）は伏せる。
+        // 🔴 **粒度も伏せる**（#279）。「2026年」だけでも「いつ」の情報
         items: rows.map((item) => ({
           text: item.hiddenInShare ? SHARE_HIDDEN_ITEM_LABEL : item.text,
-          completed: item.completedAt !== null,
+          completed: isCompleted(item.completedPrecision),
           completedAt:
             !item.hiddenInShare && item.completedAt !== null ? item.completedAt.getTime() : null,
+          completedPrecision: item.hiddenInShare ? null : item.completedPrecision,
         })),
       }),
     )
@@ -853,6 +985,8 @@ const app = new Hono<AppEnv>()
      */
     const unavailable = (reason: string) => {
       console.error(`og: ${reason}`)
+      // 🔴 ログだけでは誰も気づかない（#290）。**公開のルートなので間隔を空けて送る**
+      reportRenderFailure(`og: ${reason}`)
       return c.json({ error: 'Image Not Available' } as const, 503)
     }
 

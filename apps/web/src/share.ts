@@ -1,4 +1,10 @@
-import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SERVICE_NAME } from '@yaritai100list/shared'
+import {
+  type CompletedPrecision,
+  formatCompletedOn,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_WIDTH,
+  SERVICE_NAME,
+} from '@yaritai100list/shared'
 import { html, raw } from 'hono/html'
 
 // 🔴 **色と幅は SPA と同じファイルから読む**（#159）。
@@ -64,6 +70,11 @@ const PAGE_STYLE = `
   .date { color: var(--brand-deep); font-size: .65rem; font-variant-numeric: tabular-nums; }
 
   /* 下の導線（#225）。**人のリストの続きに見えないよう、はっきり離す** */
+  .site-footer {
+    margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--brand);
+    text-align: center; font-size: .75rem; color: #64748b;
+  }
+  .site-footer a { color: inherit; }
   .invite { margin-top: 2.5rem; padding: 1.25rem 1rem; background: #fff; border-radius: .25rem; text-align: center; }
   .invite h2 { font-size: 1rem; margin: 0; }
   .invite p { font-size: .75rem; color: #475569; margin: .5rem 0 0; }
@@ -87,8 +98,16 @@ export interface SharedItem {
    * `completedAt` が `null` になるため、見た目とカウントは `completedAt` では判定できない。
    */
   completed: boolean
-  /** 表示する完了日時（epoch ms）。未完了、または伏せた項目なら `null` */
+  /**
+   * 表示する完了日時（epoch ms）。未完了・日付なしの完了（#279）、
+   * または伏せた項目なら `null`
+   */
   completedAt: number | null
+  /**
+   * 完了日の粒度（#279）。**日付を出す単位を決める。**
+   * 🔴 伏せた項目では `null`。「2026年」だけでも「いつ」の情報なので伏せる
+   */
+  completedPrecision: CompletedPrecision | null
 }
 
 export interface SharedList {
@@ -96,21 +115,6 @@ export interface SharedList {
   items: SharedItem[]
   /** OGP 画像の絶対 URL（#173）。呼び出し側で組み立てる（`src/og.ts`） */
   imageUrl: string
-}
-
-/**
- * 完了日を**日本時間**で描く。
- *
- * サーバーで描くので**閲覧者の時間帯が分からない。**
- * マークダウン（#124）はクライアントで整形して避けたが、
- * このページは JavaScript 無しで読めることを優先しているので、ここで決め打つ。
- * 日本語のサービスなので日本時間にする。
- */
-function formatCompletedAt(completedAt: number): string {
-  return new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    dateStyle: 'medium',
-  }).format(new Date(completedAt))
 }
 
 /**
@@ -169,6 +173,17 @@ function layout(options: {
         <div class="page">
           <header><a href="/">${SERVICE_NAME}</a></header>
           <main>${options.body}</main>
+
+          <!--
+            フッター（#304）。🔴 SPA 側（src/client/Layout.tsx）にも同じものがある。
+            共有ページは別実装なので、片方だけ直すとここだけ規約に行けなくなる。
+            ⚠️ この中でバッククォートを使わないこと（テンプレートリテラルが閉じる）
+          -->
+          <footer class="site-footer">
+            <a href="/terms">利用規約</a>
+            <span> · </span>
+            <a href="/privacy">プライバシーポリシー</a>
+          </footer>
         </div>
       </body>
     </html>`
@@ -195,19 +210,30 @@ export function renderSharePage(list: SharedList): HtmlEscapedString | Promise<H
       <p class="count">${description}</p>
 
       <ol>
-        ${list.items.map(
-          (item, index) => html`
+        ${list.items.map((item, index) => {
+          /**
+           * 完了日は**粒度どおりに、日本時間で**描く（#279）。
+           *
+           * サーバーで描くので**閲覧者の時間帯が分からない。**
+           * このページは JavaScript 無しで読めることを優先しているので、
+           * `formatCompletedOn` が日本時間で決め打つ（画面・書き出しと同じもの）。
+           *
+           * 🔴 **日付なしの完了では空になり、欄そのものを出さない。**
+           * 完了は打ち消し線・番号の色・達成数が伝えている（2026-08-14 の判断、#279）
+           */
+          const completedOn = formatCompletedOn(
+            item.completedAt === null ? null : new Date(item.completedAt),
+            item.completedPrecision,
+          )
+
+          return html`
             <li class="${item.completed ? 'done' : ''}">
               <span class="number">${String(index + 1).padStart(3, '0')}</span>
               <span class="text">${item.text}</span>
-              ${
-                item.completedAt === null
-                  ? raw('')
-                  : html`<span class="date">${formatCompletedAt(item.completedAt)}</span>`
-              }
+              ${completedOn === '' ? raw('') : html`<span class="date">${completedOn}</span>`}
             </li>
-          `,
-        )}
+          `
+        })}
       </ol>
 
       ${invite()}

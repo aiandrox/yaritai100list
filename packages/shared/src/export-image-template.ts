@@ -1,7 +1,7 @@
 import type { ExportImagePayload } from './export-image'
 import { ITEMS_PER_LIST_MAX } from './limits'
 import { OG_IMAGE_WIDTH, type OgElement } from './og-template'
-import { SERVICE_NAME, SERVICE_TAGLINE } from './service'
+import { SERVICE_NAME, SERVICE_TAGLINE, SERVICE_URL } from './service'
 
 /**
  * 画像出力のレイアウト（#190）。**4列 × 25行に 001〜100 を全部並べる。**
@@ -89,12 +89,37 @@ const COLUMN_WIDTH = (CONTENT_WIDTH - COLUMN_GAP * (COLUMNS - 1)) / COLUMNS
 const SERVICE_FONT_SIZE = 26
 
 /**
- * 見出しに使える幅。**サービス名の分を空けてある。**
+ * サービス名の下に置く URL の大きさ（#274）。
  *
- * 🔴 **空ける幅を手で書かない。** サービス名の実際の幅から引く。
- * 決め打ちにすると、名前が変わったときに**見出しと重なる**（気づくのは画像を見たときだけ）。
+ * **名前より小さく。** 主役はリストの中身で、URL は「どこで作れるか」の注記でしかない。
  */
-const TITLE_MAX_WIDTH = CONTENT_WIDTH - (displayWidth(SERVICE_NAME) * SERVICE_FONT_SIZE) / 2 - 48
+const SERVICE_URL_FONT_SIZE = 18
+
+/** その文字列を、その大きさで描いたときの幅（px）。 */
+function textWidth(value: string, fontSize: number): number {
+  return (displayWidth(value) * fontSize) / 2
+}
+
+/**
+ * 右上のかたまり（サービス名と URL）の幅。**広い方に合わせる。**
+ *
+ * 🔴 **URL の方が広いことがある。** `yaritai100list.aiandrox.workers.dev` は
+ * 半角35文字あるので、名前より小さい字でも横に長い。
+ * 名前の幅だけで空けると、**長い見出しのときに重なる。**
+ */
+const HEADER_RIGHT_WIDTH = Math.max(
+  textWidth(SERVICE_NAME, SERVICE_FONT_SIZE),
+  textWidth(SERVICE_URL, SERVICE_URL_FONT_SIZE),
+)
+
+/**
+ * 見出しに使える幅。**右上のかたまりの分を空けてある。**
+ *
+ * 🔴 **空ける幅を手で書かない。** 実際に描かれる幅から引く。
+ * 決め打ちにすると、名前や URL が変わったときに**見出しと重なる**
+ * （気づくのは画像を見たときだけ）。
+ */
+const TITLE_MAX_WIDTH = CONTENT_WIDTH - HEADER_RIGHT_WIDTH - 48
 
 /**
  * 見出しの大きさの候補。**大きい方から試す。**
@@ -262,10 +287,19 @@ export function buildExportImageTemplate(payload: ExportImagePayload): OgElement
     [
       element({ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '40px' }, [
         element({ fontSize: title.fontSize, fontWeight: 700 }, title.text),
-        element(
-          { fontSize: SERVICE_FONT_SIZE, fontWeight: 700, color: COLORS.brandDeep },
-          SERVICE_NAME,
-        ),
+
+        /*
+         * 右上はサービス名と URL の2行（#274）。
+         * 🔴 **URL を落とさないこと。** これが**貼られた画像から戻ってくる唯一の道**で、
+         * 共有ページは検索に載せていない（`SERVICE_URL` のコメント）
+         */
+        element({ flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }, [
+          element(
+            { fontSize: SERVICE_FONT_SIZE, fontWeight: 700, color: COLORS.brandDeep },
+            SERVICE_NAME,
+          ),
+          element({ fontSize: SERVICE_URL_FONT_SIZE, color: COLORS.muted }, SERVICE_URL),
+        ]),
       ]),
 
       element({ flexGrow: 1, gap: `${String(COLUMN_GAP)}px` }, columns),

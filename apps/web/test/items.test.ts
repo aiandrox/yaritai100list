@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { COMPLETED_PRECISIONS } from '@yaritai100list/shared'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -39,6 +40,8 @@ describe('items テーブル', () => {
 
     // 完了は真偽値ではなく日時（PRODUCT_SPEC.md §3）。未完了は NULL
     expect(row?.completedAt).toBeNull()
+    // 粒度も NULL で始まる。**未完了はこの列が NULL であること**（#279）
+    expect(row?.completedPrecision).toBeNull()
     expect(row?.text).toBe('南極に行く')
     expect(row?.position).toBe(0)
   })
@@ -62,11 +65,21 @@ describe('items テーブル', () => {
     const listId = await createTestList()
     const completedAt = new Date(1_700_000_000_000)
 
-    await db.insert(items).values({ id: 'item-1', listId, text: 'x', position: 0, completedAt })
+    // 🔴 **粒度も一緒に入れる**（#279）。日時だけを入れる行は DB が拒否する
+    // （下の「完了日の粒度」のテスト）
+    await db.insert(items).values({
+      id: 'item-1',
+      listId,
+      text: 'x',
+      position: 0,
+      completedAt,
+      completedPrecision: 'day',
+    })
 
     const [row] = await db.select().from(items)
 
     expect(row?.completedAt?.getTime()).toBe(1_700_000_000_000)
+    expect(row?.completedPrecision).toBe('day')
   })
 
   describe('属するリスト（list_id）', () => {
@@ -147,6 +160,104 @@ describe('items テーブル', () => {
       ])
 
       expect(await db.select().from(items)).toHaveLength(2)
+    })
+  })
+
+  /**
+   * 完了日の粒度（#279）。**DB でも組み合わせを止める**（マイグレーション 0016）。
+   *
+   * 止めているのはトリガー。SQLite は既存の表に CHECK を後から足せないため
+   * （`0006` の件数上限と同じ折り合い）。
+   */
+  describe('完了日の粒度（completed_precision）', () => {
+    /** 生 SQL で入れる。**型を迂回して、DB 側が止めることを確かめる** */
+    const insertRaw = (listId: string, completedAt: number | null, precision: string | null) =>
+      env.DB.prepare(
+        'insert into items (id, list_id, text, position, completed_at, completed_precision) values (?, ?, ?, ?, ?, ?)',
+      )
+        .bind(crypto.randomUUID(), listId, '南極に行く', 0, completedAt, precision)
+        .run()
+
+    it('未完了・日付なし・日付ありの3通りは入る', async () => {
+      const listId = await createTestList()
+
+      await insertRaw(listId, null, null)
+      await insertRaw(listId, null, 'unknown')
+      await insertRaw(listId, 1_700_000_000_000, 'day')
+
+      expect(await testDb().select().from(items)).toHaveLength(3)
+    })
+
+    it('🔴 日付なしの完了に日時を持たせられない', async () => {
+      const listId = await createTestList()
+
+      await expect(insertRaw(listId, 1_700_000_000_000, 'unknown')).rejects.toThrow(
+        /invalid completed_precision/,
+      )
+    })
+
+    it('🔴 未完了（粒度なし）に日時を持たせられない', async () => {
+      // ここを許すと「完了していないのに完了日がある」行ができ、
+      // #279 より前のデータと見分けが付かなくなる
+      const listId = await createTestList()
+
+      await expect(insertRaw(listId, 1_700_000_000_000, null)).rejects.toThrow(
+        /invalid completed_precision/,
+      )
+    })
+
+    it('🔴 日付のある粒度は日時が必須', async () => {
+      const listId = await createTestList()
+
+      for (const precision of ['day', 'month', 'year']) {
+        await expect(insertRaw(listId, null, precision)).rejects.toThrow(
+          /invalid completed_precision/,
+        )
+      }
+    })
+
+    it('🔴 知らない粒度は入らない', async () => {
+      const listId = await createTestList()
+
+      await expect(insertRaw(listId, null, 'decade')).rejects.toThrow(/invalid completed_precision/)
+    })
+
+    it('🔴 update でも同じ形を保つ（経路が1つという前提に頼らない）', async () => {
+      const listId = await createTestList()
+      await insertRaw(listId, null, 'unknown')
+
+      const [row] = await testDb().select().from(items)
+
+      // 日時だけを入れる（粒度は unknown のまま）
+      await expect(
+        env.DB.prepare('update items set completed_at = ? where id = ?')
+          .bind(1_700_000_000_000, row?.id ?? '')
+          .run(),
+      ).rejects.toThrow(/invalid completed_precision/)
+
+      // 粒度だけを day にする（日時が無いまま）
+      await expect(
+        env.DB.prepare('update items set completed_precision = ? where id = ?')
+          .bind('day', row?.id ?? '')
+          .run(),
+      ).rejects.toThrow(/invalid completed_precision/)
+    })
+
+    it('🔴 DB が受け付ける粒度が COMPLETED_PRECISIONS と一致する', async () => {
+      // トリガーの SQL には粒度の値が直接書いてある（マイグレーション 0016）。
+      // 情報源は packages/shared の1箇所、という不変条件との折り合いとして、
+      // **ここで一致を固定する。** 値を増やすとこのテストが落ちるので、
+      // マイグレーションの追加を忘れられない
+      const listId = await createTestList()
+
+      for (const precision of COMPLETED_PRECISIONS) {
+        // 日付を持たない粒度は日時なし、持つ粒度は日時ありで入れる
+        const completedAt = precision === 'unknown' ? null : 1_700_000_000_000
+
+        await insertRaw(listId, completedAt, precision)
+      }
+
+      expect(await testDb().select().from(items)).toHaveLength(COMPLETED_PRECISIONS.length)
     })
   })
 

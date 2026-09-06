@@ -1,8 +1,10 @@
+import { isCompleted, parseCompletedOn, type Visibility } from '@yaritai100list/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from './api'
 import {
   addItem,
+  COMPLETION_WITHOUT_DATE,
   createEmptyList,
   hasAnythingToImport,
   LIST_STORAGE_KEY,
@@ -11,8 +13,10 @@ import {
   pickCurrentListId,
   removeItem,
   renameList,
+  NOT_COMPLETED,
   serializeList,
-  setItemCompletedAt,
+  setItemCompletion,
+  setItemMemo,
   toImportBody,
   toLocalList,
   updateItemText,
@@ -51,7 +55,36 @@ export type ListScreen =
    * **別のリストに切り替わったら入力欄の下書きを作り直す。**
    * 無いと、ログアウトしたのに前のタイトルが入力欄に残る（#102 で踏んだ）。
    */
-  | { status: 'ready'; key: string; list: LocalList; source: ListSource }
+  | (ReadyScreen & {
+      /**
+       * 共有の状態（#276）。**未ログイン（`source === 'local'`）では `null`。**
+       *
+       * 編集画面が持つのは**誘い方を決めるため**だけ
+       * （非公開なら設定へ、公開済みならその場で送れる）。
+       * ⚠️ **ここで公開範囲を変えない。** 変えるのは共有の設定の画面1箇所。
+       */
+      share: ShareState | null
+    })
+
+/** 共有の状態。**サーバーから取ったリストにだけ付く。** */
+export interface ShareState {
+  visibility: Visibility
+  shareId: string
+}
+
+/**
+ * `useList` の中で持っている形。**`share` を含まない。**
+ *
+ * 🔴 **画面の状態を作り直す場所が9箇所ある**（楽観更新のたびに作り直す）。
+ * `share` をそこに混ぜると、**1箇所でも書き忘れたら共有の状態が消える。**
+ * 別に持って、外に出すときに1回だけ足す。
+ */
+interface ReadyScreen {
+  status: 'ready'
+  key: string
+  list: LocalList
+  source: ListSource
+}
 
 /**
  * ブラウザの保存を取り込めたか。
@@ -74,9 +107,16 @@ export interface ListController {
   renameList: (title: string) => Promise<boolean>
   addItem: (text: string) => Promise<boolean>
   updateItemText: (id: string, text: string) => Promise<boolean>
+  /** メモを書き換える（#294）。**`null` で消す** */
+  changeMemo: (id: string, memo: string | null) => Promise<boolean>
   toggleItem: (item: Item) => Promise<boolean>
-  /** 完了日を直す（#207）。**完了済みの項目にしか使えない** */
-  changeCompletedAt: (id: string, completedAt: number) => Promise<boolean>
+  /**
+   * 完了日を入れる・直す・消す（#207 / #279）。**完了済みの項目にしか使えない。**
+   *
+   * 渡すのは `2026` / `2026-08` / `2026-08-14`（形が粒度を表す）。
+   * `null` は「日付なし」。
+   */
+  changeCompletedOn: (id: string, completedOn: string | null) => Promise<boolean>
   removeItem: (id: string) => Promise<boolean>
   /** 1つ分ずらす。`-1` で上、`+1` で下 */
   moveItem: (id: string, toIndex: number) => Promise<boolean>
@@ -93,7 +133,17 @@ export function useList(
   session: SessionState,
   requestedListId: string | null = null,
 ): ListController {
-  const [screen, setScreen] = useState<ListScreen>({ status: 'loading' })
+  const [screen, setScreen] = useState<Exclude<ListScreen, { status: 'ready' }> | ReadyScreen>({
+    status: 'loading',
+  })
+
+  /**
+   * 共有の状態（#276）。**サーバーから取り直したときだけ入れ替える。**
+   *
+   * 🔴 **公開範囲はこの画面から変わらない**（変えるのは共有の設定の画面）ので、
+   * 楽観更新のたびに持ち回らなくてよい。
+   */
+  const [share, setShare] = useState<ShareState | null>(null)
   const [storage, setStorage] = useState<LocalStorage>({ status: 'ok' })
   const [importOutcome, setImportOutcome] = useState<ImportOutcome>('none')
   const [rejection, setRejection] = useState<Rejection | null>(null)
@@ -169,6 +219,9 @@ export function useList(
       }
 
       const body = await res.json()
+
+      // 共有の状態は別に持つ（#276。`ReadyScreen` のコメント）
+      setShare({ visibility: body.list.visibility, shareId: body.list.shareId })
       setScreen({
         status: 'ready',
         key: body.list.id,
@@ -331,7 +384,11 @@ export function useList(
   }
 
   return {
-    screen,
+    // 共有の状態は**外に出すときに1回だけ足す**（#276。`ReadyScreen` のコメント）
+    screen:
+      screen.status === 'ready'
+        ? { ...screen, share: screen.source === 'server' ? share : null }
+        : screen,
     storage,
     importOutcome,
     rejection,
@@ -425,6 +482,27 @@ export function useList(
       }
     },
 
+    /**
+     * メモを書き換える（#294）。
+     *
+     * ⚠️ **未ログインでも書ける。** 完了（#77）とは違い、ログインの動機にしない。
+     * 保存先が localStorage になるだけで、画面の作りは同じ。
+     */
+    changeMemo: async (itemId, memo) => {
+      if (list === null) return false
+
+      const next = setItemMemo(list, itemId, memo)
+
+      return onServer
+        ? applyOptimistic(next, (id) =>
+            api.api.lists[':listId'].items[':itemId'].$patch({
+              param: { listId: id, itemId },
+              json: { memo },
+            }),
+          )
+        : applyLocal(next)
+    },
+
     updateItemText: async (itemId, text) => {
       if (list === null) return false
 
@@ -442,6 +520,9 @@ export function useList(
      * 完了にする / 取り消す。
      *
      * 🔴 **完了日時はサーバーが決める**（`src/index.ts` の `updateItemSchema`）。
+     * 付くのは**その日・粒度 `day`**（2026-08-15 の判断、#298。#279 の
+     * 「既定は日付なし」から戻した）。覚えていない場合は完了の設定で年を空にする。
+     *
      * 手元では**その端末の時計**で先に描くので、時計が狂っていると日付がずれて見える。
      * そこで送った後に取り直す（`applyOptimistic` の `resync`）。
      * 画面はもう変わっているので、**取り直しを待っても遅くは見えない。**
@@ -449,14 +530,21 @@ export function useList(
     toggleItem: async (item) => {
       if (list === null) return false
 
+      const completing = !isCompleted(item.completedPrecision)
+
       return (
         onServer &&
         applyOptimistic(
-          setItemCompletedAt(list, item.id, item.completedAt === null ? Date.now() : null),
+          setItemCompletion(
+            list,
+            item.id,
+            // 🔴 **時刻はここで作る**（`model.ts` は現在時刻を読まない）
+            completing ? { completedAt: Date.now(), completedPrecision: 'day' } : NOT_COMPLETED,
+          ),
           (id) =>
             api.api.lists[':listId'].items[':itemId'].$patch({
               param: { listId: id, itemId: item.id },
-              json: { completed: item.completedAt === null },
+              json: { completed: completing },
             }),
           true,
         )
@@ -465,25 +553,41 @@ export function useList(
     },
 
     /**
-     * 完了日の直し（#207）。
+     * 完了日を入れる・直す・消す（#207 / #279）。
      *
      * **未ログインでは呼ばれない。** 未ログインでは完了にできないので（#77）、
      * ブラウザ側に完了済みの項目が存在せず、直す対象が無い。
      *
-     * 送るのは ISO の日時。**サーバーが未来を弾く**ので、
+     * 送るのは `2026` / `2026-08` / `2026-08-14` の形（粒度は形が表す）。
+     * `null` で**日付なしに戻す**（完了は取り消さない）。
+     *
+     * **サーバーが未来と読めない値を弾く**ので、
      * ここで弾けたつもりにならない（画面側の `max` は親切のためだけ）。
      */
-    changeCompletedAt: async (itemId, completedAt) => {
+    changeCompletedOn: async (itemId, completedOn) => {
       if (list === null) return false
+
+      /**
+       * 手元の値は**同じ規則で組み立てる**（`parseCompletedOn`）。
+       * サーバーと別の計算で先に描くと、取り直したときに日付が飛ぶ。
+       * 読めない値は送らない（画面側でも `validity` で止めているが、ここでも止める）。
+       */
+      const parsed = completedOn === null ? null : parseCompletedOn(completedOn)
+      if (completedOn !== null && parsed === null) return false
+
+      const completion =
+        parsed === null
+          ? COMPLETION_WITHOUT_DATE
+          : { completedAt: parsed.at.getTime(), completedPrecision: parsed.precision }
 
       // ここは**送る値をこちらが決めている**ので、取り直さなくてもずれない。
       // 未来を弾かれたら失敗になり、そのとき取り直して戻る
       return (
         onServer &&
-        applyOptimistic(setItemCompletedAt(list, itemId, completedAt), (id) =>
+        applyOptimistic(setItemCompletion(list, itemId, completion), (id) =>
           api.api.lists[':listId'].items[':itemId'].$patch({
             param: { listId: id, itemId },
-            json: { completedAt: new Date(completedAt).toISOString() },
+            json: { completedOn },
           }),
         )
       )

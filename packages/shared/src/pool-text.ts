@@ -68,11 +68,6 @@ export const genreSlugSchema = z.enum(
   BROWSABLE_GENRES.map((genre) => genre.slug) as [string, ...string[]],
 )
 
-/** そのスラッグの表示名。知らないものは `undefined`。 */
-export function genreLabel(slug: string): string | undefined {
-  return GENRES.find((genre) => genre.slug === slug)?.label
-}
-
 /**
  * AI に返させる形。
  *
@@ -109,8 +104,14 @@ export const poolJudgementSchema = z.object({
  *
  * - 1: 最初（#253）。**この列より前なので、本番の行は null になっている**
  * - 2: 一般化しすぎるのを止めた（#264）
+ * - 3: 化けた漢字を弾くガードを足した（#336）。プロンプトにも一文だけ足したが、
+ *   担保はコード側（`garbles`）。版を上げるのは、本番に残った化け行を
+ *   `selectUnjudged` に拾い直させるため
+ * - 4: 漢字→でたらめなかな／別のカタカナ語の化けも弾くようにした（#340）。
+ *   「AIで何か作る」→「AIでなぜまを作る」のような、新しい漢字を伴わない化けが
+ *   v3 のガードを素通りしていた。v3 で判定済みの行も拾い直すため版を上げる
  */
-export const POOL_JUDGE_PROMPT_VERSION = 2
+export const POOL_JUDGE_PROMPT_VERSION = 4
 
 /**
  * AI に渡す指示。**プロンプトを画面やハンドラに散らさない。**
@@ -186,6 +187,7 @@ export function poolJudgementPrompt(): string {
     '   （「〜できるようになる」「〜をマスターする」）、外来語の表記（YouTube）。',
     '',
     '   🔴 **分からない言葉を、知っている別の言葉に置き換えないこと。**',
+    '   🔴 **入力に無い漢字やかなの塊を新しく作らないこと**（末尾に足す動詞は除く）。',
     '',
     '   ❌ 「1日スマホなしでどこかに行く」→「スマホをやめる」（まったく別のこと）',
     '   ❌ 「AIで何かを作る」→「AIで作る」（何を作るのか分からない）',
@@ -273,8 +275,69 @@ function losesMeaning(canonical: string, normalized: string): boolean {
   return (
     isTruncation(canonical, normalized) ||
     dropsMastery(canonical, normalized) ||
-    swapsSubject(canonical, normalized)
+    swapsSubject(canonical, normalized) ||
+    garbles(canonical, normalized)
   )
+}
+
+/**
+ * 代表表現が、元の文の言葉を化けた別の文字列に置き換えているか（#336 / #340）。
+ *
+ * 🔴 **小型モデルは canonical を作るとき、元の言葉を化けさせることがある。**
+ * 本番で観測した例（→ の右が化けた canonical）:
+ * - 「結婚する」→「感品する」（漢字→別の漢字）
+ * - 「海の近くで魚を食べる」→「海の载くで鱼を食べる」（簡体字が混じる）
+ * - 「AIで何か作る」→「AIでなぜまを作る」（漢字→でたらめなかな）
+ * - 「新しい友達を作る」→「フレンドを作る」（漢字語→別のカタカナ語＋修飾語の脱落）
+ *
+ * 見分けかた: **元にあった漢字が消え、かつ**
+ * - **元に無い漢字が現れている**（漢字→別漢字。#336）、または
+ * - **元に無いかな／カナの3文字以上のかたまりが現れている**（漢字→かな。#340）
+ *
+ * 正しい書き換えはこうならない:
+ * - 体言止めに動詞を足すだけ（「ピラミッド」→「ピラミッドに行く」）は、消える漢字が無い
+ * - 「グランピング」→「グランピングをする」も、消える漢字が無い
+ * - 「富士山登頂」→「富士山に登る」は「頂」が消えるが、増えるかなは「に」「る」の1文字ずつ
+ *
+ * ⚠️ **1〜2文字のかな増加は見ない。** 送り仮名・助詞は正しい書き換えでも変わる。
+ * 3文字以上の新しいかたまりだけを化けとみなす。
+ *
+ * ⚠️ **止めても害が無い**のは #264 のガード群と同じ。元の本文が出るだけ。
+ * 「勉強をする」→「学ぶ」のような言い換えも巻き添えで元に戻るが、
+ * #264 の「まとめ損ねる害 < 意味が変わる害」で許容。
+ */
+function garbles(canonical: string, normalized: string): boolean {
+  const kanjiSet = (value: string) => new Set(Array.from(value).filter(isKanji))
+  const before = kanjiSet(normalized)
+  const after = kanjiSet(canonical)
+
+  const droppedKanji = [...before].some((char) => !after.has(char))
+  if (!droppedKanji) return false
+
+  const addedKanji = [...after].some((char) => !before.has(char))
+  if (addedKanji) return true
+
+  return hasNovelKanaRun(canonical, normalized)
+}
+
+const KANJI_PATTERN = /\p{Script=Han}/u
+const KANA_RUN_PATTERN = /[\p{Script=Hiragana}\p{Script=Katakana}ー]+/gu
+
+function isKanji(char: string): boolean {
+  return KANJI_PATTERN.test(char)
+}
+
+/**
+ * 代表表現に、元の文のどこにも無いかな／カナの3文字以上の並びがあるか（#340）。
+ *
+ * 「AIで何か作る」→「AIでなぜまを作る」の「なぜまを」、
+ * 「新しい友達を作る」→「フレンドを作る」の「フレンド」を拾う。
+ * 「をする」のような正しい語尾は、消える漢字が無いので `garbles` のこの枝に来ない。
+ */
+function hasNovelKanaRun(canonical: string, normalized: string): boolean {
+  const runs = canonical.match(KANA_RUN_PATTERN) ?? []
+
+  return runs.some((run) => run.length >= 3 && !normalized.includes(run))
 }
 
 /**

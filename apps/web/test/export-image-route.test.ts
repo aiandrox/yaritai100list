@@ -48,7 +48,9 @@ async function createList(headers: Headers, userId: string, rows: string[] = ['�
         listId: id,
         text,
         position,
+        // 粒度も一緒に入れる（#279。DB が組み合わせを縛っている）
         completedAt: position === 0 ? new Date() : null,
+        completedPrecision: position === 0 ? ('day' as const) : null,
       })),
     )
   }
@@ -69,8 +71,8 @@ describe('buildExportImagePayload', () => {
     const payload = buildExportImagePayload(
       { title: '人生でやりたいことリスト' },
       [
-        { text: '南極に行く', completedAt: new Date() },
-        { text: 'オーロラを見る', completedAt: null },
+        { text: '南極に行く', completedPrecision: 'day' },
+        { text: 'オーロラを見る', completedPrecision: null },
       ],
       now,
     )
@@ -80,6 +82,17 @@ describe('buildExportImagePayload', () => {
       { text: '南極に行く', completed: true },
       { text: 'オーロラを見る', completed: false },
     ])
+  })
+
+  // 🔴 日付なしの完了（#279）が画像の上で未完了になっていないこと
+  it('日付を覚えていない完了も「やった」印が付く', () => {
+    const payload = buildExportImagePayload(
+      { title: '人生でやりたいことリスト' },
+      [{ text: '南極に行く', completedPrecision: 'unknown' }],
+      now,
+    )
+
+    expect(payload.items).toEqual([{ text: '南極に行く', completed: true }])
   })
 
   it('期限が入る', () => {

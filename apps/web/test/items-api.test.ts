@@ -1,5 +1,11 @@
 import { exports } from 'cloudflare:workers'
-import { ITEM_TEXT_MAX_LENGTH, ITEMS_PER_LIST_MAX } from '@yaritai100list/shared'
+import {
+  COMPLETED_ON_TIME_ZONE_OFFSET_MS,
+  ITEM_MEMO_MAX_LENGTH,
+  ITEM_TEXT_MAX_LENGTH,
+  ITEMS_PER_LIST_MAX,
+  toCompletedOn,
+} from '@yaritai100list/shared'
 import { asc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 
@@ -181,6 +187,78 @@ describe('項目の変更', () => {
     expect(row?.text).toBe('北極に行く')
   })
 
+  /** メモ（#294）。**理由・補足・叶えたときのこと。** */
+  describe('メモ', () => {
+    const patchMemo = (headers: Headers, id: string, memo: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { memo }))
+
+    const memoOf = async (id: string) => {
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+
+      return row?.memo
+    }
+
+    it('書ける・読み戻せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, '大学の頃から登りたかった')).status).toBe(200)
+      expect(await memoOf(id)).toBe('大学の頃から登りたかった')
+    })
+
+    it('本文と一緒に送れる（別の操作にしない）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      const res = await request(
+        `/api/lists/my-list/items/${id}`,
+        json(me.headers, 'PATCH', { text: '富士山に登頂する', memo: 'ご来光が見たい' }),
+      )
+
+      expect(res.status).toBe(200)
+
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      expect(row?.text).toBe('富士山に登頂する')
+      expect(row?.memo).toBe('ご来光が見たい')
+    })
+
+    it('null で消せる', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, null)).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 空文字は null に寄せる（「書いていない」の表し方を1つにする）', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+      await patchMemo(me.headers, id, 'あとで消す')
+
+      expect((await patchMemo(me.headers, id, '   ')).status).toBe(200)
+      expect(await memoOf(id)).toBeNull()
+    })
+
+    it('🔴 上限を超えたら断る', async () => {
+      const { me } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH))).status).toBe(200)
+      expect((await patchMemo(me.headers, id, 'あ'.repeat(ITEM_MEMO_MAX_LENGTH + 1))).status).toBe(
+        400,
+      )
+    })
+
+    it('🔴 他人の項目のメモは書き換えられない', async () => {
+      const { me, other } = await twoUsers()
+      const id = await addItem(me.headers, 'my-list', '富士山に登る')
+
+      expect((await patchMemo(other.headers, id, '書き換え')).status).toBe(404)
+      expect(await memoOf(id)).toBeNull()
+    })
+  })
+
   /** 共有で見せない設定（#237）。 */
   describe('共有で見せない設定', () => {
     it('隠せる・戻せる', async () => {
@@ -235,28 +313,41 @@ describe('項目の変更', () => {
     })
   })
 
-  it('完了にすると日時が入り、取り消すと消える', async () => {
+  /**
+   * 完了そのもの。
+   *
+   * 🔴 **完了日時はサーバーが決める**（2026-08-15、#298）。付くのは**その日・粒度 `day`**。
+   * #279 で一度「日付なし」を既定にしたが、**ふつうの完了で毎回日付を入れる手数が多く、
+   * 戻した**（覚えていない場合は完了の設定で年を空にする）。
+   */
+  it('🔴 完了にすると、その日の日時と粒度 day が入る', async () => {
     const { me } = await twoUsers()
     const id = await addItem(me.headers, 'my-list', '南極に行く')
+    const before = Date.now()
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: true }))
     const [done] = await testDb().select().from(items).where(eq(items.id, id))
-    expect(done?.completedAt).toBeInstanceOf(Date)
+    expect(done?.completedPrecision).toBe('day')
+    expect(done?.completedAt?.getTime()).toBeGreaterThanOrEqual(before)
+    expect(done?.completedAt?.getTime()).toBeLessThanOrEqual(Date.now())
 
     await request(`/api/lists/my-list/items/${id}`, json(me.headers, 'PATCH', { completed: false }))
     const [undone] = await testDb().select().from(items).where(eq(items.id, id))
+    expect(undone?.completedPrecision).toBeNull()
+    // 🔴 **取り消したら日時も消える**（粒度なしに日時が残る行は DB が拒否する）
     expect(undone?.completedAt).toBeNull()
   })
 
   /**
-   * 完了日の直し（#207）。
+   * 完了日を入れる・直す（#207 / #279）。
    *
-   * 🔴 境目は「**初回か、直しか**」。
-   * 完了にする瞬間の日時はサーバーが決めるが、後からの直しは持ち主が決める。
-   * この区別が崩れると「好きな過去日を指定して完了にする」ができてしまう。
+   * 🔴 境目は「**完了にする**」と「**いつ叶えたか**」の2段。
+   * 完了していない項目に日付だけを入れさせない（粒度の付かない行を作らせない）。
+   *
+   * 送るのは `completedOn`。**形が粒度を表す**（`2026` / `2026-08` / `2026-08-14`）。
    */
   describe('完了日の直し', () => {
-    /** 完了済みの項目を1つ作って ID を返す。 */
+    /** 完了済み（その日・粒度 `day`）の項目を1つ作って ID を返す。 */
     async function completedItem(headers: Headers): Promise<string> {
       const id = await addItem(headers, 'my-list', '南極に行く')
       await request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completed: true }))
@@ -264,44 +355,127 @@ describe('項目の変更', () => {
       return id
     }
 
-    const patchCompletedAt = (headers: Headers, id: string, completedAt: unknown) =>
-      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completedAt }))
+    const patchCompletedOn = (headers: Headers, id: string, completedOn: unknown) =>
+      request(`/api/lists/my-list/items/${id}`, json(headers, 'PATCH', { completedOn }))
 
-    it('完了済みなら日時を直せる', async () => {
+    const rowOf = async (id: string) => {
+      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+
+      return row
+    }
+
+    it('日まで入れられる。粒度は day', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(me.headers, id, '2020-05-03')
 
       expect(res.status).toBe(200)
 
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.toISOString()).toBe('2020-05-03T04:05:06.000Z')
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('day')
+      // 🔴 **日本時間の 00:00 で持つ**（#279）。共有ページ（Asia/Tokyo）で同じ日に出る
+      expect(row?.completedAt?.toISOString()).toBe('2020-05-02T15:00:00.000Z')
     })
 
-    it('🔴 未来の日時は拒否される', async () => {
+    it('年だけ入れられる。その年の頭（日本時間）を持つ', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      // 端末の時計は狂っていることがある。「まだ来ていない日に叶えた」にさせない
-      const res = await patchCompletedAt(me.headers, id, '2100-01-01T00:00:00.000Z')
+      expect((await patchCompletedOn(me.headers, id, '2020')).status).toBe(200)
 
-      expect(res.status).toBe(400)
-
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.getFullYear()).not.toBe(2100)
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('year')
+      expect(row?.completedAt?.toISOString()).toBe('2019-12-31T15:00:00.000Z')
     })
 
-    it('🔴 完了していない項目には入れられない（初回はサーバーが決める）', async () => {
+    it('年月だけ入れられる。その月の頭（日本時間）を持つ', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      expect((await patchCompletedOn(me.headers, id, '2020-05')).status).toBe(200)
+
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('month')
+      expect(row?.completedAt?.toISOString()).toBe('2020-04-30T15:00:00.000Z')
+    })
+
+    it('🔴 null で日付なしに戻せる。完了は取り消さない', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+      await patchCompletedOn(me.headers, id, '2020-05-03')
+
+      expect((await patchCompletedOn(me.headers, id, null)).status).toBe(200)
+
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('unknown')
+      expect(row?.completedAt).toBeNull()
+    })
+
+    /**
+     * 日本時間の暦日（`YYYY-MM-DD`）。**サーバーと同じ変換**（#300）。
+     *
+     * `toCompletedOn` は日付ありの粒度なら必ず返すが、型は `null` を含む。
+     * **黙って別の値に倒さない**（倒すと、間違った日付で通ったのか分からなくなる）。
+     */
+    const jstDay = (at: Date): string => {
+      const value = toCompletedOn(at, 'day')
+      if (value === null) throw new Error('日付を作れなかった')
+
+      return value
+    }
+
+    it('🔴 未来は拒否される（来年・来月・明日）', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      /*
+       * 🔴 **日付は日本時間で組み立てる**（#300）。
+       * サーバーは完了日を**日本時間の暦日**として読む（#279）ので、
+       * UTC で「明日」を作ると、**UTC 15:00〜24:00（日本時間の 0〜9時）の間だけ
+       * それが JST では過去になり、正しく通ってしまう。**
+       *
+       * 判定の基準を2箇所に書かないよう、**サーバーと同じ `toCompletedOn`** を使う。
+       * ⚠️ `now + 24h` の JST 日付は、必ず**その日の頭が未来**になる（境目も安全）。
+       */
+      const now = new Date()
+      const jstNow = new Date(now.getTime() + COMPLETED_ON_TIME_ZONE_OFFSET_MS)
+      const nextYear = String(jstNow.getUTCFullYear() + 1)
+      const nextDay = jstDay(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+
+      for (const value of [nextYear, `${nextYear}-01`, nextDay]) {
+        expect((await patchCompletedOn(me.headers, id, value)).status).toBe(400)
+      }
+
+      // 弾かれたので、✓ を押したときの日付（今日・粒度 day）のまま
+      const row = await rowOf(id)
+      expect(row?.completedPrecision).toBe('day')
+      expect(jstDay(row?.completedAt ?? new Date(0))).toBe(jstDay(now))
+    })
+
+    it('今年・今月・今日は通る（期間の頭で判定するため）', async () => {
+      const { me } = await twoUsers()
+      const id = await completedItem(me.headers)
+
+      // 日本時間の今日から組み立てる（上の「未来は拒否される」と同じ理由。#300）
+      const todayJst = jstDay(new Date())
+
+      expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 4))).status).toBe(200)
+      expect((await patchCompletedOn(me.headers, id, todayJst.slice(0, 7))).status).toBe(200)
+      expect((await patchCompletedOn(me.headers, id, todayJst)).status).toBe(200)
+    })
+
+    it('🔴 完了していない項目には入れられない', async () => {
       const { me } = await twoUsers()
       const id = await addItem(me.headers, 'my-list', '南極に行く')
 
-      const res = await patchCompletedAt(me.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(me.headers, id, '2020-05-03')
 
       expect(res.status).toBe(409)
 
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
+      const row = await rowOf(id)
       expect(row?.completedAt).toBeNull()
+      expect(row?.completedPrecision).toBeNull()
     })
 
     it('🔴 completed と同時には送れない', async () => {
@@ -310,32 +484,41 @@ describe('項目の変更', () => {
 
       const res = await request(
         `/api/lists/my-list/items/${id}`,
-        json(me.headers, 'PATCH', { completed: false, completedAt: '2020-05-03T04:05:06.000Z' }),
+        json(me.headers, 'PATCH', { completed: false, completedOn: '2020-05-03' }),
       )
 
       expect(res.status).toBe(400)
     })
 
-    it('🔴 日時として読めない値は拒否される', async () => {
+    it('🔴 読めない値は拒否される', async () => {
       const { me } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      // 旧実装は epoch ms を受け取る形だった。数値のまま通さない
-      expect((await patchCompletedAt(me.headers, id, 4_102_444_800_000)).status).toBe(400)
-      expect((await patchCompletedAt(me.headers, id, '2020-05-03')).status).toBe(400)
-      expect((await patchCompletedAt(me.headers, id, null)).status).toBe(400)
+      for (const bad of [
+        4_102_444_800_000, // 旧実装は epoch ms だった
+        '2020-05-03T04:05:06.000Z', // #279 より前の形（日時）
+        '2026-02-30', // 存在しない日
+        '2026-13-01',
+        '1899', // 1900年より前
+        '20-05-03',
+        'あした',
+        '',
+      ]) {
+        expect((await patchCompletedOn(me.headers, id, bad)).status).toBe(400)
+      }
+
+      // 何も変わっていない（✓ を押したときの粒度のまま）
+      expect((await rowOf(id))?.completedPrecision).toBe('day')
     })
 
     it('🔴 他人の項目の完了日は直せない', async () => {
       const { me, other } = await twoUsers()
       const id = await completedItem(me.headers)
 
-      const res = await patchCompletedAt(other.headers, id, '2020-05-03T04:05:06.000Z')
+      const res = await patchCompletedOn(other.headers, id, '2020-05-03')
 
       expect(res.status).toBe(404)
-
-      const [row] = await testDb().select().from(items).where(eq(items.id, id))
-      expect(row?.completedAt?.getFullYear()).not.toBe(2020)
+      expect((await rowOf(id))?.completedAt?.getFullYear()).not.toBe(2020)
     })
   })
 

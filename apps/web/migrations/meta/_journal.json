@@ -113,6 +113,34 @@
       "when": 1786397737159,
       "tag": "0015_add_prompt_version",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1786695695420,
+      "tag": "0016_add_items_completed_precision",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1786749395379,
+      "tag": "0017_add_items_memo",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788226684365,
+      "tag": "0018_add_agreements",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1788248102362,
+      "tag": "0019_drop_agreements",
+      "breakpoints": true
     }
   ]
 }

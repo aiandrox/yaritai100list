@@ -12,8 +12,67 @@
  */
 export const SERVICE_NAME = 'やりたいことリスト100'
 
-/** 英語名。リポジトリ名とホスト名に対応する。 */
-export const SERVICE_NAME_EN = 'yaritai100list'
+/**
+ * 見せる用の URL。**書き出し画像に入れる**（#274）。
+ *
+ * 🔴 **貼られた画像から戻ってくる道がこれしかない。**
+ * 共有ページは `noindex`（`PRODUCT_SPEC.md` §5.1）なので、
+ * サービス名だけ入れても検索では辿り着けない
+ * （「やりたいことリスト100」は他所でも使われている言葉）。
+ *
+ * ⚠️ **ここに書いてよいのは、変わらないと決めてあるから。**
+ * `workers.dev` のサブドメインは**変更しない**（変えると共有リンクが死ぬ。
+ * `docs/console-settings.md`）。カスタムドメインも使わない（`TECH_STACK.md` §8）。
+ *
+ * 🔴 **`https://` を付けない。** 画像に載せる表示用の文字列で、
+ * リンクとして押せるわけではない。**短いほど邪魔にならない。**
+ */
+export const SERVICE_URL = 'yaritai100list.aiandrox.workers.dev'
+
+/**
+ * 運営者（#304）。**利用規約とプライバシーポリシーに出す。**
+ *
+ * 🔴 **本名と住所は出さない**（2026-08-15 の判断）。無償の個人サービスで取引が無いため、
+ * 特定商取引法の表記義務（氏名・住所）はかからない。
+ * 連絡は問い合わせフォーム（`CONTACT_FORM_URL`）で受ける。
+ */
+export const OPERATOR_NAME = 'END'
+export const OPERATOR_HANDLE = '@aiandrox'
+export const OPERATOR_URL = 'https://x.com/aiandrox'
+
+/**
+ * 問い合わせ窓口（#304）。**Google フォーム。**
+ *
+ * 🔴 **埋め込まずにリンクにする**（2026-08-15 の判断）。iframe は
+ * **高さが自動で合わず**、モバイルで二重スクロールになる（主対象がモバイル縦1カラム）。
+ *
+ * ⚠️ **ここを唯一の情報源にする。** 画面に URL を直書きしない。
+ * フォームを作り直したら、この1行だけ差し替える。
+ */
+export const CONTACT_FORM_URL = 'https://forms.gle/B4ZPTdQife4LfHJt5'
+
+/**
+ * 規約・ポリシーの制定日（#304）。**画面の末尾に出しているのはこの値。**
+ *
+ * 🔴 **ISO で持つ。** 表示用の文字列は `formatLegalDate` が作る。
+ * **表示用と判定用を別々に持たない**（2つあると必ずずれる）。
+ *
+ * ⚠️ **中身を変えたら日付も変える。** 読む人が
+ * **「前に読んだときから変わったか」を見分ける手がかりがこれしか無い。**
+ * ただし**誤字の修正では動かさない**（変わっていないのに変わったと見える）。
+ */
+export const LEGAL_EFFECTIVE_DATE = '2026-09-01'
+
+/** `2026-08-21` → `2026年8月21日`。**画面に出すのはこちら。** */
+export function formatLegalDate(value: string): string {
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  const [, year, month, day] = parsed ?? []
+
+  // 読めない形はそのまま返す。**黙って別の日付にしない**
+  if (year === undefined || month === undefined || day === undefined) return value
+
+  return `${year}年${String(Number(month))}月${String(Number(day))}日`
+}
 
 /**
  * サービスを一言で言ったもの。**OGP 画像に載せる**（#229）。
@@ -47,7 +106,7 @@ export const SERVICE_DESCRIPTION = `${SERVICE_TAGLINE}ログインなしで始�
  * サービス名「やりたいことリスト100」と紛れないよう、頭に「人生で」を付けている
  * （`PRODUCT_SPEC.md` §7 未決 #10 への対応）。
  *
- * 12文字あり `LIST_TITLE_MAX_LENGTH`（15）に収まっているが余裕は3文字。
+ * 12文字あり `LIST_TITLE_MAX_LENGTH`（30）に収まっている。
  * 上限を下げるときはここが先に破れる（テストで固定してある）。
  */
 export const DEFAULT_LIST_TITLE = '人生でやりたいことリスト'
@@ -72,6 +131,6 @@ export const SHARE_HIDDEN_ITEM_LABEL = '（非公開）'
  * 一生分のリストという意味を持たせている。こちらは用途別に増やす2つ目以降なので、
  * **中身が決まっていないことが分かる名前**にする。
  *
- * 12文字。`LIST_TITLE_MAX_LENGTH`（15）に収まることはテストで固定してある。
+ * 12文字。`LIST_TITLE_MAX_LENGTH`（30）に収まることはテストで固定してある。
  */
 export const NEW_LIST_TITLE = '新しいやりたいことリスト'
