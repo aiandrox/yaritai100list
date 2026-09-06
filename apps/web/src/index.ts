@@ -40,7 +40,7 @@ import { newId, newShareId } from './id'
 import { buildExportImagePayload, EXPORT_IMAGE_FILE_NAME, exportImageRequest } from './export-image'
 import { buildOgPayload, cacheControlFor, ogImageUrl, renderRequestUrl } from './og'
 import { rebuildPool } from './pool'
-import { judgeUnjudged, POOL_JUDGE_MODEL } from './pool-judge'
+import { createGeminiJudge, judgeUnjudged, POOL_JUDGE_MODEL, type PoolJudge } from './pool-judge'
 import { rateLimitCreates, rateLimitImages } from './rate-limit'
 import { renderSharePage, renderShareNotFound } from './share'
 import { sentryOptions, shouldReportRenderFailure, type SentryEnv } from './sentry'
@@ -1247,8 +1247,9 @@ app.onError((error, c) => {
 async function runPoolBatch(env: AppEnv['Bindings']): Promise<void> {
   const db = createDb(env.DB)
 
-  // テスト用の環境には AI バインディングが無い（`wrangler.jsonc` の `env.test`）
-  if (env.AI) await judgePool(db, env.AI)
+  // 🔴 **キーが無ければ判定はしない**（プールは古い判定のまま。テスト環境・未設定時）。
+  // 化けの実績から Gemini に移した（#342）。キーは `wrangler secret` の `GEMINI_API_KEY`
+  if (env.GEMINI_API_KEY) await judgePool(db, createGeminiJudge(env.GEMINI_API_KEY))
 
   try {
     const rows = await rebuildPool(db)
@@ -1261,16 +1262,17 @@ async function runPoolBatch(env: AppEnv['Bindings']): Promise<void> {
 }
 
 /** 判定を少しずつ埋める（#253）。**プールを作り直すのはここではない。** */
-async function judgePool(db: Db, ai: Ai): Promise<void> {
+async function judgePool(db: Db, judge: PoolJudge): Promise<void> {
   try {
-    const result = await judgeUnjudged(db, ai)
+    const result = await judgeUnjudged(db, judge)
     console.log(`pool-judge: judged=${String(result.judged)} failed=${String(result.failed)}`)
 
     /**
      * 🔴 **全部落ちたときだけ通知する**（#253）。
      *
-     * これは「**モデルが無くなった**」の形。実際、最初に選んだモデルは
-     * 非推奨になっていて `AiError 5028` で落ちた（2026-08-10）。
+     * これは「**モデルが無くなった / 鍵が切れた**」の形。実際、
+     * Workers AI の頃は選んだモデルが非推奨になって落ちたし（`AiError 5028`、2026-08-10）、
+     * Gemini でも `gemini-2.5-flash-lite` が提供終了で 404 になった（#342）。
      * **落ちても保存しないので誤った判定は焼き付かないが、判定が永久に進まない。**
      * ログは誰も見ないので、気づく手段がこれしかない。
      *
