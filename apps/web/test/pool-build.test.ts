@@ -116,6 +116,73 @@ describe('rebuildPool', () => {
     })
   })
 
+  /**
+   * 数量だけが違う代表表現をまとめる（#337 / 2026-09-06 の利用者の判断）。
+   *
+   * 🔴 **数字の並びを伏せたキーで束ねる。** 「まとめるのは数字以外が同じもの」だけ。
+   * 語尾や単位が違えば別のまま。埋め込みや AI は使わない。
+   */
+  describe('数量だけ違う代表表現をまとめる（#337）', () => {
+    it('🔴 「体重を70kgにする」「体重を65kgにする」が1行になる', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['体重を70kgにする'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['体重を65kgにする'] })
+      await runBatch()
+
+      // 見出しは束の中の min（毎回同じものを選ぶ）
+      expect(await readTable()).toEqual([
+        { canonical: '体重を65kgにする', genre: 'other', writers: 2 },
+      ])
+    })
+
+    it('🔴 まとまった行が両方の書き手を数えている', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['貯金を90万円にする'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['貯金を80万円にする'] })
+      await makeList({ id: 'p3', visibility: 'public', texts: ['貯金を80万円にする'] })
+      await runBatch()
+
+      expect((await readTable())[0]?.writers).toBe(3)
+    })
+
+    it('桁数が違っても同じ束になる（連桁を1つに畳む）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['貯金を100万円にする'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['貯金を10万円にする'] })
+      await runBatch()
+
+      expect(canonicals(await readTable())).toEqual(['貯金を100万円にする'])
+    })
+
+    it('🔴 単位が違えば別のまま（「50キロ歩く」と「75キロ」）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['50キロ歩く'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['75キロ'] })
+      await runBatch()
+
+      expect(canonicals(await readTable())).toEqual(['50キロ歩く', '75キロ'])
+    })
+
+    it('🔴 語尾が違えば別のまま（「カラオケで90点」と「カラオケで95点を取る」）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['カラオケで90点'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['カラオケで95点を取る'] })
+      await runBatch()
+
+      expect(await readTable()).toHaveLength(2)
+    })
+
+    it('数量を含まない代表表現は完全一致のまま（挙動を変えない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['オーロラを見る'] })
+      await makeList({ id: 'p2', visibility: 'public', texts: ['南極に行く'] })
+      await runBatch()
+
+      expect(canonicals(await readTable())).toEqual(['オーロラを見る', '南極に行く'])
+    })
+
+    it('🔴 数字だけの代表表現は潰さない（無関係なものが1行にならない）', async () => {
+      await makeList({ id: 'p1', visibility: 'public', texts: ['2024', '100'] })
+      await runBatch()
+
+      expect(canonicals(await readTable())).toEqual(['100', '2024'])
+    })
+  })
+
   describe('人数の数え方', () => {
     it('🔴 出すのは全公開の本文だけ、数えるのは全リスト', async () => {
       // 数える範囲を全公開だけにすると、公開リストが少ないうちは全部1人で順序が付かない

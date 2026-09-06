@@ -19,10 +19,14 @@ export const pool = sqliteTable(
   'pool',
   {
     /**
-     * 代表表現（`wish_texts.canonical`）。**名寄せの単位であり、画面に出る本文。**
+     * 代表表現（`wish_texts.canonical`）。**画面に出る本文。**
      *
      * 「富士山に登りたい」「富士山登頂」はどちらも `富士山に登る` に寄せてある。
      * だから**書いた人の本文がそのまま出るとは限らない。**
+     *
+     * ⚠️ **まとめる単位は代表表現そのものではない**（#337）。数量を伏せたキー
+     * （`src/pool.ts` の `familyKeyExpr`）で束ね、束の中の代表表現を `min()` で
+     * 1つ選んでここに入れる。「体重を70kgにする」「体重を65kgにする」は1行。
      */
     canonical: text('canonical').primaryKey(),
 
