@@ -104,8 +104,11 @@ export const poolJudgementSchema = z.object({
  *
  * - 1: 最初（#253）。**この列より前なので、本番の行は null になっている**
  * - 2: 一般化しすぎるのを止めた（#264）
+ * - 3: 化けた漢字を弾くガードを足した（#336）。プロンプトにも一文だけ足したが、
+ *   担保はコード側（`garblesKanji`）。版を上げるのは、本番に残った化け行を
+ *   `selectUnjudged` に拾い直させるため
  */
-export const POOL_JUDGE_PROMPT_VERSION = 2
+export const POOL_JUDGE_PROMPT_VERSION = 3
 
 /**
  * AI に渡す指示。**プロンプトを画面やハンドラに散らさない。**
@@ -181,6 +184,7 @@ export function poolJudgementPrompt(): string {
     '   （「〜できるようになる」「〜をマスターする」）、外来語の表記（YouTube）。',
     '',
     '   🔴 **分からない言葉を、知っている別の言葉に置き換えないこと。**',
+    '   🔴 **入力に無い漢字を新しく作らないこと**（末尾に足す動詞は除く）。',
     '',
     '   ❌ 「1日スマホなしでどこかに行く」→「スマホをやめる」（まったく別のこと）',
     '   ❌ 「AIで何かを作る」→「AIで作る」（何を作るのか分からない）',
@@ -268,8 +272,49 @@ function losesMeaning(canonical: string, normalized: string): boolean {
   return (
     isTruncation(canonical, normalized) ||
     dropsMastery(canonical, normalized) ||
-    swapsSubject(canonical, normalized)
+    swapsSubject(canonical, normalized) ||
+    garblesKanji(canonical, normalized)
   )
+}
+
+/**
+ * 代表表現が、元の文に無い漢字を作り出しているか（#336）。
+ *
+ * 🔴 **小型モデルは canonical を作るとき、漢字を別字に化けさせることがある。**
+ * 本番で観測した例（→ の右が化けた canonical）:
+ * - 「結婚する」→「感品する」
+ * - 「転職する」→「轉属する」
+ * - 「陶芸で器を作る」→「磊象で器を作る」
+ * - 「海の近くで魚を食べる」→「海の载くで鱼を食べる」（簡体字が混じる）
+ *
+ * 見分けかた: **元にあった漢字が消え、かつ元に無い漢字が現れている。**
+ * 正しい書き換えはこうならない:
+ * - 体言止めに動詞を足すだけ（「ピラミッド」→「ピラミッドに行く」）は、消える漢字が無い
+ * - 語尾・送り仮名だけの書き換え（「富士山に登りたい」→「富士山に登る」）も、消える漢字が無い
+ * - 「富士山登頂」→「富士山に登る」は「頂」が消えるが、足された漢字が無い
+ *
+ * ⚠️ **かなの化けは見ない。** 送り仮名・語尾は正しい書き換えでも変わる。
+ * **漢字の増減だけ**が、本番の ok 246 件で化け 18 件を全部拾い、
+ * 正しい名寄せをほぼ落とさない信号だった（「勉強をする」→「学ぶ」のような
+ * 言い換えは巻き添えで元に戻るが、#264 の「まとめ損ねる害 < 意味が変わる害」で許容）。
+ *
+ * ⚠️ **止めても害が無い**のは #264 のガード群と同じ。元の本文が出るだけ。
+ */
+function garblesKanji(canonical: string, normalized: string): boolean {
+  const kanjiSet = (value: string) => new Set(Array.from(value).filter(isKanji))
+  const before = kanjiSet(normalized)
+  const after = kanjiSet(canonical)
+
+  const dropped = [...before].some((char) => !after.has(char))
+  const added = [...after].some((char) => !before.has(char))
+
+  return dropped && added
+}
+
+const KANJI_PATTERN = /\p{Script=Han}/u
+
+function isKanji(char: string): boolean {
+  return KANJI_PATTERN.test(char)
 }
 
 /**
