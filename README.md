@@ -18,6 +18,7 @@
 | [TECH_STACK.md](./TECH_STACK.md) | 技術構成。**いまの構成と守るべき方針**、踏んだ落とし穴 |
 | [docs/workflow.md](./docs/workflow.md) | **開発の進め方。** イシューの進め方、PR の流れ、完了の条件 |
 | [docs/console-settings.md](./docs/console-settings.md) | **コンソールでしか設定できない項目**と現在値 |
+| [docs/screenshots.md](./docs/screenshots.md) | **画面ごとの見た目**と、その画面でできること |
 | [CLAUDE.md](./CLAUDE.md) | AI 向けの入口。**不変条件**（破ってはいけない約束）はここ |
 
 **手を動かす前に `docs/workflow.md`。** そのあと `PRODUCT_SPEC.md` → `TECH_STACK.md`。

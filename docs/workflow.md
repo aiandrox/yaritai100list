@@ -181,6 +181,12 @@ console.log(`better-auth.session_token=${token}.${await makeSignature(token, sec
 - ⚠️ **同じファイル名で差し替えない。** GitHub が画像をキャッシュしていて、
   force push しても**古い画像が出続ける。** 直したら `-2` のように名前を変える
 
+**例外: `docs/screenshots.md` の紹介用スクショは `docs/screenshots/`（`main`）に置く**（#343）。
+`previews` は force push で丸ごと置き換わる orphan なので、**コミット済みのドキュメントから
+参照する画像の置き場には向かない**（入れ替わった瞬間に 404 になる）。
+こちらは主要画面の一式に絞り、UI を大きく変えたときだけ撮り直す
+（PR ごとの使い捨てプレビューは従来どおり `previews`）。
+
 ### デプロイ
 
 **`main` にマージすると自動で出る**（2026-08-07、#117）。`.github/workflows/deploy.yml`。
